@@ -2,9 +2,9 @@
 -- Andy Clement, Nov 2007, Nov 2011, Jul 2013
 -- previous versions, Adrian Colyer, Jim Hugunin
 --main options
-%options ACTION, AN=JavaAction.java, GP=java, 
+%options ACTION, AN=JavaAction.java, GP=java,
 %options FILE-PREFIX=java, ESCAPE=$, PREFIX=TokenName, OUTPUT-SIZE=125 ,
-%options NOGOTO-DEFAULT, SINGLE-PRODUCTIONS, LALR=1 , TABLE, 
+%options NOGOTO-DEFAULT, SINGLE-PRODUCTIONS, LALR=1 , TABLE,
 
 --error recovering options.....
 -- ASPECTJ: INCLUDE THE COMMAS OR JIKESPG CAN GIVE AN ARRAYINDEXOUTOFBOUNDS EXCEPTION
@@ -20,18 +20,18 @@
 %options SCOPES,
 
 --Usefull macros helping reading/writing semantic actions
-$Define 
-$putCase 
+$Define
+$putCase
 /.    case $rule_number : if (DEBUG) { System.out.println("$rule_text"); }  //$NON-NLS-1$
 		   ./
 
 $break
-/. 
+/.
 			break;
 ./
 
 
-$readableName 
+$readableName
 /.1#$rule_number#./
 $compliance
 /.2#$rule_number#./
@@ -46,7 +46,7 @@ $Terminals
 
 	Identifier
 
-	abstract assert boolean break byte case catch char class 
+	abstract assert boolean break byte case catch char class
 	continue const default do double else enum extends false final finally float
 	for goto if implements import instanceof int
 	interface long native new null package private
@@ -178,7 +178,7 @@ $Alias
 	'...'  ::= ELLIPSIS
 	'@308' ::= AT308
 	'@308...' ::= AT308DOTDOTDOT
-	
+
 $Start
 	Goal
 
@@ -241,7 +241,7 @@ BooleanLiteral -> false
 -- AspectJ Extension
 -- we do this because AspectJ keywords are 'pseudo' keywords
 -- although they are recognised by the scanner as tokens, there
--- are many places where they are still allowed as identifiers 
+-- are many places where they are still allowed as identifiers
 -- for maximum compatibility with existing Java programs.
 -- JavaIdentifer replaces Identifier at many points in the productions
 -- that follow, and allows any Java identifier or an AspectJ 'pseudo'
@@ -346,7 +346,7 @@ ClassType -> ClassOrInterfaceType
 --
 -- QualifiedName ::= Name '.' SimpleName
 -- /.$putCase consumeQualifiedName(); $break ./
--- /:$readableName QualifiedName:/ 
+-- /:$readableName QualifiedName:/
 -- END
 
 -- AspectJ Extension
@@ -407,7 +407,7 @@ UnannotatableName ::= UnannotatableName '.' SimpleName
 /.$putCase consumeUnannotatableQualifiedName(); $break ./
 /:$readableName UnannotatableQualifiedName:/
 
-QualifiedName ::= Name '.' JavaIdentifier -- AspectJ Extension (JavaIdentifier was SimpleName) 
+QualifiedName ::= Name '.' JavaIdentifier -- AspectJ Extension (JavaIdentifier was SimpleName)
 /.$putCase consumeQualifiedName(false); $break ./
 QualifiedName ::= Name '.' TypeAnnotations JavaIdentifier -- AspectJ Extension (JavaIdentifier was SimpleName)
 /.$putCase consumeQualifiedName(true); $break ./
@@ -420,7 +420,7 @@ TypeAnnotationsopt -> TypeAnnotations
 /:$compliance 1.8:/
 /:$readableName TypeAnnotationsopt:/
 
--- Production name hardcoded in parser. Must be ::= and not -> 
+-- Production name hardcoded in parser. Must be ::= and not ->
 TypeAnnotations ::= TypeAnnotations0
 /:$readableName TypeAnnotations:/
 
@@ -534,7 +534,7 @@ CatchHeader ::= 'catch' '(' CatchFormalParameter ')' '{'
 /:$readableName CatchHeader:/
 
 ImportDeclarations -> ImportDeclaration
-ImportDeclarations ::= ImportDeclarations ImportDeclaration 
+ImportDeclarations ::= ImportDeclarations ImportDeclaration
 /.$putCase consumeImportDeclarations(); $break ./
 /:$readableName ImportDeclarations:/
 
@@ -588,9 +588,9 @@ TypeImportOnDemandDeclarationName ::= 'import' Name '.' RejectTypeAnnotations '*
 TypeDeclaration -> ClassDeclaration
 TypeDeclaration -> InterfaceDeclaration
 -- this declaration in part of a list od declaration and we will
--- use and optimized list length calculation process 
+-- use and optimized list length calculation process
 -- thus we decrement the number while it will be incremend.....
-TypeDeclaration ::= ';' 
+TypeDeclaration ::= ';'
 /. $putCase consumeEmptyTypeDeclaration(); $break ./
 -----------------------------------------------
 -- 1.5 feature
@@ -607,7 +607,7 @@ Modifiers ::= Modifiers Modifier
 /:$readableName Modifiers:/
 
 -- AspectJ Extension, introduced SimpleModifier to avoid shift/reduce conflict with PseudoTokens
-SimpleModifier -> 'public' 
+SimpleModifier -> 'public'
 SimpleModifier -> 'protected'
 SimpleModifier -> 'private'
 SimpleModifier -> 'static'
@@ -626,7 +626,7 @@ Modifier ::= Annotation
 /:$readableName Modifier:/
 
 -- AspectJ Extensions - main block
-Header -> DeclareDeclaration 
+Header -> DeclareDeclaration
 Header -> InterTypeMethodDeclaration
 Header -> InterTypeFieldDeclaration
 Header -> PointcutDeclaration
@@ -734,21 +734,21 @@ ClassMemberDeclarationNoAroundMethod -> AnnotationTypeDeclaration
 /:$readableName ClassMemberDeclaration:/
 
 -- Empty declarations are not valid Java ClassMemberDeclarations.
--- However, since the current (2/14/97) Java compiler accepts them 
+-- However, since the current (2/14/97) Java compiler accepts them
 -- (in fact, some of the official tests contain this erroneous
 -- syntax)
 ClassMemberDeclarationNoAroundMethod ::= ';'
 /.$putCase consumeEmptyTypeDeclaration(); $break./
 
 MethodDeclarationNoAround -> AbstractMethodDeclarationNoAround
-MethodDeclarationNoAround ::= MethodHeaderNoAround MethodBody 
+MethodDeclarationNoAround ::= MethodHeaderNoAround MethodBody
 /.$putCase // set to true to consume a method with a body
-  consumeMethodDeclaration(true);  $break ./
+  consumeMethodDeclaration(true,false);  $break ./
 /:$readableName MethodDeclarationNoAround:/
 
 AbstractMethodDeclarationNoAround ::= MethodHeaderNoAround ';'
 /.$putCase // set to false to consume a method without body
-  consumeMethodDeclaration(false); $break ./
+  consumeMethodDeclaration(false,false); $break ./
 /:$readableName MethodDeclaration:/
 
 MethodHeaderNoAround ::= MethodHeaderNameNoAround FormalParameterListopt MethodHeaderRightParen MethodHeaderExtendedDims MethodHeaderThrowsClauseopt
@@ -792,7 +792,7 @@ AroundHeader ::= AroundHeaderName FormalParameterListopt MethodHeaderRightParen 
 
 
 -- no modifiers are actually allowed on around, but the grammar is happier this way
-AroundHeaderName ::= Modifiersopt Type  'around' '(' 
+AroundHeaderName ::= Modifiersopt Type  'around' '('
 /.$putCase consumeAroundHeaderName(); $break ./
 /:$readableName [modifiers] <return-type> around ( :/
 
@@ -818,11 +818,11 @@ AfterAdviceHeader ::= AfterAdviceHeaderName FormalParameterListopt MethodHeaderR
 /.$putCase consumeBasicAdviceHeader(); $break ./
 /:$readableName AdviceHeader:/
 
-BeforeAdviceHeaderName ::= Modifiersopt 'before' '(' 
+BeforeAdviceHeaderName ::= Modifiersopt 'before' '('
 /.$putCase consumeBasicAdviceHeaderName(false); $break ./
 /:$readableName AdviceHeaderName:/
 
-AfterAdviceHeaderName ::= Modifiersopt 'after' '(' 
+AfterAdviceHeaderName ::= Modifiersopt 'after' '('
 /.$putCase consumeBasicAdviceHeaderName(true); $break ./
 /:$readableName AdviceHeaderName:/
 
@@ -844,7 +844,7 @@ ExtraParamopt ::= $empty
 
 -- intertype declarations
 
-OnType ::= JavaIdentifier 
+OnType ::= JavaIdentifier
 /.$putCase consumeZeroTypeAnnotations(); $break ./
 OnType ::= OnType '.' JavaIdentifier
 /.$putCase consumeZeroTypeAnnotations(); consumeQualifiedName(); $break ./
@@ -855,7 +855,7 @@ AspectBodyDeclaration -> InterTypeConstructorDeclaration
 AspectBodyDeclaration -> InterTypeFieldDeclaration
 
 InterTypeMethodDeclaration -> AbstractInterTypeMethodDeclaration
-InterTypeMethodDeclaration ::= InterTypeMethodHeader MethodBody 
+InterTypeMethodDeclaration ::= InterTypeMethodHeader MethodBody
 /.$putCase // set to true to consume a method with a body
   consumeInterTypeMethodDeclaration(true);  $break ./
 /:$readableName inter-type method declaration:/
@@ -894,7 +894,7 @@ TypeParametersAsReference ::= TypeParameters
 /.$putCase convertTypeParametersToSingleTypeReferences(); $break ./
 /:$readableName type parameter list:/
 
-InterTypeConstructorDeclaration ::= InterTypeConstructorHeader MethodBody 
+InterTypeConstructorDeclaration ::= InterTypeConstructorHeader MethodBody
 /.$putCase // set to true to consume a method with a body
   consumeInterTypeConstructorDeclaration();  $break ./
 /:$readableName inter-type constructor declaration:/
@@ -975,7 +975,7 @@ DeclareDeclaration ::= DeclareHeader PseudoTokens ';'
 /.$putCase consumeDeclareDeclaration(); $break ./
 /:$readableName declare statement:/
 
-DeclareHeader ::= 'declare' 'Identifier' ':' 
+DeclareHeader ::= 'declare' 'Identifier' ':'
 /.$putCase consumeDeclareHeader(); $break ./
 /:$readableName declare [error | warning | parents | soft | precedence]:/
 
@@ -1285,7 +1285,7 @@ ClassMemberDeclaration -> AnnotationTypeDeclaration
 /:$readableName ClassMemberDeclaration:/
 
 -- Empty declarations are not valid Java ClassMemberDeclarations.
--- However, since the current (2/14/97) Java compiler accepts them 
+-- However, since the current (2/14/97) Java compiler accepts them
 -- (in fact, some of the official tests contain this erroneous
 -- syntax)
 ClassMemberDeclaration ::= ';'
@@ -1309,7 +1309,7 @@ FieldDeclaration ::= Modifiersopt Type VariableDeclarators ';'
 /.$putCase consumeFieldDeclaration(); $break ./
 /:$readableName FieldDeclaration:/
 
-VariableDeclarators -> VariableDeclarator 
+VariableDeclarators -> VariableDeclarator
 VariableDeclarators ::= VariableDeclarators ',' VariableDeclarator
 /.$putCase consumeVariableDeclarators(); $break ./
 /:$readableName VariableDeclarators:/
@@ -1361,12 +1361,12 @@ VariableInitializer -> ArrayInitializer
 --
 
 MethodDeclaration -> AbstractMethodDeclaration
-MethodDeclaration ::= MethodHeader MethodBody 
+MethodDeclaration ::= MethodHeader MethodBody
 /.$putCase // set to true to consume a method with a body
  consumeMethodDeclaration(true, false); $break ./
 /:$readableName MethodDeclaration:/
 
-MethodDeclaration ::= DefaultMethodHeader MethodBody 
+MethodDeclaration ::= DefaultMethodHeader MethodBody
 /.$putCase // set to true to consume a method with a body
  consumeMethodDeclaration(true, true); $break ./
 /:$readableName MethodDeclaration:/
@@ -1471,7 +1471,7 @@ ClassTypeElt ::= ClassType
 /.$putCase consumeClassTypeElt(); $break ./
 /:$readableName ClassType:/
 
-MethodBody ::= NestedMethod '{' BlockStatementsopt '}' 
+MethodBody ::= NestedMethod '{' BlockStatementsopt '}'
 /.$putCase consumeMethodBody(); $break ./
 /:$readableName MethodBody:/
 /:$no_statements_recovery:/
@@ -1498,10 +1498,10 @@ StaticOnly ::= 'static'
 --
 --
 ConstructorDeclaration ::= ConstructorHeader MethodBody
-/.$putCase consumeConstructorDeclaration() ; $break ./ 
+/.$putCase consumeConstructorDeclaration() ; $break ./
 -- These rules are added to be able to parse constructors with no body
 ConstructorDeclaration ::= ConstructorHeader ';'
-/.$putCase consumeInvalidConstructorDeclaration() ; $break ./ 
+/.$putCase consumeInvalidConstructorDeclaration() ; $break ./
 /:$readableName ConstructorDeclaration:/
 
 -- the rules ExplicitConstructorInvocationopt has been expanded
@@ -1580,7 +1580,7 @@ InterfaceHeaderExtends ::= 'extends' InterfaceTypeList
 /.$putCase consumeInterfaceHeaderExtends(); $break ./
 /:$readableName InterfaceHeaderExtends:/
 
-InterfaceBody ::= '{' InterfaceMemberDeclarationsopt '}' 
+InterfaceBody ::= '{' InterfaceMemberDeclarationsopt '}'
 /:$readableName InterfaceBody:/
 
 InterfaceMemberDeclarations -> InterfaceMemberDeclaration
@@ -1666,7 +1666,7 @@ BlockStatements ::= BlockStatements BlockStatement
 /.$putCase consumeBlockStatements() ; $break ./
 /:$readableName BlockStatements:/
 
--- Production name hardcoded in parser. Must be ::= and not -> 
+-- Production name hardcoded in parser. Must be ::= and not ->
 BlockStatementopt ::= BlockStatementopt0
 /:$readableName BlockStatementopt:/
 BlockStatementopt0 -> $empty
@@ -1694,7 +1694,7 @@ LocalVariableDeclarationStatement ::= LocalVariableDeclaration ';'
 LocalVariableDeclaration ::= Type PushModifiers VariableDeclarators
 /.$putCase consumeLocalVariableDeclaration(); $break ./
 -- 1.1 feature
--- The modifiers part of this rule makes the grammar more permissive. 
+-- The modifiers part of this rule makes the grammar more permissive.
 -- The only modifier here is final. We put Modifiers to allow multiple modifiers
 -- This will require to check the validity of the modifier
 LocalVariableDeclaration ::= Modifiers Type PushRealModifiers VariableDeclarators
@@ -1990,10 +1990,10 @@ PrimaryNoNewArray -> Literal
 PrimaryNoNewArray ::= 'this'
 /.$putCase consumePrimaryNoNewArrayThis(); $break ./
 
-PrimaryNoNewArray ::= PushLPAREN Expression_NotName PushRPAREN 
+PrimaryNoNewArray ::= PushLPAREN Expression_NotName PushRPAREN
 /.$putCase consumePrimaryNoNewArray(); $break ./
 
-PrimaryNoNewArray ::= PushLPAREN Name PushRPAREN 
+PrimaryNoNewArray ::= PushLPAREN Name PushRPAREN
 /.$putCase consumePrimaryNoNewArrayWithName(); $break ./
 
 PrimaryNoNewArray -> ClassInstanceCreationExpression
@@ -2006,7 +2006,7 @@ PrimaryNoNewArray ::= Name '.' 'super'
 
 --1.1 feature
 --PrimaryNoNewArray ::= Type '.' 'class'
---inline Type in the previous rule in order to make the grammar LL1 instead 
+--inline Type in the previous rule in order to make the grammar LL1 instead
 -- of LL2. The result is the 3 next rules.
 
 PrimaryNoNewArray ::= Name '.' 'class'
@@ -2032,14 +2032,14 @@ PrimaryNoNewArray -> LambdaExpression
 PrimaryNoNewArray -> ReferenceExpression
 /:$readableName Expression:/
 
--- Production name hardcoded in parser. Must be ::= and not -> 
+-- Production name hardcoded in parser. Must be ::= and not ->
 ReferenceExpressionTypeArgumentsAndTrunk ::= ReferenceExpressionTypeArgumentsAndTrunk0
 /:$readableName ReferenceExpressionTypeArgumentsAndTrunk:/
 
-ReferenceExpressionTypeArgumentsAndTrunk0 ::= OnlyTypeArguments Dimsopt 
+ReferenceExpressionTypeArgumentsAndTrunk0 ::= OnlyTypeArguments Dimsopt
 /.$putCase consumeReferenceExpressionTypeArgumentsAndTrunk(false); $break ./
 /:$compliance 1.8:/
-ReferenceExpressionTypeArgumentsAndTrunk0 ::= OnlyTypeArguments '.' ClassOrInterfaceType Dimsopt 
+ReferenceExpressionTypeArgumentsAndTrunk0 ::= OnlyTypeArguments '.' ClassOrInterfaceType Dimsopt
 /.$putCase consumeReferenceExpressionTypeArgumentsAndTrunk(true); $break ./
 /:$readableName ReferenceExpressionTypeArgumentsAndTrunk:/
 /:$compliance 1.8:/
@@ -2099,7 +2099,7 @@ LambdaParameters -> BeginLambda NestedLambda LambdaParameterList
 /:$readableName LambdaParameters:/
 /:$compliance 1.8:/
 
--- Production name hardcoded in parser. Must be ::= and not -> 
+-- Production name hardcoded in parser. Must be ::= and not ->
 ParenthesizedLambdaParameterList ::= LambdaParameterList
 /:$readableName ParenthesizedLambdaParameterList:/
 
@@ -2160,11 +2160,11 @@ ClassInstanceCreationExpression ::= Primary '.' 'new' ClassType EnterInstanceCre
 /.$putCase consumeClassInstanceCreationExpressionQualified() ; $break ./
 
 --1.1 feature
-ClassInstanceCreationExpression ::= ClassInstanceCreationExpressionName 'new' ClassType EnterInstanceCreationArgumentList '(' ArgumentListopt ')' QualifiedClassBodyopt
+ClassInstanceCreationExpression ::= ClassInstanceCreationExpressionName ClassType EnterInstanceCreationArgumentList '(' ArgumentListopt ')' QualifiedClassBodyopt
 /.$putCase consumeClassInstanceCreationExpressionQualified() ; $break ./
 /:$readableName ClassInstanceCreationExpression:/
 
-ClassInstanceCreationExpression ::= ClassInstanceCreationExpressionName 'new' OnlyTypeArguments ClassType EnterInstanceCreationArgumentList '(' ArgumentListopt ')' QualifiedClassBodyopt
+ClassInstanceCreationExpression ::= ClassInstanceCreationExpressionName OnlyTypeArguments ClassType EnterInstanceCreationArgumentList '(' ArgumentListopt ')' QualifiedClassBodyopt
 /.$putCase consumeClassInstanceCreationExpressionQualifiedWithTypeArguments() ; $break ./
 /:$readableName ClassInstanceCreationExpression:/
 
@@ -2172,7 +2172,7 @@ EnterInstanceCreationArgumentList ::= $empty
 /.$putCase consumeEnterInstanceCreationArgumentList(); $break ./
 /:$readableName EnterInstanceCreationArgumentList:/
 
-ClassInstanceCreationExpressionName ::= Name '.'
+ClassInstanceCreationExpressionName ::= Name '.' 'new'
 /.$putCase consumeClassInstanceCreationExpressionName() ; $break ./
 /:$readableName ClassInstanceCreationExpressionName:/
 
@@ -2349,7 +2349,7 @@ AdditionalBoundsListOpt -> AdditionalBoundList
 /:$compliance 1.8:/
 /:$readableName AdditionalBoundsListOpt:/
 
--- Production name hardcoded in parser. Must be ::= and not -> 
+-- Production name hardcoded in parser. Must be ::= and not ->
 ParenthesizedCastNameAndBounds ::= '(' CastNameAndBounds ')'
 /:$readableName ParenthesizedCastNameAndBounds:/
 
@@ -2522,7 +2522,7 @@ ConstantExpression -> Expression
 -- The rules below are for optional terminal symbols.  An optional comma,
 -- is only used in the context of an array initializer - It is a
 -- "syntactic sugar" that otherwise serves no other purpose. By contrast,
--- an optional identifier is used in the definition of a break and 
+-- an optional identifier is used in the definition of a break and
 -- continue statement. When the identifier does not appear, a NULL
 -- is produced. When the identifier is present, the user should use the
 -- corresponding TOKEN(i) method. See break statement as an example.
@@ -2539,10 +2539,10 @@ ClassBodyDeclarationsopt ::= NestedType ClassBodyDeclarations
 /.$putCase consumeClassBodyDeclarationsopt(); $break ./
 /:$readableName ClassBodyDeclarations:/
 
-Modifiersopt ::= $empty 
+Modifiersopt ::= $empty
 /. $putCase consumeDefaultModifiers(); $break ./
 Modifiersopt ::= Modifiers
-/.$putCase consumeModifiers(); $break ./ 
+/.$putCase consumeModifiers(); $break ./
 /:$readableName Modifiers:/
 
 BlockStatementsopt ::= $empty
@@ -2579,7 +2579,7 @@ InterfaceMemberDeclarationsopt ::= NestedType InterfaceMemberDeclarations
 /. $putCase consumeInterfaceMemberDeclarationsopt(); $break ./
 /:$readableName InterfaceMemberDeclarations:/
 
-NestedType ::= $empty 
+NestedType ::= $empty
 /.$putCase consumeNestedType(); $break./
 /:$readableName NestedType:/
 
@@ -3300,56 +3300,56 @@ RecoveryMethodHeader ::= RecoveryMethodHeaderName FormalParameterListopt MethodH
 
 $names
 
-PLUS_PLUS ::=    '++'   
-MINUS_MINUS ::=    '--'   
-EQUAL_EQUAL ::=    '=='   
-LESS_EQUAL ::=    '<='   
-GREATER_EQUAL ::=    '>='   
-NOT_EQUAL ::=    '!='   
-LEFT_SHIFT ::=    '<<'   
-RIGHT_SHIFT ::=    '>>'   
-UNSIGNED_RIGHT_SHIFT ::=    '>>>'  
-PLUS_EQUAL ::=    '+='   
-MINUS_EQUAL ::=    '-='   
-MULTIPLY_EQUAL ::=    '*='   
-DIVIDE_EQUAL ::=    '/='   
-AND_EQUAL ::=    '&='   
-OR_EQUAL ::=    '|='   
-XOR_EQUAL ::=    '^='   
-REMAINDER_EQUAL ::=    '%='   
-LEFT_SHIFT_EQUAL ::=    '<<='  
-RIGHT_SHIFT_EQUAL ::=    '>>='  
-UNSIGNED_RIGHT_SHIFT_EQUAL ::=    '>>>=' 
-OR_OR ::=    '||'   
+PLUS_PLUS ::=    '++'
+MINUS_MINUS ::=    '--'
+EQUAL_EQUAL ::=    '=='
+LESS_EQUAL ::=    '<='
+GREATER_EQUAL ::=    '>='
+NOT_EQUAL ::=    '!='
+LEFT_SHIFT ::=    '<<'
+RIGHT_SHIFT ::=    '>>'
+UNSIGNED_RIGHT_SHIFT ::=    '>>>'
+PLUS_EQUAL ::=    '+='
+MINUS_EQUAL ::=    '-='
+MULTIPLY_EQUAL ::=    '*='
+DIVIDE_EQUAL ::=    '/='
+AND_EQUAL ::=    '&='
+OR_EQUAL ::=    '|='
+XOR_EQUAL ::=    '^='
+REMAINDER_EQUAL ::=    '%='
+LEFT_SHIFT_EQUAL ::=    '<<='
+RIGHT_SHIFT_EQUAL ::=    '>>='
+UNSIGNED_RIGHT_SHIFT_EQUAL ::=    '>>>='
+OR_OR ::=    '||'
 AND_AND ::=    '&&'
-PLUS ::=    '+'    
-MINUS ::=    '-'    
-NOT ::=    '!'    
-REMAINDER ::=    '%'    
-XOR ::=    '^'    
-AND ::=    '&'    
-MULTIPLY ::=    '*'    
-OR ::=    '|'    
-TWIDDLE ::=    '~'    
-DIVIDE ::=    '/'    
-GREATER ::=    '>'    
-LESS ::=    '<'    
-LPAREN ::=    '('    
-RPAREN ::=    ')'    
-LBRACE ::=    '{'    
-RBRACE ::=    '}'    
-LBRACKET ::=    '['    
-RBRACKET ::=    ']'    
-SEMICOLON ::=    ';'    
-QUESTION ::=    '?'    
-COLON ::=    ':'    
-COMMA ::=    ','    
-DOT ::=    '.'    
-EQUAL ::=    '='    
+PLUS ::=    '+'
+MINUS ::=    '-'
+NOT ::=    '!'
+REMAINDER ::=    '%'
+XOR ::=    '^'
+AND ::=    '&'
+MULTIPLY ::=    '*'
+OR ::=    '|'
+TWIDDLE ::=    '~'
+DIVIDE ::=    '/'
+GREATER ::=    '>'
+LESS ::=    '<'
+LPAREN ::=    '('
+RPAREN ::=    ')'
+LBRACE ::=    '{'
+RBRACE ::=    '}'
+LBRACKET ::=    '['
+RBRACKET ::=    ']'
+SEMICOLON ::=    ';'
+QUESTION ::=    '?'
+COLON ::=    ':'
+COMMA ::=    ','
+DOT ::=    '.'
+EQUAL ::=    '='
 AT ::=    '@'
 AT308 ::= '@'
 AT308DOTDOTDOT ::= '@'
-ELLIPSIS ::=    '...'    
+ELLIPSIS ::=    '...'
 ARROW ::= '->'
 COLON_COLON ::= '::'
 
