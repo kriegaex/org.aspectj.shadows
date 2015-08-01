@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -138,7 +138,7 @@ public class ClassFile implements TypeConstants, TypeIds {
 	public byte[] header;
 	// that collection contains all the remaining bytes of the .class file
 	public int headerOffset;
-	public Set innerClassesBindings;
+	public Map<TypeBinding, Boolean> innerClassesBindings;
 	public List bootstrapMethods = null;
 	public int methodCount;
 	public int methodCountOffset;
@@ -397,11 +397,22 @@ public class ClassFile implements TypeConstants, TypeIds {
 		int numberOfInnerClasses = this.innerClassesBindings == null ? 0 : this.innerClassesBindings.size();
 		if (numberOfInnerClasses != 0) {
 			ReferenceBinding[] innerClasses = new ReferenceBinding[numberOfInnerClasses];
-			this.innerClassesBindings.toArray(innerClasses);
+			this.innerClassesBindings.keySet().toArray(innerClasses);
 			Arrays.sort(innerClasses, new Comparator() {
 				public int compare(Object o1, Object o2) {
 					TypeBinding binding1 = (TypeBinding) o1;
 					TypeBinding binding2 = (TypeBinding) o2;
+					Boolean onBottom1 = ClassFile.this.innerClassesBindings.get(o1);
+					Boolean onBottom2 = ClassFile.this.innerClassesBindings.get(o2);
+					if (onBottom1) {
+						if (!onBottom2) {
+							return 1;
+						}
+					} else {
+						if (onBottom2) {
+							return -1;
+						}
+					}
 					return CharOperation.compareTo(binding1.constantPoolName(), binding2.constantPoolName());
 				}
 			});
@@ -896,6 +907,7 @@ public class ClassFile implements TypeConstants, TypeIds {
 		
 		// add synthetic methods infos
 		int emittedSyntheticsCount = 0;
+		SyntheticMethodBinding deserializeLambdaMethod = null;
 		boolean continueScanningSynthetics = true;
 		while (continueScanningSynthetics) {
 			continueScanningSynthetics = false;
@@ -956,13 +968,15 @@ public class ClassFile implements TypeConstants, TypeIds {
 							addSyntheticFactoryMethod(syntheticMethod);
 							break;	
 						case SyntheticMethodBinding.DeserializeLambda:
-							// TODO [andy] do we need to do this after the loop to ensure it is done last?
-							addSyntheticDeserializeLambda(syntheticMethod,this.referenceBinding.syntheticMethods()); 
+							deserializeLambdaMethod = syntheticMethod; // delay processing
 							break;
 					}
 				}
 				emittedSyntheticsCount = currentSyntheticsCount;
 			}
+		}
+		if (deserializeLambdaMethod != null) {
+			addSyntheticDeserializeLambda(deserializeLambdaMethod,this.referenceBinding.syntheticMethods()); 
 		}
 	}
 
@@ -5224,15 +5238,18 @@ public class ClassFile implements TypeConstants, TypeIds {
 	}
 
 	public void recordInnerClasses(TypeBinding binding) {
+		recordInnerClasses(binding, false);
+	}
+	public void recordInnerClasses(TypeBinding binding, boolean onBottomForBug445231) {
 		if (this.innerClassesBindings == null) {
-			this.innerClassesBindings = new HashSet(INNER_CLASSES_SIZE);
+			this.innerClassesBindings = new HashMap(INNER_CLASSES_SIZE);
 		}
 		ReferenceBinding innerClass = (ReferenceBinding) binding;
-		this.innerClassesBindings.add(innerClass.erasure().unannotated(false));  // should not emit yet another inner class for Outer.@Inner Inner.
+		this.innerClassesBindings.put(innerClass.erasure().unannotated(false), onBottomForBug445231);  // should not emit yet another inner class for Outer.@Inner Inner.
 		ReferenceBinding enclosingType = innerClass.enclosingType();
 		while (enclosingType != null
 				&& enclosingType.isNestedType()) {
-			this.innerClassesBindings.add(enclosingType.erasure().unannotated(false));
+			this.innerClassesBindings.put(enclosingType.erasure().unannotated(false), onBottomForBug445231);
 			enclosingType = enclosingType.enclosingType();
 		}
 	}

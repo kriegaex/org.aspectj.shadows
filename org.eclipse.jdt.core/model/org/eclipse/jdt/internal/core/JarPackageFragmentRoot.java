@@ -100,26 +100,30 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 			rawPackageInfo.put(CharOperation.NO_STRINGS, new ArrayList[] { EMPTY_LIST, EMPTY_LIST });
 
 			if (this.isJimage) {
-				org.eclipse.jdt.internal.compiler.util.Util.walkModuleImage(getPath().toFile(),
-								new org.eclipse.jdt.internal.compiler.util.Util.JimageVisitor<Path>() {
-					@Override
-					public FileVisitResult visitPackage(Path dir, BasicFileAttributes attrs) throws IOException {
-						initRawPackageInfo(rawPackageInfo, dir.toString(), true, compliance);
-						return FileVisitResult.CONTINUE;
-					}
+				try {
+					org.eclipse.jdt.internal.compiler.util.Util.walkModuleImage(getPath().toFile(),
+									new org.eclipse.jdt.internal.compiler.util.Util.JimageVisitor<Path>() {
+						@Override
+						public FileVisitResult visitPackage(Path dir, BasicFileAttributes attrs) throws IOException {
+							initRawPackageInfo(rawPackageInfo, dir.toString(), true, compliance);
+							return FileVisitResult.CONTINUE;
+						}
 
-					@Override
-					public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) throws IOException {
-						initRawPackageInfo(rawPackageInfo, path.toString(), false, compliance);
-						return FileVisitResult.CONTINUE;
-					}
-				});
+						@Override
+						public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) throws IOException {
+							initRawPackageInfo(rawPackageInfo, path.toString(), false, compliance);
+							return FileVisitResult.CONTINUE;
+						}
+					});
+				} catch (IOException e) {
+					// We are not reading any specific Jimage file, so, move on for now
+				}
 			} else {
 				jar = getJar();
 				for (Enumeration e= jar.entries(); e.hasMoreElements();) {
-				ZipEntry member= (ZipEntry) e.nextElement();
-				initRawPackageInfo(rawPackageInfo, member.getName(), member.isDirectory(), compliance);
-			}
+					ZipEntry member= (ZipEntry) e.nextElement();
+					initRawPackageInfo(rawPackageInfo, member.getName(), member.isDirectory(), compliance);
+				}
 			}
 			// loop through all of referenced packages, creating package fragments if necessary
 			// and cache the entry names in the rawPackageInfo table
@@ -308,6 +312,13 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 	public boolean isReadOnly() {
 		return true;
 	}
+	/**
+	 * return true if jimage
+	 */
+	public boolean isJimage() {
+		return this.isJimage;
+	}
+
 
 	/**
 	 * Returns whether the corresponding resource or associated file exists

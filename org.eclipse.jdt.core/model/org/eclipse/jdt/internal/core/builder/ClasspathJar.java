@@ -17,7 +17,6 @@ package org.eclipse.jdt.internal.core.builder;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.runtime.*;
-import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileReader;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFormatException;
 import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
@@ -88,19 +87,19 @@ static SimpleSet findPackageSet(ClasspathJar jar) {
 					return FileVisitResult.CONTINUE;
 				}
 			});
-		} catch (JavaModelException e) {
-			e.printStackTrace();
+		} catch (IOException e) {
+			// Move on
 		}
 		// TODO: What about caching?
 	} else {
-	long lastModified = jar.lastModified();
-	long fileSize = new File(zipFileName).length();
-	PackageCacheEntry cacheEntry = (PackageCacheEntry) PackageCache.get(zipFileName);
-	if (cacheEntry != null && cacheEntry.lastModified == lastModified && cacheEntry.fileSize == fileSize)
-		return cacheEntry.packageSet;
-	packageSet.add(""); //$NON-NLS-1$
+		long lastModified = jar.lastModified();
+		long fileSize = new File(zipFileName).length();
+		PackageCacheEntry cacheEntry = (PackageCacheEntry) PackageCache.get(zipFileName);
+		if (cacheEntry != null && cacheEntry.lastModified == lastModified && cacheEntry.fileSize == fileSize)
+			return cacheEntry.packageSet;
+		packageSet.add(""); //$NON-NLS-1$
 		for (Enumeration e = jar.zipFile.entries(); e.hasMoreElements(); ) {
-		String fileName = ((ZipEntry) e.nextElement()).getName();
+			String fileName = ((ZipEntry) e.nextElement()).getName();
 			addToPackageSet(packageSet, fileName, false);
 		}
 		PackageCache.put(zipFileName, new PackageCacheEntry(lastModified, fileSize, packageSet));
@@ -149,9 +148,14 @@ ClasspathJar(String zipFilename, long lastModified, AccessRuleSet accessRuleSet)
 public ClasspathJar(ZipFile zipFile, AccessRuleSet accessRuleSet) {
 	this.zipFilename = zipFile.getName();
 	this.zipFile = zipFile;
+}
+
+public ClasspathJar(String fileName, AccessRuleSet accessRuleSet, IPath externalAnnotationPath) {
+	this.zipFilename = fileName;
 	this.closeZipFileAtEnd = false;
 	this.knownPackageNames = null;
 	this.accessRuleSet = accessRuleSet;
+	this.isJimage = JavaModelManager.isJimage(fileName);
 }
 
 public void cleanup() {

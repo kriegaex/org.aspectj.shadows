@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ * 
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -30,9 +34,13 @@ import java.nio.file.FileSystems;
 import java.nio.file.FileVisitResult;
 import java.nio.file.FileVisitor;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.StringTokenizer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -244,7 +252,16 @@ public class Util implements SuffixConstants {
 
 	private static URI JRT_URI = URI.create("jrt:/"); //$NON-NLS-1$
 
-	private static String JAVA_BASE_PATH = "java.base"; //$NON-NLS-1$
+	static final String JAVA_BASE = "java.base"; //$NON-NLS-1$
+	private static final String MODULES_SUBDIR = "/modules"; //$NON-NLS-1$
+	private static final String[] SINGLE_MODULE_ARRAY = new String[]{null};
+	private static final String[] DEFAULT_MODULE = new String[]{JAVA_BASE};
+	private static final String MULTIPLE = "MU"; //$NON-NLS-1$
+	private static final String DEFAULT_PACKAGE = ""; //$NON-NLS-1$
+
+	private static final Map<String, String> packageToModule = new HashMap<String, String>();
+
+	private static final Map<String, List<String>> packageToModules = new HashMap<String, List<String>>();
 
 	/**
 	 * Build all the directories and subdirectories corresponding to the packages names
@@ -690,7 +707,7 @@ public class Util implements SuffixConstants {
 	}
 	/**
 	 * Returns the contents of the given zip entry as a byte array.
-	 * @throws IOException if a problem occured reading the zip entry.
+	 * @throws IOException if a problem occurred reading the zip entry.
 	 */
 	public static byte[] getZipEntryByteContent(ZipEntry ze, ZipFile zip)
 		throws IOException {
@@ -716,109 +733,156 @@ public class Util implements SuffixConstants {
 	 * notifies the supplied visitor about packages and files visited.
 	 * Note: At the moment, there's no way to open any arbitrary image. Currently,
 	 * this method uses the JRT file system provider to look inside the JRE.
-	 *   
+	 *
+	 * The file system contains the following top level directories:
+	 *  /modules/$MODULE/$PATH
+	 *  /packages/$PACKAGE/$MODULE 
+	 *  The latter provides quick look up of the module that contains a particular package.
+	 *  
 	 * @param image a java.io.File handle to the JRT image.
 	 * @param visitor an instance of JimageVisitor to be notified of the entries in the JRT image.
-	 * @throws JavaModelException
+	 * @throws IOException
 	 */
-	public static void walkModuleImage(File image, final JimageVisitor<java.nio.file.Path> visitor) throws JavaModelException {
+	public static void walkModuleImage(File image, final JimageVisitor<java.nio.file.Path> visitor) throws IOException {
 		java.nio.file.FileSystem fs = FileSystems.getFileSystem(JRT_URI);
 		Iterable<java.nio.file.Path> roots = fs.getRootDirectories();
-		java.nio.file.Path basePath = null;
-		roots: for (java.nio.file.Path path : roots) {
+		for (java.nio.file.Path path : roots) {
 			try (DirectoryStream<java.nio.file.Path> stream = Files.newDirectoryStream(path)) {
-				for (java.nio.file.Path subdir: stream) {
-					walkModuleImage2(visitor, subdir);
-//					if (subdir.toString().indexOf(JAVA_BASE_PATH) != -1) {
-//						basePath = subdir;
-//						break roots;
-//					}
+				for (final java.nio.file.Path subdir: stream) {
+					if (!subdir.toString().equals(MODULES_SUBDIR)) {
+						Files.walkFileTree(subdir, new AbstractFileVisitor<java.nio.file.Path>() {
+							@Override
+							public FileVisitResult visitFile(java.nio.file.Path file, BasicFileAttributes attrs) throws IOException {
+								java.nio.file.Path relative = subdir.relativize(file);
+								cachePackage(relative.getParent().toString(), relative.getFileName().toString());
+								return FileVisitResult.CONTINUE;
+							}
+						});
+					} else {
+						Files.walkFileTree(subdir, new AbstractFileVisitor<java.nio.file.Path>() {
+							@Override
+							public FileVisitResult preVisitDirectory(java.nio.file.Path dir, BasicFileAttributes attrs) throws IOException {
+								int count = dir.getNameCount();
+								if (dir == subdir || count < 3) return FileVisitResult.CONTINUE;
+								return visitor.visitPackage(dir.subpath(2, count), attrs);
+							}
+
+							@Override
+							public FileVisitResult visitFile(java.nio.file.Path file, BasicFileAttributes attrs) throws IOException {
+								int count = file.getNameCount();
+								// This happens when a file in a default package is present. E.g. /modules/some.module/file.name
+								if (count == 3) {
+									cachePackage(DEFAULT_PACKAGE, file.getName(1).toString());
+								}
+								return visitor.visitFile(file.subpath(2, file.getNameCount()), attrs);
+							}
+						});
+					}
 			    }
 			} catch (Exception e) {
-				throw new JavaModelException(e, IJavaModelStatusConstants.IO_EXCEPTION);
+				throw new IOException(e.getMessage());
 			}
 		}
-		walkModuleImage2(visitor, basePath);
 	}
 
-	private static void walkModuleImage2(final JimageVisitor<java.nio.file.Path> visitor, java.nio.file.Path basePath)
-			throws JavaModelException {
-		try {
-			if (basePath != null) {
-				final java.nio.file.Path base = basePath;
-				Files.walkFileTree(basePath, new FileVisitor<java.nio.file.Path>() {
-
-					@Override
-					public FileVisitResult preVisitDirectory(java.nio.file.Path dir, BasicFileAttributes attrs) throws IOException {
-						return visitor.visitPackage(base.relativize(dir), attrs);
-					}
-
-					@Override
-					public FileVisitResult visitFile(java.nio.file.Path file, BasicFileAttributes attrs) throws IOException {
-						return visitor.visitFile(base.relativize(file), attrs);
-					}
-
-					@Override
-					public FileVisitResult visitFileFailed(java.nio.file.Path file, IOException exc) throws IOException {
-						return FileVisitResult.CONTINUE;
-					}
-
-					@Override
-					public FileVisitResult postVisitDirectory(java.nio.file.Path dir, IOException exc) throws IOException {
-						return FileVisitResult.CONTINUE;
-					}
-				});
-			}
-		} catch (IOException e) {
-			throw new JavaModelException(e, IJavaModelStatusConstants.IO_EXCEPTION);
+	static abstract class AbstractFileVisitor<T> implements FileVisitor<T> {
+		@Override
+		public FileVisitResult preVisitDirectory(T dir, BasicFileAttributes attrs) throws IOException {
+			return FileVisitResult.CONTINUE;
 		}
+
+		@Override
+		public FileVisitResult visitFile(T file, BasicFileAttributes attrs) throws IOException {
+			return FileVisitResult.CONTINUE;
+		}
+
+		@Override
+		public FileVisitResult visitFileFailed(T file, IOException exc) throws IOException {
+			return FileVisitResult.CONTINUE;
+		}
+
+		@Override
+		public FileVisitResult postVisitDirectory(T dir, IOException exc) throws IOException {
+			return FileVisitResult.CONTINUE;
+		}
+	}
+
+	static void cachePackage(String packageName, String module) {
+		packageName = packageName.intern();
+		module = module.intern();
+		packageName = packageName.replace('.', '/');
+		Object current = packageToModule.get(packageName);
+		if (current == null) {
+			packageToModule.put(packageName, module);
+		} else if(current == module || current.equals(module)) {
+			return;
+		} else if (current == MULTIPLE) {
+			List<String> list = packageToModules.get(packageName);
+			if (!list.contains(module)) {
+				if (JAVA_BASE == module || JAVA_BASE.equals(module)) {
+					list.add(0, JAVA_BASE);
+				} else {
+					list.add(module);
+				}
+			}
+		} else {
+			String first = (String) current;
+			packageToModule.put(packageName, MULTIPLE);
+			List<String> list = new ArrayList<String>();
+			// Just do this as comparator might be overkill
+			if (JAVA_BASE == current || JAVA_BASE.equals(current)) {
+				list.add(first);
+				list.add(module);
+			} else {
+				list.add(module);
+				list.add(first);
+			}
+			packageToModules.put(packageName, list);
+		}
+	}
+
+	private static String[] getModules(String fileName) {
+		int idx = fileName.lastIndexOf('/');
+		String pack = null;
+		if (idx != -1) {
+			pack = fileName.substring(0, idx);
+		} else {
+			pack = DEFAULT_PACKAGE;
+		}
+		String module = packageToModule.get(pack);
+		if (module != null) {
+			if (module == MULTIPLE) {
+				List<String> list = packageToModules.get(pack);
+				return list.toArray(new String[list.size()]);
+			} else {
+				SINGLE_MODULE_ARRAY[0] = module;
+				return SINGLE_MODULE_ARRAY;
+			}
+		}
+		return DEFAULT_MODULE;
 	}
 
 	public static InputStream getContentFromJimage(String fileName) throws IOException {
 		java.nio.file.FileSystem fs = FileSystems.getFileSystem(JRT_URI);
-		try {
-			
-		return Files.newInputStream(fs.getPath(JAVA_BASE_PATH, fileName));
-		} catch (IOException ioe) {
-			// check other modules!
-			Iterable<java.nio.file.Path> roots = fs.getRootDirectories();
-			java.nio.file.Path basePath = null;
-			for (java.nio.file.Path path : roots) {
-				try (DirectoryStream<java.nio.file.Path> stream = Files.newDirectoryStream(path)) {
-					for (java.nio.file.Path subdir: stream) {
-						try {
-							return Files.newInputStream(fs.getPath(subdir.toString(), fileName));
-						} catch (IOException ioe2) {
-							
-						}
-					}
-				}
-			}
-			throw ioe; 
+		String[] modules = getModules(fileName);
+		for (String mod : modules) {
+			return Files.newInputStream(fs.getPath(MODULES_SUBDIR, mod, fileName));
 		}
+		return null;
 	}
 
 	public static byte[] getClassfileContent(String fileName) throws IOException {
 		java.nio.file.FileSystem fs = FileSystems.getFileSystem(JRT_URI);
-		try {
-		return Files.readAllBytes(fs.getPath(JAVA_BASE_PATH, fileName));
-		} catch (IOException ioe) {
-			// check other modules!
-			Iterable<java.nio.file.Path> roots = fs.getRootDirectories();
-			java.nio.file.Path basePath = null;
-			for (java.nio.file.Path path : roots) {
-				try (DirectoryStream<java.nio.file.Path> stream = Files.newDirectoryStream(path)) {
-					for (java.nio.file.Path subdir: stream) {
-						try {
-							return Files.readAllBytes(fs.getPath(subdir.toString(), fileName));
-						} catch (IOException ioe2) {
-							
-						}
-					}
-				}
+		String[] modules = getModules(fileName);
+		for (String string : modules) {
+			try {
+				byte[] bytes = Files.readAllBytes(fs.getPath(MODULES_SUBDIR, string, fileName));
+				if (bytes != null) return bytes;
+			} catch(NoSuchFileException e) {
+				continue;
 			}
-			throw ioe;
 		}
+		return null;
 	}
 	public static int hashCode(Object[] array) {
 		int prime = 31;
@@ -863,7 +927,7 @@ public class Util implements SuffixConstants {
 		}
 		return true; // it is neither a ".java" file nor a ".class" file, so this is a potential archive name
 	}
-
+	
 	public static final int ZIP_FILE = 0;
 	
 	public static final int JIMAGE_FILE = 1;
@@ -1253,7 +1317,14 @@ public class Util implements SuffixConstants {
 				}
 			}
 		} else if (typeBinding.isNestedType()) {
-			classFile.recordInnerClasses(typeBinding);
+			TypeBinding enclosingType = typeBinding;
+			do {
+				if (!enclosingType.canBeSeenBy(classFile.referenceBinding.scope))
+					break;
+				enclosingType = enclosingType.enclosingType();
+			} while (enclosingType != null);
+			boolean onBottomForBug445231 = enclosingType != null;
+			classFile.recordInnerClasses(typeBinding, onBottomForBug445231);
 		}
 	}
 	/*
@@ -1271,6 +1342,15 @@ public class Util implements SuffixConstants {
 	}
 
 	public static void collectRunningVMBootclasspath(List bootclasspaths) {
+		for (String filePath : collectFilesNames()) {
+			FileSystem.Classpath currentClasspath = FileSystem.getClasspath(filePath, null, null);
+			if (currentClasspath != null) {
+				bootclasspaths.add(currentClasspath);
+			}
+		}
+	}
+
+	public static List<String> collectFilesNames() {
 		/* no bootclasspath specified
 		 * we can try to retrieve the default librairies of the VM used to run
 		 * the batch compiler
@@ -1293,16 +1373,12 @@ public class Util implements SuffixConstants {
 				bootclasspathProperty = System.getProperty("org.apache.harmony.boot.class.path"); //$NON-NLS-1$
 			}
 		}
+		List<String> filePaths = new ArrayList<>();
 		if ((bootclasspathProperty != null) && (bootclasspathProperty.length() != 0)) {
 			StringTokenizer tokenizer = new StringTokenizer(bootclasspathProperty, File.pathSeparator);
-			String token;
 			while (tokenizer.hasMoreTokens()) {
-				token = tokenizer.nextToken();
-				FileSystem.Classpath currentClasspath = FileSystem.getClasspath(token, null, null);
-				if (currentClasspath != null) {
-					bootclasspaths.add(currentClasspath);
+				filePaths.add(tokenizer.nextToken());
 				}
-			}
 		} else {
 			// try to get all jars inside the lib folder of the java home
 			final File javaHome = getJavaHome();
@@ -1324,19 +1400,15 @@ public class Util implements SuffixConstants {
 						File[] current = systemLibrariesJars[i];
 						if (current != null) {
 							for (int j = 0, max2 = current.length; j < max2; j++) {
-								FileSystem.Classpath classpath =
-									FileSystem.getClasspath(current[j].getAbsolutePath(),
-										null, false, null, null);
-								if (classpath != null) {
-									bootclasspaths.add(classpath);
+								filePaths.add(current[j].getAbsolutePath());
 								}
 							}
 						}
 					}
 				}
 			}
+		return filePaths;
 		}
-	}
 	public static int getParameterCount(char[] methodSignature) {
 		try {
 			int count = 0;

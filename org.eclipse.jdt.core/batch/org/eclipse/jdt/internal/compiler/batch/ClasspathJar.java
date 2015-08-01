@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -31,7 +31,6 @@ import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
-import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileReader;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFormatException;
@@ -91,6 +90,7 @@ public ClasspathJar(File file, boolean closeZipFileAtEnd,
 public List fetchLinkedJars(FileSystem.ClasspathSectionProblemReporter problemReporter) {
 	// expected to be called once only - if multiple calls desired, consider
 	// using a cache
+	if (this.isJimage) return null;
 	InputStream inputStream = null;
 	try {
 		initialize();
@@ -248,8 +248,8 @@ public boolean isPackage(String qualifiedPackageName) {
 				}
 
 			});
-		} catch (JavaModelException e) {
-			e.printStackTrace();
+		} catch (IOException e) {
+			// Ignore and move on
 		}
 	} else {
 		for (Enumeration e = this.zipFile.entries(); e.hasMoreElements(); ) {
