@@ -1,10 +1,14 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
- * 
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *     Stephan Herrmann - Contributions for
@@ -22,6 +26,8 @@
  *								Bug 412153 - [1.8][compiler] Check validity of annotations which may be repeatable
  *    Andy Clement (GoPivotal, Inc) aclement@gopivotal.com - Contributions for
  *                              Bug 405104 - [1.8][compiler][codegen] Implement support for serializeable lambdas
+ *    Ulrich Grave <ulrich.grave@gmx.de> - Contributions for
+ *                              bug 386692 - Missing "unused" warning on "autowired" fields
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.lookup;
 
@@ -65,6 +71,7 @@ public interface TypeConstants {
     char[] WILDCARD_PLUS = { '+' };
     char[] WILDCARD_CAPTURE_NAME_PREFIX = "capture#".toCharArray(); //$NON-NLS-1$
     char[] WILDCARD_CAPTURE_NAME_SUFFIX = "-of ".toCharArray(); //$NON-NLS-1$
+    char[] WILDCARD_CAPTURE_SIGNABLE_NAME_SUFFIX = "capture-of ".toCharArray(); //$NON-NLS-1$
 	char[] WILDCARD_CAPTURE = { '!' };
 	char[] CAPTURE18 = { '^' };
 	char[] BYTE = "byte".toCharArray(); //$NON-NLS-1$
@@ -118,10 +125,12 @@ public interface TypeConstants {
     char[] TYPEBINDING = "TypeBinding".toCharArray(); //$NON-NLS-1$
     char[] DOM = "dom".toCharArray(); //$NON-NLS-1$
     char[] ITYPEBINDING = "ITypeBinding".toCharArray(); //$NON-NLS-1$
+    char[] SPRING = "springframework".toCharArray(); //$NON-NLS-1$
     
 	// Constant compound names
 	char[][] JAVA_LANG = {JAVA, LANG};
 	char[][] JAVA_IO = {JAVA, IO};
+	char[][] JAVA_LANG_ANNOTATION = {JAVA, LANG, ANNOTATION};
 	char[][] JAVA_LANG_ANNOTATION_ANNOTATION = {JAVA, LANG, ANNOTATION, "Annotation".toCharArray()}; //$NON-NLS-1$
 	char[][] JAVA_LANG_ASSERTIONERROR = {JAVA, LANG, "AssertionError".toCharArray()}; //$NON-NLS-1$
 	char[][] JAVA_LANG_CLASS = {JAVA, LANG, "Class".toCharArray()}; //$NON-NLS-1$
@@ -329,15 +338,37 @@ public interface TypeConstants {
 	//    detail for the above:
 	char[] OPTIONAL = "optional".toCharArray(); //$NON-NLS-1$
 
+	// Spring @Autowired annotation
+	char [] AUTOWIRED = "Autowired".toCharArray();  //$NON-NLS-1$
+	char [] BEANS = "beans".toCharArray();  //$NON-NLS-1$
+	char [] FACTORY = "factory".toCharArray(); //$NON-NLS-1$
+	char[][] ORG_SPRING_AUTOWIRED = new char[][] {ORG, SPRING, BEANS, FACTORY, ANNOTATION, AUTOWIRED};
+	char[] REQUIRED = "required".toCharArray(); //$NON-NLS-1$
+
 	// Constraints for generic type argument inference
 	int CONSTRAINT_EQUAL = 0;		// Actual = Formal
 	int CONSTRAINT_EXTENDS = 1;	// Actual << Formal
 	int CONSTRAINT_SUPER = 2;		// Actual >> Formal
 
-	// Constants used to perform bound checks
-	int OK = 0;
-	int UNCHECKED = 1;
-	int MISMATCH = 2;
+	// status of bound checks
+	public static enum BoundCheckStatus {
+		OK, NULL_PROBLEM, UNCHECKED, MISMATCH;
+		/** true if no problem or only a null problem. */
+		boolean isOKbyJLS() {
+			switch (this) {
+				case OK:
+				case NULL_PROBLEM:
+					return true;
+				default:
+					return false;
+			}
+		}
+		public BoundCheckStatus betterOf(BoundCheckStatus other) {
+			if (this.ordinal() < other.ordinal())
+				return this;
+			return other;
+		}
+	}
 
 	// Synthetics
 	char[] INIT = "<init>".toCharArray(); //$NON-NLS-1$
@@ -364,4 +395,9 @@ public interface TypeConstants {
 
 	// synthetic package-info name
 	public static final char[] PACKAGE_INFO_NAME = "package-info".toCharArray(); //$NON-NLS-1$
+	public static final char[] MODULE_INFO_NAME = "module-info".toCharArray(); //$NON-NLS-1$
+	public static final char[] MODULE_INFO_FILE_NAME = "module-info.java".toCharArray(); //$NON-NLS-1$
+
+	// java.base module name
+	char[] JAVA_BASE = "java.base".toCharArray(); //$NON-NLS-1$
 }

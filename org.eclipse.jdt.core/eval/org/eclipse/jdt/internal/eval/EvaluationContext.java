@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -39,7 +43,6 @@ import org.eclipse.jdt.internal.core.util.Util;
 /**
  * @see org.eclipse.jdt.core.eval.IEvaluationContext
  */
-@SuppressWarnings("rawtypes")
 public class EvaluationContext implements EvaluationConstants, SuffixConstants {
 	/**
 	 * Global counters so that several evaluation context can deploy on the same runtime.
@@ -112,7 +115,7 @@ public void complete(
 		int completionPosition,
 		SearchableEnvironment environment,
 		CompletionRequestor requestor,
-		Map options,
+		Map<String, String> options,
 		final IJavaProject project,
 		WorkingCopyOwner owner,
 		IProgressMonitor monitor) {
@@ -160,6 +163,11 @@ public void complete(
 		}
 		public boolean ignoreOptionalProblems() {
 			return false;
+		}
+		@Override
+		public char[] module() {
+			// TODO BETA_JAVA9 Auto-generated method stub
+			return null;
 		}
 	};
 
@@ -241,7 +249,7 @@ public void evaluate(
 	boolean contextIsStatic,
 	boolean contextIsConstructorCall,
 	INameEnvironment environment,
-	Map options,
+	Map<String, String> options,
 	final IRequestor requestor,
 	IProblemFactory problemFactory) throws InstallException {
 
@@ -312,7 +320,7 @@ public void evaluate(
  * @see org.eclipse.jdt.core.eval.IEvaluationContext
  * @exception org.eclipse.jdt.internal.eval.InstallException if the code snippet class files could not be deployed.
  */
-public void evaluate(char[] codeSnippet, INameEnvironment environment, Map options, final IRequestor requestor, IProblemFactory problemFactory) throws InstallException {
+public void evaluate(char[] codeSnippet, INameEnvironment environment, Map<String, String> options, final IRequestor requestor, IProblemFactory problemFactory) throws InstallException {
 	this.evaluate(
 		codeSnippet,
 		null,
@@ -351,12 +359,12 @@ public void evaluateImports(INameEnvironment environment, IRequestor requestor, 
 						parentName = CharOperation.subarray(splitDeclaration, 0, splitLength - 2);
 						pkgName = splitDeclaration[splitLength - 2];
 				}
-				if (!environment.isPackage(parentName, pkgName)) {
+				if (!environment.isPackage(parentName, pkgName, null)) {
 					String[] arguments = new String[] {new String(importDeclaration)};
 					problems[0] = problemFactory.createProblem(importDeclaration, IProblem.ImportNotFound, arguments, arguments, ProblemSeverities.Warning, 0, importDeclaration.length - 1, i, 0);
 				}
 			} else {
-				if (environment.findType(splitDeclaration) == null) {
+				if (environment.findType(splitDeclaration, (char[]) null) == null) {
 					String[] arguments = new String[] {new String(importDeclaration)};
 					problems[0] = problemFactory.createProblem(importDeclaration, IProblem.ImportNotFound, arguments, arguments, ProblemSeverities.Warning, 0, importDeclaration.length - 1, i, 0);
 				}
@@ -375,14 +383,14 @@ public void evaluateImports(INameEnvironment environment, IRequestor requestor, 
  * @exception org.eclipse.jdt.internal.eval.InstallException if the code snippet class files could not be deployed.
  * @exception java.lang.IllegalArgumentException if the global has not been installed yet.
  */
-public void evaluateVariable(GlobalVariable variable, INameEnvironment environment, Map options, IRequestor requestor, IProblemFactory problemFactory) throws InstallException {
+public void evaluateVariable(GlobalVariable variable, INameEnvironment environment, Map<String, String> options, IRequestor requestor, IProblemFactory problemFactory) throws InstallException {
 	this.evaluate(variable.getName(), environment, options, requestor, problemFactory);
 }
 /**
  * @see org.eclipse.jdt.core.eval.IEvaluationContext
  * @exception org.eclipse.jdt.internal.eval.InstallException if the code snippet class files could not be deployed.
  */
-public void evaluateVariables(INameEnvironment environment, Map options, IRequestor requestor, IProblemFactory problemFactory) throws InstallException {
+public void evaluateVariables(INameEnvironment environment, Map<String, String> options, IRequestor requestor, IProblemFactory problemFactory) throws InstallException {
 	deployCodeSnippetClassIfNeeded(requestor);
 	VariablesEvaluator evaluator = new VariablesEvaluator(this, environment, options, requestor, problemFactory);
 	ClassFile[] classes = evaluator.getClasses();
@@ -574,7 +582,7 @@ public void select(
 	int selectionSourceEnd,
 	SearchableEnvironment environment,
 	ISelectionRequestor requestor,
-	Map options,
+	Map<String, String> options,
 	WorkingCopyOwner owner) {
 
 	final char[] className = "CodeSnippetSelection".toCharArray(); //$NON-NLS-1$
@@ -607,6 +615,10 @@ public void select(
 		}
 		public boolean ignoreOptionalProblems() {
 			return false;
+		}
+		@Override
+		public char[] module() {
+			return null;
 		}
 	};
 	SelectionEngine engine = new SelectionEngine(environment, mapper.getSelectionRequestor(requestor), options, owner);

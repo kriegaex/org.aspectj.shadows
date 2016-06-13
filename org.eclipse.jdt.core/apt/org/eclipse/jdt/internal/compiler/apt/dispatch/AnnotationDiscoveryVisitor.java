@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2006, 2012 IBM Corporation and others.
+ * Copyright (c) 2006, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -17,7 +17,6 @@ import org.eclipse.jdt.internal.compiler.ASTVisitor;
 import org.eclipse.jdt.internal.compiler.apt.model.ElementImpl;
 import org.eclipse.jdt.internal.compiler.apt.model.Factory;
 import org.eclipse.jdt.internal.compiler.apt.util.ManyToMany;
-import org.eclipse.jdt.internal.compiler.ast.ASTNode;
 import org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.Annotation;
 import org.eclipse.jdt.internal.compiler.ast.Argument;
@@ -36,6 +35,7 @@ import org.eclipse.jdt.internal.compiler.lookup.CompilationUnitScope;
 import org.eclipse.jdt.internal.compiler.lookup.FieldBinding;
 import org.eclipse.jdt.internal.compiler.lookup.MethodBinding;
 import org.eclipse.jdt.internal.compiler.lookup.MethodScope;
+import org.eclipse.jdt.internal.compiler.lookup.ReferenceBinding;
 import org.eclipse.jdt.internal.compiler.lookup.SourceTypeBinding;
 import org.eclipse.jdt.internal.compiler.lookup.TypeVariableBinding;
 
@@ -55,7 +55,7 @@ public class AnnotationDiscoveryVisitor extends ASTVisitor {
 	public AnnotationDiscoveryVisitor(BaseProcessingEnvImpl env) {
 		_env = env;
 		_factory = env.getFactory();
-		_annoToElement = new ManyToMany<TypeElement, Element>();
+		_annoToElement = new ManyToMany<>();
 	}
 
 	@Override
@@ -71,7 +71,7 @@ public class AnnotationDiscoveryVisitor extends ASTVisitor {
 					argument.binding = new AptSourceLocalVariableBinding(argument.binding, binding);
 				}
 			}
-			if (annotations != null) {
+			if (annotations != null && argument.binding != null) {
 				this.resolveAnnotations(
 						scope,
 						annotations,
@@ -230,13 +230,16 @@ public class AnnotationDiscoveryVisitor extends ASTVisitor {
 		
 		boolean old = scope.insideTypeAnnotation;
 		scope.insideTypeAnnotation = true;
-		ASTNode.resolveAnnotations(scope, annotations, currentBinding);
+		currentBinding.getAnnotationTagBits();
 		scope.insideTypeAnnotation = old;
 		ElementImpl element = (ElementImpl) _factory.newElement(currentBinding);
 		AnnotationBinding [] annotationBindings = element.getPackedAnnotationBindings(); // discovery is never in terms of repeating annotation.
 		for (AnnotationBinding binding : annotationBindings) {
-			if (binding != null) { // binding should be resolved, but in case it's not, ignore it: it could have been wrapped into a container.
-				TypeElement anno = (TypeElement)_factory.newElement(binding.getAnnotationType());
+			ReferenceBinding annotationType = binding.getAnnotationType();
+			if (binding != null
+					&& Annotation.isAnnotationTargetAllowed(scope, annotationType, currentBinding)
+					) { // binding should be resolved, but in case it's not, ignore it: it could have been wrapped into a container.
+				TypeElement anno = (TypeElement)_factory.newElement(annotationType);
 				_annoToElement.put(anno, element);
 			}
 		}

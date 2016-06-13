@@ -1,12 +1,18 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
+ *     Stephan Herrmann - Contribution for
+ *								Bug 440477 - [null] Infrastructure for feeding external annotations into compilation
  *******************************************************************************/
 package org.eclipse.jdt.internal.core.builder;
 
@@ -15,6 +21,7 @@ import org.eclipse.core.runtime.*;
 
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
+import org.eclipse.jdt.internal.compiler.env.INameEnvironment;
 import org.eclipse.jdt.internal.compiler.env.AccessRule;
 import org.eclipse.jdt.internal.compiler.util.SimpleLookupTable;
 import org.eclipse.jdt.internal.core.ClasspathAccessRule;
@@ -30,6 +37,7 @@ public class State {
 String javaProjectName;
 public ClasspathMultiDirectory[] sourceLocations;
 ClasspathLocation[] binaryLocations;
+INameEnvironment environment;
 // keyed by the project relative path of the type (i.e. "src1/p1/p2/A.java"), value is a ReferenceCollection or an AdditionalTypeCollection
 SimpleLookupTable references;
 // keyed by qualified type name "p1/p2/A", value is the project relative path which defines this type "src1/p1/p2/A.java"
@@ -45,7 +53,7 @@ private long previousStructuralBuildTime;
 private StringSet structurallyChangedTypes;
 public static int MaxStructurallyChangedTypes = 100; // keep track of ? structurally changed types, otherwise consider all to be changed
 
-public static final byte VERSION = 0x001B;
+public static final byte VERSION = 0x001D;
 
 static final byte SOURCE_FOLDER = 1;
 static final byte BINARY_FOLDER = 2;
@@ -61,6 +69,7 @@ protected State(JavaBuilder javaBuilder) {
 	this.previousStructuralBuildTime = -1;
 	this.structurallyChangedTypes = null;
 	this.javaProjectName = javaBuilder.currentProject.getName();
+	this.environment = javaBuilder.nameEnvironment;
 	this.sourceLocations = javaBuilder.nameEnvironment.sourceLocations;
 	this.binaryLocations = javaBuilder.nameEnvironment.binaryLocations;
 	this.references = new SimpleLookupTable(7);
@@ -191,7 +200,7 @@ void recordLocatorForType(String qualifiedTypeName, String typeLocator) {
 void recordStructuralDependency(IProject prereqProject, State prereqState) {
 	if (prereqState != null)
 		if (prereqState.lastStructuralBuildTime > 0) // can skip if 0 (full build) since its assumed to be 0 if unknown
-			this.structuralBuildTimes.put(prereqProject.getName(), new Long(prereqState.lastStructuralBuildTime));
+			this.structuralBuildTimes.put(prereqProject.getName(), Long.valueOf(prereqState.lastStructuralBuildTime));
 }
 
 void removeLocator(String typeLocatorToRemove) {
@@ -247,7 +256,7 @@ static State read(IProject project, DataInputStream in) throws IOException {
 		if ((folderName = in.readUTF()).length() > 0) sourceFolder = project.getFolder(folderName);
 		if ((folderName = in.readUTF()).length() > 0) outputFolder = project.getFolder(folderName);
 		ClasspathMultiDirectory md =
-			(ClasspathMultiDirectory) ClasspathLocation.forSourceFolder(sourceFolder, outputFolder, readNames(in), readNames(in), in.readBoolean());
+			(ClasspathMultiDirectory) ClasspathLocation.forSourceFolder(sourceFolder, outputFolder, readNames(in), readNames(in), in.readBoolean(), newState.environment);
 		if (in.readBoolean())
 			md.hasIndependentOutputFolder = true;
 		newState.sourceLocations[i] = md;
@@ -266,19 +275,19 @@ static State read(IProject project, DataInputStream in) throws IOException {
 				IContainer outputFolder = path.segmentCount() == 1
 					? (IContainer) root.getProject(path.toString())
 					: (IContainer) root.getFolder(path);
-				newState.binaryLocations[i] = ClasspathLocation.forBinaryFolder(outputFolder, in.readBoolean(), readRestriction(in));
+				newState.binaryLocations[i] = ClasspathLocation.forBinaryFolder(outputFolder, in.readBoolean(), readRestriction(in), new Path(in.readUTF()), newState.environment);
 				break;
 			case EXTERNAL_JAR :
-				newState.binaryLocations[i] = ClasspathLocation.forLibrary(in.readUTF(), in.readLong(), readRestriction(in));
+				newState.binaryLocations[i] = ClasspathLocation.forLibrary(in.readUTF(), in.readLong(), readRestriction(in), new Path(in.readUTF()), newState.environment);
 				break;
 			case INTERNAL_JAR :
-				newState.binaryLocations[i] = ClasspathLocation.forLibrary(root.getFile(new Path(in.readUTF())), readRestriction(in));
+				newState.binaryLocations[i] = ClasspathLocation.forLibrary(root.getFile(new Path(in.readUTF())), readRestriction(in), new Path(in.readUTF()), newState.environment);
 		}
 	}
 
 	newState.structuralBuildTimes = new SimpleLookupTable(length = in.readInt());
 	for (int i = 0; i < length; i++)
-		newState.structuralBuildTimes.put(in.readUTF(), new Long(in.readLong()));
+		newState.structuralBuildTimes.put(in.readUTF(), Long.valueOf(in.readLong()));
 
 	String[] internedTypeLocators = new String[length = in.readInt()];
 	for (int i = 0; i < length; i++)
@@ -452,7 +461,8 @@ void write(DataOutputStream out) throws IOException {
 			out.writeUTF(cd.binaryFolder.getFullPath().toString());
 			out.writeBoolean(cd.isOutputFolder);
 			writeRestriction(cd.accessRuleSet, out);
-		} else {
+			out.writeUTF(cd.externalAnnotationPath != null ? cd.externalAnnotationPath : ""); //$NON-NLS-1$
+		} else if (c instanceof ClasspathJar) {
 			ClasspathJar jar = (ClasspathJar) c;
 			if (jar.resource == null) {
 				out.writeByte(EXTERNAL_JAR);
@@ -463,6 +473,14 @@ void write(DataOutputStream out) throws IOException {
 				out.writeUTF(jar.resource.getFullPath().toString());
 			}
 			writeRestriction(jar.accessRuleSet, out);
+			out.writeUTF(jar.externalAnnotationPath != null ? jar.externalAnnotationPath : ""); //$NON-NLS-1$
+		} else {
+			ClasspathJrt jrt = (ClasspathJrt) c;
+			out.writeByte(EXTERNAL_JAR);
+			out.writeUTF(jrt.zipFilename);
+			out.writeLong(-1);
+			writeRestriction(null, out);
+			out.writeUTF(""); //$NON-NLS-1$
 		}
 	}
 
@@ -498,7 +516,7 @@ void write(DataOutputStream out) throws IOException {
 				length--;
 				String key = (String) keyTable[i];
 				out.writeUTF(key);
-				internedTypeLocators.put(key, new Integer(internedTypeLocators.elementSize));
+				internedTypeLocators.put(key, Integer.valueOf(internedTypeLocators.elementSize));
 			}
 		}
 		if (JavaBuilder.DEBUG && length != 0)
@@ -542,17 +560,17 @@ void write(DataOutputStream out) throws IOException {
 			for (int j = 0, m = rNames.length; j < m; j++) {
 				char[] rName = rNames[j];
 				if (!internedRootNames.containsKey(rName)) // remember the names have been interned
-					internedRootNames.put(rName, new Integer(internedRootNames.elementSize));
+					internedRootNames.put(rName, Integer.valueOf(internedRootNames.elementSize));
 			}
 			char[][][] qNames = collection.qualifiedNameReferences;
 			for (int j = 0, m = qNames.length; j < m; j++) {
 				char[][] qName = qNames[j];
 				if (!internedQualifiedNames.containsKey(qName)) { // remember the names have been interned
-					internedQualifiedNames.put(qName, new Integer(internedQualifiedNames.elementSize));
+					internedQualifiedNames.put(qName, Integer.valueOf(internedQualifiedNames.elementSize));
 					for (int k = 0, n = qName.length; k < n; k++) {
 						char[] sName = qName[k];
 						if (!internedSimpleNames.containsKey(sName)) // remember the names have been interned
-							internedSimpleNames.put(sName, new Integer(internedSimpleNames.elementSize));
+							internedSimpleNames.put(sName, Integer.valueOf(internedSimpleNames.elementSize));
 					}
 				}
 			}
@@ -560,7 +578,7 @@ void write(DataOutputStream out) throws IOException {
 			for (int j = 0, m = sNames.length; j < m; j++) {
 				char[] sName = sNames[j];
 				if (!internedSimpleNames.containsKey(sName)) // remember the names have been interned
-					internedSimpleNames.put(sName, new Integer(internedSimpleNames.elementSize));
+					internedSimpleNames.put(sName, Integer.valueOf(internedSimpleNames.elementSize));
 			}
 		}
 	}

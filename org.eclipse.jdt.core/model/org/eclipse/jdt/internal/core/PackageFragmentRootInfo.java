@@ -16,6 +16,8 @@ import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 
 import org.eclipse.jdt.core.*;
+import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
+import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.core.util.Util;
 
 /**
@@ -44,6 +46,7 @@ class PackageFragmentRootInfo extends OpenableElementInfo {
 
 	private boolean ignoreOptionalProblems;
 	private boolean initialized;
+	private boolean isModule;
 /**
  * Create and initialize a new instance of the receiver
  */
@@ -149,6 +152,31 @@ synchronized Object[] getNonJavaResources(IJavaProject project, IResource underl
 		this.nonJavaResources = resources;
 	}
 	return resources;
+}
+
+public boolean isModule(IResource resource, IPackageFragmentRoot handle) throws JavaModelException {
+	if (this.module == ModuleEnvironment.UNNAMED_MODULE)
+		return false;
+	if (this.module != null || this.isModule == true)
+		return true;
+	IPackageFragment fragment = handle.getPackageFragment(""); //$NON-NLS-1$
+	if (handle.getKind() == IPackageFragmentRoot.K_SOURCE) {
+		ICompilationUnit[] units = fragment.getCompilationUnits();
+		for (ICompilationUnit unit : units) {
+			if (unit.getElementName().toLowerCase().indexOf(new String(TypeConstants.MODULE_INFO_NAME)) != -1) {
+				return (this.isModule = true);
+			}
+		}
+	} else {
+		IClassFile[] classfiles = fragment.getClassFiles();
+		for (IClassFile claaz : classfiles) {
+			if (claaz.getElementName().toLowerCase().indexOf(new String(TypeConstants.MODULE_INFO_NAME)) != -1) {
+				return (this.isModule = true);
+			}
+		}
+	}
+	this.setModule(ModuleEnvironment.UNNAMED_MODULE);
+	return false;
 }
 /**
  * Returns the kind of this root.

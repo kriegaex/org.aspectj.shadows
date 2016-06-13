@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -15,6 +19,8 @@ package org.eclipse.jdt.internal.core;
 
 import java.io.*;
 import java.net.URI;
+import java.nio.file.FileVisitResult;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -69,6 +75,7 @@ import org.eclipse.jdt.core.WorkingCopyOwner;
 import org.eclipse.jdt.core.compiler.CategorizedProblem;
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.core.eval.IEvaluationContext;
+import org.eclipse.jdt.internal.compiler.util.JRTUtil;
 import org.eclipse.jdt.internal.compiler.util.ObjectVector;
 import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
 import org.eclipse.jdt.internal.core.JavaModelManager.PerProjectInfo;
@@ -616,7 +623,20 @@ public class JavaProject
 				} else if (target instanceof File) {
 					// external target
 					if (JavaModel.isFile(target)) {
-						root = new JarPackageFragmentRoot(entryPath, this);
+						if (JavaModel.isJimage((File) target)) {
+							PerProjectInfo info = getPerProjectInfo();
+							if (info.jrtRoots == null || !info.jrtRoots.containsKey(entryPath)) {
+								ObjectVector imageRoots = new ObjectVector();
+								loadModulesInJimage(entryPath, imageRoots, rootToResolvedEntries, resolvedEntry, referringEntry);
+								info.setJrtPackageRoots(entryPath, imageRoots);
+								accumulatedRoots.addAll(imageRoots);
+								rootIDs.add(rootID);
+							} else {
+								accumulatedRoots.addAll(info.jrtRoots.get(entryPath));
+							}
+						} else {
+							root = new JarPackageFragmentRoot(entryPath, this);
+						}
 					} else if (((File) target).isDirectory()) {
 						root = new ExternalPackageFragmentRoot(entryPath, this);
 					}
@@ -650,6 +670,63 @@ public class JavaProject
 			accumulatedRoots.add(root);
 			rootIDs.add(rootID);
 			if (rootToResolvedEntries != null) rootToResolvedEntries.put(root, ((ClasspathEntry)resolvedEntry).combineWith((ClasspathEntry) referringEntry));
+		}
+	}
+
+	/**
+	 * This bogus package fragment root acts as placeholder plus bridge for the
+	 * real one until the module name becomes available. It is useful in certain
+	 * scenarios like creating package roots from delta processors, search etc.
+	 */
+	class JImageModuleFragmentBridge extends JarPackageFragmentRoot {
+
+		protected JImageModuleFragmentBridge(IPath externalJarPath) {
+			super(externalJarPath, JavaProject.this);
+		}
+		public PackageFragment getPackageFragment(String[] pkgName) {
+			return getPackageFragment(pkgName, null);
+		}
+		public PackageFragment getPackageFragment(String[] pkgName, String mod) {
+			PackageFragmentRoot realRoot = new JrtPackageFragmentRoot(this.jarPath,
+												mod == null ?  JRTUtil.JAVA_BASE : mod,
+														JavaProject.this);
+			return new JarPackageFragment(realRoot, pkgName);
+		}
+		protected boolean computeChildren(OpenableElementInfo info, IResource underlyingResource) throws JavaModelException {
+			// Do nothing, idea is to avoid this being read in JarPackageFragmentRoot as a Jar.
+			return true;
+		}
+		public boolean isModule() {
+			return true;
+		}
+	}
+
+	private void loadModulesInJimage(final IPath imagePath, final ObjectVector roots, final Map rootToResolvedEntries, 
+				final IClasspathEntry resolvedEntry, final IClasspathEntry referringEntry) {
+		try {
+			org.eclipse.jdt.internal.compiler.util.JRTUtil.walkModuleImage(imagePath.toFile(),
+					new org.eclipse.jdt.internal.compiler.util.JRTUtil.JrtFileVisitor<java.nio.file.Path>() {
+				@Override
+				public FileVisitResult visitPackage(java.nio.file.Path dir, java.nio.file.Path mod, BasicFileAttributes attrs) throws IOException {
+					return FileVisitResult.SKIP_SIBLINGS;
+				}
+
+				@Override
+				public FileVisitResult visitFile(java.nio.file.Path path, java.nio.file.Path mod, BasicFileAttributes attrs) throws IOException {
+					return FileVisitResult.SKIP_SIBLINGS;
+				}
+
+				@Override
+				public FileVisitResult visitModule(java.nio.file.Path mod) throws IOException {
+					JrtPackageFragmentRoot root = new JrtPackageFragmentRoot(imagePath, mod.toString(), JavaProject.this);
+					roots.add(root);
+					if (rootToResolvedEntries != null) 
+						rootToResolvedEntries.put(root, ((ClasspathEntry)resolvedEntry).combineWith((ClasspathEntry) referringEntry));
+					return FileVisitResult.SKIP_SUBTREE;
+				}
+			}, JRTUtil.NOTIFY_MODULES);
+		} catch (IOException e) {
+			Util.log(IStatus.ERROR, "Error reading modules from " + imagePath.toOSString()); //$NON-NLS-1$
 		}
 	}
 
@@ -871,14 +948,14 @@ public class JavaProject
 				},
 				new Object[] {
 					status.getMessage(),
-					new Integer(severity),
+					Integer.valueOf(severity),
 					Messages.classpath_buildPath,
 					isCycleProblem ? "true" : "false",//$NON-NLS-1$ //$NON-NLS-2$
 					isClasspathFileFormatProblem ? "true" : "false",//$NON-NLS-1$ //$NON-NLS-2$
 					isOutputOverlapping ? "true" : "false", //$NON-NLS-1$ //$NON-NLS-2$
-					new Integer(status.getCode()),
+					Integer.valueOf(status.getCode()),
 					Util.getProblemArgumentsForMarker(arguments) ,
-					new Integer(CategorizedProblem.CAT_BUILDPATH),
+					Integer.valueOf(CategorizedProblem.CAT_BUILDPATH),
 					JavaBuilder.SOURCE_ID,
 				}
 			);
@@ -1231,7 +1308,7 @@ public class JavaProject
 		}
 		for (int i= 0; i < allRoots.length; i++) {
 			IPackageFragmentRoot classpathRoot= allRoots[i];
-			if (classpathRoot.getPath().equals(path)) {
+			if (classpathRoot.getPath() != null && classpathRoot.getPath().equals(path)) {
 				return classpathRoot;
 			}
 		}
@@ -1588,6 +1665,7 @@ public class JavaProject
 	 * @see JavaElement
 	 */
 	public IJavaElement getHandleFromMemento(String token, MementoTokenizer memento, WorkingCopyOwner owner) {
+		String mod = null;
 		switch (token.charAt(0)) {
 			case JEM_PACKAGEFRAGMENTROOT:
 				String rootPath = IPackageFragmentRoot.DEFAULT_PACKAGEROOT_PATH;
@@ -1597,11 +1675,22 @@ public class JavaProject
 					// https://bugs.eclipse.org/bugs/show_bug.cgi?id=331821
 					if (token == MementoTokenizer.PACKAGEFRAGMENT || token == MementoTokenizer.COUNT) {
 						break;
+					} else if (token == MementoTokenizer.PACKAGEFRAGMENTROOT) {
+						if (memento.hasMoreTokens()) {
+							token = memento.nextToken();
+							if (token != null) {
+								mod = token;
+							
+							}
+						}
+						continue;
 					}
 					rootPath += token;
 				}
-				JavaElement root = (JavaElement)getPackageFragmentRoot(new Path(rootPath));
-				if (token != null && token.charAt(0) == JEM_PACKAGEFRAGMENT) {
+				JavaElement root = (mod == null) ?
+						(JavaElement)getPackageFragmentRoot(new Path(rootPath)) :
+							new JrtPackageFragmentRoot(new Path(rootPath), mod, this);
+				if (token != null && (token.charAt(0) == JEM_PACKAGEFRAGMENT)) {
 					return root.getHandleFromMemento(token, memento, owner);
 				} else {
 					return root.getHandleFromMemento(memento, owner);
@@ -1660,10 +1749,10 @@ public class JavaProject
 	/**
 	 * @see org.eclipse.jdt.core.IJavaProject#getOptions(boolean)
 	 */
-	public Map getOptions(boolean inheritJavaCoreOptions) {
+	public Map<String, String> getOptions(boolean inheritJavaCoreOptions) {
 
 		// initialize to the defaults from JavaCore options pool
-		Map options = inheritJavaCoreOptions ? JavaCore.getOptions() : new Hashtable(5);
+		Map<String, String> options = inheritJavaCoreOptions ? JavaCore.getOptions() : new Hashtable<String, String>(5);
 
 		// Get project specific options
 		JavaModelManager.PerProjectInfo perProjectInfo = null;
@@ -1804,7 +1893,7 @@ public class JavaProject
 		return getPackageFragmentRoot(resource, null/*no entry path*/);
 	}
 
-	private IPackageFragmentRoot getPackageFragmentRoot(IResource resource, IPath entryPath) {
+	IPackageFragmentRoot getPackageFragmentRoot(IResource resource, IPath entryPath) {
 		switch (resource.getType()) {
 			case IResource.FILE:
 				return new JarPackageFragmentRoot(resource, this);
@@ -1833,6 +1922,9 @@ public class JavaProject
 		IFolder linkedFolder = JavaModelManager.getExternalManager().getFolder(externalLibraryPath);
 		if (linkedFolder != null)
 			return new ExternalPackageFragmentRoot(linkedFolder, externalLibraryPath, this);
+		if (JavaModelManager.isJrt(externalLibraryPath)) {
+			return this.new JImageModuleFragmentBridge(externalLibraryPath);
+		}
 		return new JarPackageFragmentRoot(externalLibraryPath, this);
 	}
 
@@ -2962,7 +3054,7 @@ public class JavaProject
 	/**
 	 * @see org.eclipse.jdt.core.IJavaProject#setOptions(Map)
 	 */
-	public void setOptions(Map newOptions) {
+	public void setOptions(Map<String, String> newOptions) {
 
 		IEclipsePreferences projectPreferences = getEclipsePreferences();
 		if (projectPreferences == null) return;
@@ -2970,12 +3062,12 @@ public class JavaProject
 			if (newOptions == null){
 				projectPreferences.clear();
 			} else {
-				Iterator entries = newOptions.entrySet().iterator();
+				Iterator<Map.Entry<String, String>> entries = newOptions.entrySet().iterator();
 				JavaModelManager javaModelManager = JavaModelManager.getJavaModelManager();
 				while (entries.hasNext()){
-					Map.Entry entry = (Map.Entry) entries.next();
-					String key = (String) entry.getKey();
-					String value = (String) entry.getValue();
+					Map.Entry<String, String> entry = entries.next();
+					String key = entry.getKey();
+					String value = entry.getValue();
 					javaModelManager.storePreference(key, value, projectPreferences, newOptions);
 				}
 

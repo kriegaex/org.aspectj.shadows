@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2006, 2011 BEA Systems, Inc. 
+ * Copyright (c) 2006, 2015 BEA Systems, Inc. 
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -17,12 +17,14 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URI;
 import java.util.HashSet;
-import java.util.Iterator;
 
 import javax.annotation.processing.Filer;
 import javax.annotation.processing.FilerException;
 import javax.lang.model.element.Element;
-import javax.tools.*;
+import javax.tools.FileObject;
+import javax.tools.JavaFileManager;
+import javax.tools.JavaFileObject;
+import javax.tools.StandardLocation;
 import javax.tools.JavaFileManager.Location;
 
 import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
@@ -45,7 +47,7 @@ public class BatchFilerImpl implements Filer {
 		_dispatchManager = dispatchManager;
 		_fileManager = env._fileManager;
 		_env = env;
-		_createdFiles = new HashSet<URI>();
+		_createdFiles = new HashSet<>();
 	}
 
 	public void addNewUnit(ICompilationUnit unit) {
@@ -85,13 +87,7 @@ public class BatchFilerImpl implements Filer {
 				location, pkg.toString(), relativeName.toString(), null);
 		URI uri = fo.toUri();
 		if (_createdFiles.contains(uri)) {
-			Iterator<URI> it = _createdFiles.iterator();
-			StringBuilder sb = new StringBuilder("\n----\n");
-			while (it.hasNext()) {
-				URI next = it.next();
-				sb.append(next).append("\n");
-			}
-			throw new FilerException("createResource. Resource already created : " + location + '/' + pkg + '/' + relativeName + " --- uri = " + uri + sb.toString()); //$NON-NLS-1$
+			throw new FilerException("Resource already created : " + location + '/' + pkg + '/' + relativeName); //$NON-NLS-1$
 		}
 
     _createdFiles.add(uri);

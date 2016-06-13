@@ -1,5 +1,6 @@
+// ASPECTJ
 /*******************************************************************************
- * Copyright (c) 2000, 2015 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -11,23 +12,35 @@
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
- *     Stephan Herrmann - Contribution for bug 365992 - [builder] [null] Change of nullness for a parameter doesn't trigger a build for the files that call the method
+ *     Stephan Herrmann - Contribution for
+ *								Bug 365992 - [builder] [null] Change of nullness for a parameter doesn't trigger a build for the files that call the method
+ *								Bug 440477 - [null] Infrastructure for feeding external annotations into compilation
+ *								Bug 440687 - [compiler][batch][null] improve command line option for external annotations
  *     Andy Clement (GoPivotal, Inc) aclement@gopivotal.com - Contributions for
  *         bug 407191 - [1.8] Binary access support for type annotations
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.classfmt;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Arrays;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 import org.eclipse.jdt.core.compiler.CharOperation;
+import org.eclipse.jdt.internal.compiler.codegen.AnnotationTargetTypeConstants;
 import org.eclipse.jdt.internal.compiler.codegen.AttributeNamesConstants;
 import org.eclipse.jdt.internal.compiler.env.*;
 import org.eclipse.jdt.internal.compiler.impl.Constant;
+import org.eclipse.jdt.internal.compiler.lookup.LookupEnvironment;
 import org.eclipse.jdt.internal.compiler.lookup.TagBits;
+import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.compiler.lookup.TypeIds;
+import org.eclipse.jdt.internal.compiler.lookup.BinaryTypeBinding.ExternalAnnotationStatus;
+import org.eclipse.jdt.internal.compiler.util.JRTUtil;
 import org.eclipse.jdt.internal.compiler.util.Util;
 
 public class ClassFileReader extends ClassFileStruct implements IBinaryType {
@@ -40,6 +53,8 @@ public class ClassFileReader extends ClassFileStruct implements IBinaryType {
 	private AnnotationInfo[] annotations;
 	private TypeAnnotationInfo[] typeAnnotations;
 	private FieldInfo[] fields;
+	private IModule moduleDeclaration;
+	public char[] moduleName;
 	private int fieldsCount;
 
 	// initialized in case the .class file is a nested type
@@ -60,6 +75,8 @@ public class ClassFileReader extends ClassFileStruct implements IBinaryType {
 	private char[][][] missingTypeNames;
 	private int enclosingNameAndTypeIndex;
 	private char[] enclosingMethod;
+	private ExternalAnnotationProvider annotationProvider;
+	private ExternalAnnotationStatus externalAnnotationStatus = ExternalAnnotationStatus.NOT_EEA_CONFIGURED;
 
 private static String printTypeModifiers(int modifiers) {
 	java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
@@ -109,15 +126,21 @@ public static ClassFileReader read(
 }
 
 public static ClassFileReader readFromJimage(
-		String jimge,
+		File jrt,
 		String filename)
 		throws ClassFormatException, java.io.IOException {
 
-		byte classFileBytes[] = Util.getClassfileContent(filename);
-		return new ClassFileReader(classFileBytes, filename.toCharArray());
+		return readFromJrt(jrt, filename, null);
+	}
+public static ClassFileReader readFromJrt(
+		File jrt,
+		String filename,
+		IModule module)
+
+		throws ClassFormatException, java.io.IOException {
+		return JRTUtil.getClassfile(jrt, filename, module);
 	}
 
-// TODO: Doesn't appear to be used anywhere. Revisit to remove.
 public static ClassFileReader read(
 	java.util.zip.ZipFile zip,
 	String filename,
@@ -140,6 +163,11 @@ public static ClassFileReader read(String fileName) throws ClassFormatException,
 
 public static ClassFileReader read(String fileName, boolean fullyInitialize) throws ClassFormatException, java.io.IOException {
 	return read(new File(fileName), fullyInitialize);
+}
+
+public ClassFileReader(byte classFileBytes[], char[] fileName, char[] mod) throws ClassFormatException {
+	this(classFileBytes, fileName, false);
+	this.moduleName = mod;
 }
 
 /**
@@ -394,6 +422,9 @@ public ClassFileReader(byte[] classFileBytes, char[] fileName, boolean fullyInit
 								missingTypeOffset += 2;
 							}
 						}
+					} else if (CharOperation.equals(attributeName, AttributeNamesConstants.ModuleName)) {
+						this.moduleDeclaration = ModuleInfo.createModule(this.className, this.reference, this.constantPoolOffsets, readOffset);
+						this.moduleName = this.moduleDeclaration.name();
 					}
 			}
 			readOffset += (6 + u4At(readOffset + 2));
@@ -408,6 +439,88 @@ public ClassFileReader(byte[] classFileBytes, char[] fileName, boolean fullyInit
 			ClassFormatException.ErrTruncatedInput,
 			readOffset);
 	}
+}
+
+/** Auxiliary interface for {@link #setExternalAnnotationProvider(String,String,ZipFile,ZipFileProducer)}. */
+public interface ZipFileProducer { ZipFile produce() throws IOException; }
+
+/**
+ * Create and remember a provider for external annotations using the given basePath,
+ * which is either a directory holding .eea text files, or a zip file of entries of the same format.
+ * @param basePath resolved filesystem path of either directory or zip file
+ * @param qualifiedBinaryTypeName slash-separated type name
+ * @param zipFile an existing zip file for the same basePath, or null. 
+ * 		Output: wl be filled with 
+ * @param producer an optional helper to produce the zipFile when needed.
+ * @return the client provided zip file; 
+ * 		or else a fresh new zip file, to let clients cache it, if desired; 
+ * 		or null to signal that basePath is not a zip file, but a directory.
+ * @throws IOException any unexpected errors during file access. File not found while
+ *		accessing an individual file if basePath is a directory <em>is</em> expected,
+ *		and simply answered with null. If basePath is neither a directory nor a zip file,
+ *		this is unexpected.
+ */
+public ZipFile setExternalAnnotationProvider(String basePath, String qualifiedBinaryTypeName, ZipFile zipFile, ZipFileProducer producer) throws IOException {
+	this.externalAnnotationStatus = ExternalAnnotationStatus.NO_EEA_FILE;
+	String qualifiedBinaryFileName = qualifiedBinaryTypeName + ExternalAnnotationProvider.ANNOTATION_FILE_SUFFIX;
+	if (zipFile == null) {
+		File annotationBase = new File(basePath);
+		if (annotationBase.isDirectory()) {
+			try {
+				String filePath = annotationBase.getAbsolutePath()+'/'+qualifiedBinaryFileName;
+				this.annotationProvider = new ExternalAnnotationProvider(new FileInputStream(filePath), String.valueOf(getName()));
+				this.externalAnnotationStatus = ExternalAnnotationStatus.TYPE_IS_ANNOTATED;
+			} catch (FileNotFoundException e) {
+				// expected, no need to report an error here
+			}
+			return null; // no zipFile
+		}
+		if (!annotationBase.exists())
+			return null; // no zipFile, treat as not-yet-created directory
+		zipFile = (producer != null ? producer.produce() : new ZipFile(annotationBase));
+	}
+	ZipEntry entry = zipFile.getEntry(qualifiedBinaryFileName);
+	if (entry != null) {
+		this.annotationProvider = new ExternalAnnotationProvider(zipFile.getInputStream(entry), String.valueOf(getName()));
+		this.externalAnnotationStatus = ExternalAnnotationStatus.TYPE_IS_ANNOTATED;
+	}
+	return zipFile;
+}
+public boolean hasAnnotationProvider() {
+	return this.annotationProvider != null;
+}
+public void markAsFromSource() {
+	this.externalAnnotationStatus = ExternalAnnotationStatus.FROM_SOURCE;
+}
+@Override
+public ExternalAnnotationStatus getExternalAnnotationStatus() {
+	return this.externalAnnotationStatus;
+}
+/**
+ * Conditionally add external annotations to the mix.
+ * If 'member' is given it must be either of IBinaryField or IBinaryMethod, in which case we're seeking annotations for that member.
+ * Otherwise we're seeking annotations for top-level elements of a type (type parameters & super types).
+ */
+@Override
+public ITypeAnnotationWalker enrichWithExternalAnnotationsFor(ITypeAnnotationWalker walker, Object member, LookupEnvironment environment) {
+	if (walker == ITypeAnnotationWalker.EMPTY_ANNOTATION_WALKER && this.annotationProvider != null) {
+		if (member == null) {
+			return this.annotationProvider.forTypeHeader(environment);
+		} else if (member instanceof IBinaryField) {
+			IBinaryField field = (IBinaryField) member;
+			char[] fieldSignature = field.getGenericSignature();
+			if (fieldSignature == null)
+				fieldSignature = field.getTypeName();
+			return this.annotationProvider.forField(field.getName(), fieldSignature, environment);
+		} else if (member instanceof IBinaryMethod) {
+			IBinaryMethod method = (IBinaryMethod) member;
+			char[] methodSignature = method.getGenericSignature();
+			if (methodSignature == null)
+				methodSignature = method.getMethodDescriptor();
+			return this.annotationProvider.forMethod(method.isConstructor() ? TypeConstants.INIT : method.getSelector(), methodSignature, environment);
+		}
+	}
+	return walker;
 }
 
 /**
@@ -548,6 +661,21 @@ public char[] getEnclosingTypeName() {
  */
 public IBinaryField[] getFields() {
 	return this.fields;
+}
+/**
+ * @see IBinaryType#getModule()
+ */
+public char[] getModule() {
+	return this.moduleName;
+}
+/**
+ * Returns the module declaration that this class file represents. This will be 
+ * null for non module-info class files.
+ * 
+ * @return the module declaration this represents
+ */
+public IModule getModuleDeclaration() {
+	return this.moduleDeclaration;
 }
 
 /**
@@ -914,6 +1042,9 @@ public boolean hasStructuralChanges(byte[] newBytes, boolean orderRequired, bool
 		// annotations
 		if (hasStructuralAnnotationChanges(getAnnotations(), newClassFile.getAnnotations()))
 			return true;
+		if (this.version >= ClassFileConstants.JDK1_8
+				&& hasStructuralTypeAnnotationChanges(getTypeAnnotations(), newClassFile.getTypeAnnotations()))
+			return true;
 
 		// generic signature
 		if (!CharOperation.equals(getGenericSignature(), newClassFile.getGenericSignature()))
@@ -1040,17 +1171,24 @@ private boolean hasStructuralAnnotationChanges(IBinaryAnnotation[] currentAnnota
 	if (currentAnnotationsLength != otherAnnotationsLength)
 		return true;
 	for (int i = 0; i < currentAnnotationsLength; i++) {
-		if (!CharOperation.equals(currentAnnotations[i].getTypeName(), otherAnnotations[i].getTypeName()))
+		Boolean match = matchAnnotations(currentAnnotations[i], otherAnnotations[i]);
+		if (match != null)
+			return match.booleanValue();
+	}
+	return false;
+}
+private Boolean matchAnnotations(IBinaryAnnotation currentAnnotation, IBinaryAnnotation otherAnnotation) {
+	if (!CharOperation.equals(currentAnnotation.getTypeName(), otherAnnotation.getTypeName()))
 			return true;
-		IBinaryElementValuePair[] currentPairs = currentAnnotations[i].getElementValuePairs();
-		IBinaryElementValuePair[] otherPairs = otherAnnotations[i].getElementValuePairs();
+	IBinaryElementValuePair[] currentPairs = currentAnnotation.getElementValuePairs();
+	IBinaryElementValuePair[] otherPairs = otherAnnotation.getElementValuePairs();
 		int currentPairsLength = currentPairs == null ? 0 : currentPairs.length;
 		int otherPairsLength = otherPairs == null ? 0 : otherPairs.length;
 		if (currentPairsLength != otherPairsLength)
-			return true;
+		return Boolean.TRUE;
 		for (int j = 0; j < currentPairsLength; j++) {
 			if (!CharOperation.equals(currentPairs[j].getName(), otherPairs[j].getName()))
-				return true;
+			return Boolean.TRUE;
 			final Object value = currentPairs[j].getValue();
 			final Object value2 = otherPairs[j].getValue();
 			if (value instanceof Object[]) {
@@ -1059,22 +1197,21 @@ private boolean hasStructuralAnnotationChanges(IBinaryAnnotation[] currentAnnota
 					Object[] currentValues2 = (Object[]) value2;
 					final int length = currentValues.length;
 					if (length != currentValues2.length) {
-						return true;
+					return Boolean.TRUE;
 					}
 					for (int n = 0; n < length; n++) {
 						if (!currentValues[n].equals(currentValues2[n])) {
-							return true;
+						return Boolean.TRUE;
 						}
 					}
-					return false;
+				return Boolean.FALSE;
 				}
-				return true;
+			return Boolean.TRUE;
 			} else if (!value.equals(value2)) {
-				return true;
-			}
+			return Boolean.TRUE;
 		}
 	}
-	return false;
+	return null;
 }
 
 private boolean hasStructuralFieldChanges(FieldInfo currentFieldInfo, FieldInfo otherFieldInfo) {
@@ -1086,6 +1223,9 @@ private boolean hasStructuralFieldChanges(FieldInfo currentFieldInfo, FieldInfo 
 	if ((currentFieldInfo.getTagBits() & TagBits.AnnotationDeprecated) != (otherFieldInfo.getTagBits() & TagBits.AnnotationDeprecated))
 		return true;
 	if (hasStructuralAnnotationChanges(currentFieldInfo.getAnnotations(), otherFieldInfo.getAnnotations()))
+		return true;
+	if (this.version >= ClassFileConstants.JDK1_8
+			&& hasStructuralTypeAnnotationChanges(currentFieldInfo.getTypeAnnotations(), otherFieldInfo.getTypeAnnotations()))
 		return true;
 	if (!CharOperation.equals(currentFieldInfo.getName(), otherFieldInfo.getName()))
 		return true;
@@ -1140,9 +1280,12 @@ private boolean hasStructuralMethodChanges(MethodInfo currentMethodInfo, MethodI
 	if (currentAnnotatedParamsCount != otherAnnotatedParamsCount)
 		return true;
 	for (int i=0; i<currentAnnotatedParamsCount; i++) {
-		if (hasStructuralAnnotationChanges(currentMethodInfo.getParameterAnnotations(i), otherMethodInfo.getParameterAnnotations(i)))
+		if (hasStructuralAnnotationChanges(currentMethodInfo.getParameterAnnotations(i, this.classFileName), otherMethodInfo.getParameterAnnotations(i, this.classFileName)))
 			return true;
 	}
+	if (this.version >= ClassFileConstants.JDK1_8
+			&& hasStructuralTypeAnnotationChanges(currentMethodInfo.getTypeAnnotations(), otherMethodInfo.getTypeAnnotations()))
+		return true;
 
 	if (!CharOperation.equals(currentMethodInfo.getSelector(), otherMethodInfo.getSelector()))
 		return true;
@@ -1163,6 +1306,45 @@ private boolean hasStructuralMethodChanges(MethodInfo currentMethodInfo, MethodI
 				return true;
 	}
 	return false;
+}
+
+private boolean hasStructuralTypeAnnotationChanges(IBinaryTypeAnnotation[] currentTypeAnnotations, IBinaryTypeAnnotation[] otherTypeAnnotations) {
+	if (otherTypeAnnotations != null) {
+		// copy so we can delete matched annotations:
+		int len = otherTypeAnnotations.length;
+		System.arraycopy(otherTypeAnnotations, 0, otherTypeAnnotations = new IBinaryTypeAnnotation[len], 0, len);
+	}
+	if (currentTypeAnnotations != null) {
+		loopCurrent:
+		for (IBinaryTypeAnnotation currentAnnotation : currentTypeAnnotations) {
+			if (!affectsSignature(currentAnnotation)) continue;
+			if (otherTypeAnnotations == null)
+				return true;
+			for (int i = 0; i < otherTypeAnnotations.length; i++) {
+				IBinaryTypeAnnotation otherAnnotation = otherTypeAnnotations[i];
+				if (otherAnnotation != null && matchAnnotations(currentAnnotation.getAnnotation(), otherAnnotation.getAnnotation()) == Boolean.TRUE) {
+					otherTypeAnnotations[i] = null; // matched
+					continue loopCurrent;
+				}
+			}
+			return true; // not matched
+		}
+	}
+	if (otherTypeAnnotations != null) {
+		for (IBinaryTypeAnnotation otherAnnotation : otherTypeAnnotations) {
+			if (affectsSignature(otherAnnotation))
+				return true;
+		}
+	}
+	return false;
+}
+
+private boolean affectsSignature(IBinaryTypeAnnotation typeAnnotation) {
+	if (typeAnnotation == null) return false;
+	int targetType = typeAnnotation.getTargetType();
+	if (targetType >= AnnotationTargetTypeConstants.LOCAL_VARIABLE && targetType <= AnnotationTargetTypeConstants.METHOD_REFERENCE_TYPE_ARGUMENT)
+		return false; // affects detail within a block
+	return true;
 }
 
 /**

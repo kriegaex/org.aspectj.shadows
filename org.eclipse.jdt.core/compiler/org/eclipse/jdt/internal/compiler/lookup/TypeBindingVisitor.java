@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2013 IBM Corporation and others.
+ * Copyright (c) 2013, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -17,6 +17,10 @@ import org.eclipse.jdt.internal.compiler.util.SimpleLookupTable;
 public class TypeBindingVisitor {
 
 	private SimpleLookupTable visitedCache;
+
+	public void reset() {
+		this.visitedCache = null;
+	}
 
 	public boolean visit(BaseTypeBinding baseTypeBinding)  {
 		return true;  // continue traversal.
@@ -42,11 +46,15 @@ public class TypeBindingVisitor {
 		return true;  // continue traversal.
 	}
 	
-	public boolean visit(IntersectionCastTypeBinding intersectionCastTypeBinding) {
+	public boolean visit(IntersectionTypeBinding18 intersectionTypeBinding18) {
 		return true;  // continue traversal.
 	}
 	
 	public boolean visit(RawTypeBinding rawTypeBinding) {
+		return true;  // continue traversal.
+	}
+	
+	public boolean visit(PolyTypeBinding polyTypeBinding) {
 		return true;  // continue traversal.
 	}
 
@@ -124,10 +132,14 @@ public class TypeBindingVisitor {
 				}
 				break;
 			
-			case Binding.INTERSECTION_CAST_TYPE:
-				IntersectionCastTypeBinding intersectionCastTypeBinding = (IntersectionCastTypeBinding) type;
-				if (visitor.visit(intersectionCastTypeBinding))
-					visit(visitor, intersectionCastTypeBinding.intersectingTypes);
+			case Binding.INTERSECTION_TYPE18:
+				IntersectionTypeBinding18 intersectionTypeBinding18 = (IntersectionTypeBinding18) type;
+				if (visitor.visit(intersectionTypeBinding18))
+					visit(visitor, intersectionTypeBinding18.intersectingTypes);
+				break;
+				
+			case Binding.POLY_TYPE:
+				visitor.visit((PolyTypeBinding) type);
 				break;
 				
 			default:

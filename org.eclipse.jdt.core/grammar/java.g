@@ -52,7 +52,7 @@ $Terminals
 	interface long native new null package private
 	protected public return short static strictfp super switch
 	synchronized this throw throws transient true try void
-	volatile while
+	volatile while module requires exports to uses provides with
 
 -- AspectJ Extension
 	aspect pointcut around before after declare privileged
@@ -500,6 +500,76 @@ InternalCompilationUnit ::= $empty
 /.$putCase consumeEmptyInternalCompilationUnit(); $break ./
 /:$readableName CompilationUnit:/
 
+--1.9 feature
+InternalCompilationUnit ::= ModuleDeclaration
+/:$compliance 1.9:/
+/.$putCase consumeInternalCompilationUnitWithModuleDeclaration(); $break ./
+
+ModuleDeclaration ::= ModuleHeader ModuleBody
+/:$compliance 1.9:/
+/.$putCase consumeModuleDeclaration(); $break ./
+
+ModuleHeader ::= 'module' UnannotatableName
+/:$compliance 1.9:/
+/.$putCase consumeModuleHeader(); $break ./
+
+ModuleBody ::= '{' ModuleStatementsOpt '}'
+/:$compliance 1.9:/
+/:$no_statements_recovery:/
+ModuleStatementsOpt ::= $empty
+/:$compliance 1.9:/
+ModuleStatementsOpt ::= ModuleStatementsOpt ModuleStatement
+/:$compliance 1.9:/
+
+ModuleStatement ::= RequiresStatement
+/:$compliance 1.9:/
+ModuleStatement ::= ExportsStatement
+/:$compliance 1.9:/
+ModuleStatement ::= UsesStatement
+/:$compliance 1.9:/
+ModuleStatement ::= ProvidesStatement
+/:$compliance 1.9:/
+
+RequiresStatement ::=  SingleRequiresModuleName ';'
+/:$compliance 1.9:/
+/.$putCase consumeRequiresStatement(); $break ./
+SingleRequiresModuleName ::= 'requires' RequiresModifieropt UnannotatableName
+/:$compliance 1.9:/
+/.$putCase consumeSingleRequiresModuleName(); $break ./
+RequiresModifieropt ::= PublicModifier
+/:$compliance 1.9:/
+/.$putCase consumeModifiers(); $break ./
+RequiresModifieropt ::= $empty
+/.$putCase consumeDefaultModifiers(); $break ./
+PublicModifier -> 'public'
+ExportsStatement ::=  SingleExportsPkgName ExportTargetopt ';'
+/:$compliance 1.9:/
+/.$putCase consumeExportsStatement(); $break ./
+ExportTargetopt ::= $empty
+ExportTargetopt ::= 'to' ExportTargetNameList
+/:$compliance 1.9:/
+/.$putCase consumeExportTarget(); $break ./
+ExportTargetNameList ::= UnannotatableName
+/:$compliance 1.9:/
+/.$putCase consumeSingleExportsTargetName(); $break ./
+ExportTargetNameList ::= ExportTargetNameList ',' UnannotatableName
+/:$compliance 1.9:/
+/.$putCase consumeExportsTargetNameList(); $break ./
+SingleExportsPkgName ::= 'exports' UnannotatableName
+/:$compliance 1.9:/
+/.$putCase consumeSingleExportsPkgName(); $break ./
+
+UsesStatement ::=  'uses' Name ';'
+/:$compliance 1.9:/
+/.$putCase consumeUsesStatement(); $break ./
+
+ProvidesStatement ::= 'provides' Name WithClause ';'
+/:$compliance 1.9:/
+/.$putCase consumeProvidesStatement(); $break ./
+WithClause ::= 'with' Name
+/:$compliance 1.9:/
+/.$putCase consumeWithClause(); $break ./
+
 ReduceImports ::= $empty
 /.$putCase consumeReduceImports(); $break ./
 /:$readableName ReduceImports:/
@@ -743,12 +813,12 @@ ClassMemberDeclarationNoAroundMethod ::= ';'
 MethodDeclarationNoAround -> AbstractMethodDeclarationNoAround
 MethodDeclarationNoAround ::= MethodHeaderNoAround MethodBody 
 /.$putCase // set to true to consume a method with a body
-  consumeMethodDeclaration(true);  $break ./
+ consumeMethodDeclaration(true, false);  $break ./
 /:$readableName MethodDeclarationNoAround:/
 
 AbstractMethodDeclarationNoAround ::= MethodHeaderNoAround ';'
 /.$putCase // set to false to consume a method without body
-  consumeMethodDeclaration(false); $break ./
+ consumeMethodDeclaration(false, false); $break ./
 /:$readableName MethodDeclaration:/
 
 MethodHeaderNoAround ::= MethodHeaderNameNoAround FormalParameterListopt MethodHeaderRightParen MethodHeaderExtendedDims MethodHeaderThrowsClauseopt
@@ -2001,8 +2071,9 @@ PrimaryNoNewArray -> FieldAccess
 --1.1 feature
 PrimaryNoNewArray ::= Name '.' 'this'
 /.$putCase consumePrimaryNoNewArrayNameThis(); $break ./
-PrimaryNoNewArray ::= Name '.' 'super'
-/.$putCase consumePrimaryNoNewArrayNameSuper(); $break ./
+
+QualifiedSuperReceiver ::= Name '.' 'super'
+/.$putCase consumeQualifiedSuperReceiver(); $break ./
 
 --1.1 feature
 --PrimaryNoNewArray ::= Type '.' 'class'
@@ -2059,6 +2130,9 @@ ReferenceExpression ::= Name BeginTypeArguments ReferenceExpressionTypeArguments
 /:$compliance 1.8:/
 
 ReferenceExpression ::= Primary '::' NonWildTypeArgumentsopt Identifier
+/.$putCase consumeReferenceExpressionPrimaryForm(); $break ./
+/:$compliance 1.8:/
+ReferenceExpression ::= QualifiedSuperReceiver '::' NonWildTypeArgumentsopt Identifier
 /.$putCase consumeReferenceExpressionPrimaryForm(); $break ./
 /:$compliance 1.8:/
 ReferenceExpression ::= 'super' '::' NonWildTypeArgumentsopt Identifier
@@ -2160,11 +2234,11 @@ ClassInstanceCreationExpression ::= Primary '.' 'new' ClassType EnterInstanceCre
 /.$putCase consumeClassInstanceCreationExpressionQualified() ; $break ./
 
 --1.1 feature
-ClassInstanceCreationExpression ::= ClassInstanceCreationExpressionName 'new' ClassType EnterInstanceCreationArgumentList '(' ArgumentListopt ')' QualifiedClassBodyopt
+ClassInstanceCreationExpression ::= ClassInstanceCreationExpressionName ClassType EnterInstanceCreationArgumentList '(' ArgumentListopt ')' QualifiedClassBodyopt
 /.$putCase consumeClassInstanceCreationExpressionQualified() ; $break ./
 /:$readableName ClassInstanceCreationExpression:/
 
-ClassInstanceCreationExpression ::= ClassInstanceCreationExpressionName 'new' OnlyTypeArguments ClassType EnterInstanceCreationArgumentList '(' ArgumentListopt ')' QualifiedClassBodyopt
+ClassInstanceCreationExpression ::= ClassInstanceCreationExpressionName OnlyTypeArguments ClassType EnterInstanceCreationArgumentList '(' ArgumentListopt ')' QualifiedClassBodyopt
 /.$putCase consumeClassInstanceCreationExpressionQualifiedWithTypeArguments() ; $break ./
 /:$readableName ClassInstanceCreationExpression:/
 
@@ -2172,7 +2246,7 @@ EnterInstanceCreationArgumentList ::= $empty
 /.$putCase consumeEnterInstanceCreationArgumentList(); $break ./
 /:$readableName EnterInstanceCreationArgumentList:/
 
-ClassInstanceCreationExpressionName ::= Name '.'
+ClassInstanceCreationExpressionName ::= Name '.' 'new'
 /.$putCase consumeClassInstanceCreationExpressionName() ; $break ./
 /:$readableName ClassInstanceCreationExpressionName:/
 
@@ -2253,6 +2327,10 @@ FieldAccess ::= 'super' '.' JavaIdentifier -- AJ JavaIdentifier was 'Identifier'
 /.$putCase consumeFieldAccess(true); $break ./
 /:$readableName FieldAccess:/
 
+FieldAccess ::= QualifiedSuperReceiver '.' JavaIdentifier -- AJ JavaIdentifier was 'Identifier'
+/.$putCase consumeFieldAccess(false); $break ./
+/:$readableName FieldAccess:/
+
 MethodInvocation ::= NameOrAj '(' ArgumentListopt ')' -- AspectJ Extension, was Name
 /.$putCase consumeMethodInvocationName(); $break ./
 
@@ -2264,6 +2342,12 @@ MethodInvocation ::= Primary '.' OnlyTypeArguments JavaIdentifier '(' ArgumentLi
 
 MethodInvocation ::= Primary '.' JavaIdentifier '(' ArgumentListopt ')' -- AspectJ Extension, 'Identifier'
 /.$putCase consumeMethodInvocationPrimary(); $break ./
+
+MethodInvocation ::= QualifiedSuperReceiver '.' JavaIdentifier '(' ArgumentListopt ')' -- AspectJ JavaIdentifier was 'Identifier'
+/.$putCase consumeMethodInvocationPrimary(); $break ./
+
+MethodInvocation ::= QualifiedSuperReceiver '.' OnlyTypeArguments JavaIdentifier '(' ArgumentListopt ')' -- AspectJ JavaIdentifier was 'Identifier'
+/.$putCase consumeMethodInvocationPrimaryWithTypeArguments(); $break ./
 
 MethodInvocation ::= 'super' '.' OnlyTypeArguments JavaIdentifier '(' ArgumentListopt ')' -- AspectJ Extension, 'Identifier'
 /.$putCase consumeMethodInvocationSuperWithTypeArguments(); $break ./

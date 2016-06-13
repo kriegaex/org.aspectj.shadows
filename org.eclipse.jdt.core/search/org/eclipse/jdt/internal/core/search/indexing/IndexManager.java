@@ -1,10 +1,14 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ * 
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *******************************************************************************/
@@ -27,6 +31,7 @@ import org.eclipse.jdt.internal.compiler.ISourceElementRequestor;
 import org.eclipse.jdt.internal.compiler.SourceElementParser;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.problem.DefaultProblemFactory;
+import org.eclipse.jdt.internal.compiler.util.JRTUtil;
 import org.eclipse.jdt.internal.compiler.util.SimpleLookupTable;
 import org.eclipse.jdt.internal.compiler.util.SimpleSet;
 import org.eclipse.jdt.internal.core.*;
@@ -58,11 +63,11 @@ public class IndexManager extends JobManager implements IIndexConstants {
 	private File savedIndexNamesFile = new File(getSavedIndexesDirectory(), "savedIndexNames.txt"); //$NON-NLS-1$
 	private File participantIndexNamesFile = new File(getSavedIndexesDirectory(), "participantsIndexNames.txt"); //$NON-NLS-1$
 	private boolean javaLikeNamesChanged = true;
-	public static final Integer SAVED_STATE = new Integer(0);
-	public static final Integer UPDATING_STATE = new Integer(1);
-	public static final Integer UNKNOWN_STATE = new Integer(2);
-	public static final Integer REBUILDING_STATE = new Integer(3);
-	public static final Integer REUSE_STATE = new Integer(4);
+	public static final Integer SAVED_STATE = 0;
+	public static final Integer UPDATING_STATE = 1;
+	public static final Integer UNKNOWN_STATE = 2;
+	public static final Integer REBUILDING_STATE = 3;
+	public static final Integer REUSE_STATE = 4;
 	
 	// search participants who register indexes with the index manager
 	private SimpleLookupTable participantsContainers = null;
@@ -553,6 +558,14 @@ public void indexLibrary(IPath path, IProject requestingProject, URL indexURL) {
 	this.indexLibrary(path, requestingProject, indexURL, false);
 }
 
+private IndexRequest getRequest(Object target, IPath jPath, IndexLocation indexFile, IndexManager manager, boolean updateIndex) {
+	return isJrt(((File) target).getName()) ? new AddJrtToIndex(jPath, indexFile, this, updateIndex) :
+		new AddJarFileToIndex(jPath, indexFile, this, updateIndex);
+}
+
+private boolean isJrt(String fileName) {
+	return fileName != null && fileName.endsWith(JRTUtil.JRT_FS_JAR);
+}
 /**
  * Trigger addition of a library to an index
  * Note: the actual operation is performed in background
@@ -579,9 +592,11 @@ public void indexLibrary(IPath path, IProject requestingProject, URL indexURL, f
 	IndexRequest request = null;
 	Object target = JavaModel.getTarget(path, true);
 	if (target instanceof IFile) {
-		request = new AddJarFileToIndex((IFile) target, indexFile, this, forceIndexUpdate);
+		request = isJrt(((IFile) target).getFullPath().toOSString()) ? 
+				new AddJrtToIndex((IFile) target, indexFile, this, forceIndexUpdate) :
+					new AddJarFileToIndex((IFile) target, indexFile, this, forceIndexUpdate);
 	} else if (target instanceof File) {
-		request = new AddJarFileToIndex(path, indexFile, this, forceIndexUpdate);
+		request = getRequest(target, path, indexFile, this, forceIndexUpdate);
 	} else if (target instanceof IContainer) {
 		request = new IndexBinaryFolder((IContainer) target, this);
 	} else {
@@ -685,9 +700,11 @@ private void rebuildIndex(IndexLocation indexLocation, IPath containerPath, fina
 	} else if (target instanceof IFolder) {
 		request = new IndexBinaryFolder((IFolder) target, this);
 	} else if (target instanceof IFile) {
-		request = new AddJarFileToIndex((IFile) target, null, this, updateIndex);
+		request = isJrt(((IFile) target).getFullPath().toOSString()) ? 
+				new AddJrtToIndex((IFile) target, null, this, updateIndex) :
+					new AddJarFileToIndex((IFile) target, null, this, updateIndex);
 	} else if (target instanceof File) {
-		request = new AddJarFileToIndex(containerPath, null, this, updateIndex);
+		request = getRequest(target, containerPath, null, this, updateIndex);
 	}
 	if (request != null)
 		request(request);

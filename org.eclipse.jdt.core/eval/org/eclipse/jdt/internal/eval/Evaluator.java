@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -36,13 +40,13 @@ import org.eclipse.jdt.internal.core.util.Util;
 public abstract class Evaluator {
 	EvaluationContext context;
 	INameEnvironment environment;
-	Map options;
+	Map<String, String> options;
 	IRequestor requestor;
 	IProblemFactory problemFactory;
 /**
  * Creates a new evaluator.
  */
-Evaluator(EvaluationContext context, INameEnvironment environment, Map options, IRequestor requestor, IProblemFactory problemFactory) {
+Evaluator(EvaluationContext context, INameEnvironment environment, Map<String, String> options, IRequestor requestor, IProblemFactory problemFactory) {
 	this.context = context;
 	this.environment = environment;
 	this.options = options;
@@ -55,7 +59,7 @@ Evaluator(EvaluationContext context, INameEnvironment environment, Map options, 
  * are computed so that they correspond to the given problem. If it is found to be an internal problem,
  * then the evaluation id of the result is the given compilation unit source.
  */
-protected abstract void addEvaluationResultForCompilationProblem(Map resultsByIDs,CategorizedProblem problem, char[] cuSource);
+protected abstract void addEvaluationResultForCompilationProblem(Map<char[], EvaluationResult> resultsByIDs,CategorizedProblem problem, char[] cuSource);
 /**
  * Returns the evaluation results that converts the given compilation result that has problems.
  * If the compilation result has more than one problem, then the problems are broken down so that
@@ -64,7 +68,7 @@ protected abstract void addEvaluationResultForCompilationProblem(Map resultsByID
 protected EvaluationResult[] evaluationResultsForCompilationProblems(CompilationResult result, char[] cuSource) {
 	// Break down the problems and group them by ids in evaluation results
 	CategorizedProblem[] problems = result.getAllProblems();
-	HashMap resultsByIDs = new HashMap(5);
+	HashMap<char[], EvaluationResult> resultsByIDs = new HashMap<>(5);
 	for (int i = 0; i < problems.length; i++) {
 		addEvaluationResultForCompilationProblem(resultsByIDs, problems[i], cuSource);
 	}
@@ -72,9 +76,9 @@ protected EvaluationResult[] evaluationResultsForCompilationProblems(Compilation
 	// Copy results
 	int size = resultsByIDs.size();
 	EvaluationResult[] evalResults = new EvaluationResult[size];
-	Iterator results = resultsByIDs.values().iterator();
+	Iterator<EvaluationResult> results = resultsByIDs.values().iterator();
 	for (int i = 0; i < size; i++) {
-		evalResults[i] = (EvaluationResult)results.next();
+		evalResults[i] = results.next();
 	}
 
 	return evalResults;
@@ -144,6 +148,11 @@ ClassFile[] getClasses() {
 		}
 		public boolean ignoreOptionalProblems() {
 			return false;
+		}
+		@Override
+		public char[] module() {
+			// TODO BETA_JAVA9 Auto-generated method stub
+			return null;
 		}
 	}});
 	if (compilerRequestor.hasErrors) {

@@ -1,26 +1,44 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *******************************************************************************/
 package org.eclipse.jdt.internal.core.hierarchy;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.NullProgressMonitor;
-import org.eclipse.core.runtime.SubProgressMonitor;
-import org.eclipse.jdt.core.*;
+import org.eclipse.core.runtime.SubMonitor;
+import org.eclipse.jdt.core.IJavaElement;
+import org.eclipse.jdt.core.IJavaProject;
+import org.eclipse.jdt.core.IPackageFragmentRoot;
+import org.eclipse.jdt.core.IType;
+import org.eclipse.jdt.core.JavaCore;
+import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jdt.core.compiler.CharOperation;
-import org.eclipse.jdt.core.search.*;
+import org.eclipse.jdt.core.search.IJavaSearchConstants;
+import org.eclipse.jdt.core.search.IJavaSearchScope;
+import org.eclipse.jdt.core.search.SearchParticipant;
+import org.eclipse.jdt.core.search.SearchPattern;
 import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
 import org.eclipse.jdt.internal.compiler.env.IBinaryType;
 import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
@@ -28,7 +46,14 @@ import org.eclipse.jdt.internal.compiler.problem.DefaultProblemFactory;
 import org.eclipse.jdt.internal.compiler.util.HashtableOfObject;
 import org.eclipse.jdt.internal.compiler.util.HashtableOfObjectToInt;
 import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
-import org.eclipse.jdt.internal.core.*;
+import org.eclipse.jdt.internal.core.ClassFile;
+import org.eclipse.jdt.internal.core.IPathRequestor;
+import org.eclipse.jdt.internal.core.JavaModelManager;
+import org.eclipse.jdt.internal.core.JavaProject;
+import org.eclipse.jdt.internal.core.Member;
+import org.eclipse.jdt.internal.core.Openable;
+import org.eclipse.jdt.internal.core.PackageFragment;
+import org.eclipse.jdt.internal.core.SearchableEnvironment;
 import org.eclipse.jdt.internal.core.search.IndexQueryRequestor;
 import org.eclipse.jdt.internal.core.search.JavaSearchParticipant;
 import org.eclipse.jdt.internal.core.search.SubTypeSearchJob;
@@ -110,10 +135,7 @@ public void build(boolean computeSubtypes) {
 			IType focusType = getType();
 			boolean focusIsObject = focusType.getElementName().equals(new String(IIndexConstants.OBJECT));
 			int amountOfWorkForSubtypes = focusIsObject ? 5 : 80; // percentage of work needed to get possible subtypes
-			IProgressMonitor possibleSubtypesMonitor =
-				this.hierarchy.progressMonitor == null ?
-					null :
-					new SubProgressMonitor(this.hierarchy.progressMonitor, amountOfWorkForSubtypes);
+			SubMonitor possibleSubtypesMonitor = this.hierarchy.progressMonitor.split(amountOfWorkForSubtypes);
 			HashSet localTypes = new HashSet(10); // contains the paths that have potential subtypes that are local/anonymous types
 			String[] allPossibleSubtypes;
 			if (((Member)focusType).getOuterMostLocalContext() == null) {
@@ -124,10 +146,7 @@ public void build(boolean computeSubtypes) {
 				allPossibleSubtypes = CharOperation.NO_STRINGS;
 			}
 			if (allPossibleSubtypes != null) {
-				IProgressMonitor buildMonitor =
-					this.hierarchy.progressMonitor == null ?
-						null :
-						new SubProgressMonitor(this.hierarchy.progressMonitor, 100 - amountOfWorkForSubtypes);
+				SubMonitor buildMonitor = this.hierarchy.progressMonitor.split(100 - amountOfWorkForSubtypes);
 				this.hierarchy.initialize(allPossibleSubtypes.length);
 				buildFromPotentialSubtypes(allPossibleSubtypes, localTypes, buildMonitor);
 			}
@@ -204,8 +223,12 @@ private void buildForProject(JavaProject project, ArrayList potentialSubtypes, o
 				// top level or member type
 				if (!inProjectOfFocusType) {
 					char[] typeQualifiedName = focusType.getTypeQualifiedName('.').toCharArray();
-					String[] packageName = ((PackageFragment) focusType.getPackageFragment()).names;
-					if (searchableEnvironment.findType(typeQualifiedName, Util.toCharArrays(packageName)) == null) {
+					PackageFragment fragment = (PackageFragment) focusType.getPackageFragment();
+					String[] packageName = fragment.names;
+					IPackageFragmentRoot root = fragment.getPackageFragmentRoot();
+					String modName = root.isModule() ? root.getElementName() : null;
+					if (searchableEnvironment.findType(typeQualifiedName, Util.toCharArrays(packageName), 
+							modName != null ? modName.toCharArray() : null) == null) {
 						// focus type is not visible in this project: no need to go further
 						return;
 					}

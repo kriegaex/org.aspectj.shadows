@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2015 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -14,18 +14,40 @@
  *     Theodora Yeung (tyeung@bea.com) - ensure that JarPackageFragmentRoot make it into cache
  *                                                           before its contents
  *                                                           (see https://bugs.eclipse.org/bugs/show_bug.cgi?id=102422)
- *     Stephan Herrmann - Contribution for Bug 346010 - [model] strange initialization dependency in OptionTests
+ *     Stephan Herrmann - Contributions for
+ *								Bug 346010 - [model] strange initialization dependency in OptionTests
+ *								Bug 440477 - [null] Infrastructure for feeding external annotations into compilation
  *     Terry Parker <tparker@google.com> - DeltaProcessor misses state changes in archive files, see https://bugs.eclipse.org/bugs/show_bug.cgi?id=357425
  *     Thirumala Reddy Mutchukota <thirumala@google.com> - Contribution to bug: https://bugs.eclipse.org/bugs/show_bug.cgi?id=411423
  *     Terry Parker <tparker@google.com> - [performance] Low hit rates in JavaModel caches - https://bugs.eclipse.org/421165
+ *     Terry Parker <tparker@google.com> - Enable the Java model caches to recover from IO errors - https://bugs.eclipse.org/455042
+ *     Gábor Kövesdán - Contribution for Bug 350000 - [content assist] Include non-prefix matches in auto-complete suggestions
  *******************************************************************************/
 package org.eclipse.jdt.internal.core;
 
-import java.io.*;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.StringReader;
 import java.net.URI;
 import java.text.MessageFormat;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Hashtable;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.zip.ZipException;
 import java.util.zip.ZipFile;
 
@@ -33,17 +55,67 @@ import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 
-import org.eclipse.core.resources.*;
-import org.eclipse.core.runtime.*;
+import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IFolder;
+import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IResource;
+import org.eclipse.core.resources.IResourceChangeEvent;
+import org.eclipse.core.resources.ISaveContext;
+import org.eclipse.core.resources.ISaveParticipant;
+import org.eclipse.core.resources.ISavedState;
+import org.eclipse.core.resources.IWorkspace;
+import org.eclipse.core.resources.IWorkspaceDescription;
+import org.eclipse.core.resources.IWorkspaceRoot;
+import org.eclipse.core.resources.IWorkspaceRunnable;
+import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.resources.WorkspaceJob;
+import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.IConfigurationElement;
+import org.eclipse.core.runtime.IExtension;
+import org.eclipse.core.runtime.IExtensionPoint;
+import org.eclipse.core.runtime.IPath;
+import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.ISafeRunnable;
+import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.MultiStatus;
+import org.eclipse.core.runtime.OperationCanceledException;
+import org.eclipse.core.runtime.Path;
+import org.eclipse.core.runtime.PerformanceStats;
+import org.eclipse.core.runtime.Platform;
+import org.eclipse.core.runtime.Plugin;
+import org.eclipse.core.runtime.QualifiedName;
+import org.eclipse.core.runtime.SafeRunner;
+import org.eclipse.core.runtime.Status;
+import org.eclipse.core.runtime.SubMonitor;
 import org.eclipse.core.runtime.content.IContentTypeManager.ContentTypeChangeEvent;
 import org.eclipse.core.runtime.content.IContentTypeManager.IContentTypeChangeListener;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.core.runtime.preferences.DefaultScope;
 import org.eclipse.core.runtime.preferences.IEclipsePreferences;
+import org.eclipse.core.runtime.preferences.IEclipsePreferences.PreferenceChangeEvent;
 import org.eclipse.core.runtime.preferences.IPreferencesService;
 import org.eclipse.core.runtime.preferences.InstanceScope;
-import org.eclipse.core.runtime.preferences.IEclipsePreferences.PreferenceChangeEvent;
-import org.eclipse.jdt.core.*;
+import org.eclipse.jdt.core.ClasspathContainerInitializer;
+import org.eclipse.jdt.core.IAccessRule;
+import org.eclipse.jdt.core.IClassFile;
+import org.eclipse.jdt.core.IClasspathAttribute;
+import org.eclipse.jdt.core.IClasspathContainer;
+import org.eclipse.jdt.core.IClasspathEntry;
+import org.eclipse.jdt.core.ICompilationUnit;
+import org.eclipse.jdt.core.IJavaElement;
+import org.eclipse.jdt.core.IJavaModel;
+import org.eclipse.jdt.core.IJavaModelStatus;
+import org.eclipse.jdt.core.IJavaModelStatusConstants;
+import org.eclipse.jdt.core.IJavaProject;
+import org.eclipse.jdt.core.IPackageFragment;
+import org.eclipse.jdt.core.IPackageFragmentRoot;
+import org.eclipse.jdt.core.IParent;
+import org.eclipse.jdt.core.IProblemRequestor;
+import org.eclipse.jdt.core.IType;
+import org.eclipse.jdt.core.JavaConventions;
+import org.eclipse.jdt.core.JavaCore;
+import org.eclipse.jdt.core.JavaModelException;
+import org.eclipse.jdt.core.WorkingCopyOwner;
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.core.compiler.CompilationParticipant;
 import org.eclipse.jdt.core.compiler.IProblem;
@@ -56,6 +128,8 @@ import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
 import org.eclipse.jdt.internal.compiler.env.AccessRestriction;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.util.HashtableOfObjectToInt;
+import org.eclipse.jdt.internal.compiler.util.JRTUtil;
+import org.eclipse.jdt.internal.compiler.util.ObjectVector;
 import org.eclipse.jdt.internal.core.JavaProjectElementInfo.ProjectCache;
 import org.eclipse.jdt.internal.core.builder.JavaBuilder;
 import org.eclipse.jdt.internal.core.dom.SourceRangeVerifier;
@@ -66,15 +140,20 @@ import org.eclipse.jdt.internal.core.search.BasicSearchEngine;
 import org.eclipse.jdt.internal.core.search.IRestrictedAccessTypeRequestor;
 import org.eclipse.jdt.internal.core.search.JavaWorkspaceScope;
 import org.eclipse.jdt.internal.core.search.indexing.IndexManager;
+import org.eclipse.jdt.internal.core.search.processing.IJob;
 import org.eclipse.jdt.internal.core.search.processing.JobManager;
 import org.eclipse.jdt.internal.core.util.HashtableOfArrayToObject;
 import org.eclipse.jdt.internal.core.util.LRUCache;
+import org.eclipse.jdt.internal.core.util.LRUCache.Stats;
 import org.eclipse.jdt.internal.core.util.Messages;
 import org.eclipse.jdt.internal.core.util.Util;
 import org.eclipse.jdt.internal.core.util.WeakHashSet;
 import org.eclipse.jdt.internal.core.util.WeakHashSetOfCharArray;
-import org.eclipse.jdt.internal.core.util.LRUCache.Stats;
 import org.eclipse.jdt.internal.formatter.DefaultCodeFormatter;
+import org.eclipse.osgi.service.debug.DebugOptions;
+import org.eclipse.osgi.service.debug.DebugOptionsListener;
+import org.osgi.framework.BundleContext;
+import org.osgi.framework.ServiceRegistration;
 import org.osgi.service.prefs.BackingStoreException;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -92,9 +171,8 @@ import org.xml.sax.SAXException;
  */
 @SuppressWarnings({ "rawtypes", "unchecked" })
 public class JavaModelManager implements ISaveParticipant, IContentTypeChangeListener {
-
+	private static ServiceRegistration<DebugOptionsListener> DEBUG_REGISTRATION;
 	private static final String NON_CHAINING_JARS_CACHE = "nonChainingJarsCache"; //$NON-NLS-1$
-	private static final String INVALID_ARCHIVES_CACHE = "invalidArchivesCache";  //$NON-NLS-1$
 	private static final String EXTERNAL_FILES_CACHE = "externalFilesCache";  //$NON-NLS-1$
 	private static final String ASSUMED_EXTERNAL_FILES_CACHE = "assumedExternalFilesCache";  //$NON-NLS-1$
 
@@ -238,8 +316,6 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 	 */
 	public static final String MAX_COMPILED_UNITS_AT_ONCE = "maxCompiledUnitsAtOnce"; //$NON-NLS-1$
 
-	public static final String JIMAGE_EXT = "jimage"; //$NON-NLS-1$
-
 	/**
 	 * Special value used for recognizing ongoing initialization and breaking initialization cycles
 	 */
@@ -252,6 +328,7 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 		public String toString() { return getDescription(); }
 	};
 
+	private static final String DEBUG = JavaCore.PLUGIN_ID + "/debug"; //$NON-NLS-1$
 	private static final String BUFFER_MANAGER_DEBUG = JavaCore.PLUGIN_ID + "/debug/buffermanager" ; //$NON-NLS-1$
 	private static final String INDEX_MANAGER_DEBUG = JavaCore.PLUGIN_ID + "/debug/indexmanager" ; //$NON-NLS-1$
 	private static final String INDEX_MANAGER_ADVANCED_DEBUG = JavaCore.PLUGIN_ID + "/debug/indexmanager/advanced" ; //$NON-NLS-1$
@@ -311,7 +388,7 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 
 	public static class CompilationParticipants {
 
-		private final static int MAX_SOURCE_LEVEL = 8; // 1.1 to 1.8
+		private final static int MAX_SOURCE_LEVEL = 9; // 1.1 to 1.8 and 9
 
 		/*
 		 * The registered compilation participants (a table from int (source level) to Object[])
@@ -437,6 +514,8 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 		 * ...
 		 * 1.6 -> 5
 		 * 1.7 -> 6
+		 * 1.8 -> 7
+		 * 9 -> 8
 		 * null -> 0
 		 */
 		private int indexForSourceLevel(String sourceLevel) {
@@ -457,6 +536,8 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 					return 6;
 				case ClassFileConstants.MAJOR_VERSION_1_8:
 					return 7;
+				case ClassFileConstants.MAJOR_VERSION_9:
+					return 8;
 				default:
 					// all other cases including ClassFileConstants.MAJOR_VERSION_1_1
 					return 0;
@@ -490,7 +571,7 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 	public final CompilationParticipants compilationParticipants = new CompilationParticipants();
 
 	/* whether an AbortCompilationUnit should be thrown when the source of a compilation unit cannot be retrieved */
-	public ThreadLocal abortOnMissingSource = new ThreadLocal();
+	public ThreadLocal<Boolean> abortOnMissingSource = new ThreadLocal();
 
 	private ExternalFoldersManager externalFoldersManager = ExternalFoldersManager.getExternalFoldersManager();
 
@@ -1102,7 +1183,7 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 	/**
 	 * Set of elements which are out of sync with their buffers.
 	 */
-	protected HashSet elementsOutOfSynchWithBuffers = new HashSet(11);
+	protected HashSet<Openable> elementsOutOfSynchWithBuffers = new HashSet(11);
 
 	/**
 	 * Holds the state used for delta processing.
@@ -1146,6 +1227,7 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 		public Map rootPathToRawEntries; // reverse map from a package fragment root's path to the raw entry
 		public Map rootPathToResolvedEntries; // map from a package fragment root's path to the resolved entry
 		public IPath outputLocation;
+		public Map<IPath, ObjectVector> jrtRoots; // A map between a JRT file system (as a string) and the package fragment roots found in it.
 
 		public IEclipsePreferences preferences;
 		public Hashtable options;
@@ -1197,7 +1279,7 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 						Object target = JavaModel.getExternalTarget(path, true);
 						if (target instanceof File) {
 							long timestamp = DeltaProcessor.getTimeStamp((java.io.File)target);
-							externalTimeStamps.put(path, new Long(timestamp));
+							externalTimeStamps.put(path, Long.valueOf(timestamp));
 						}
 					}
 				}
@@ -1253,6 +1335,11 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 			if (this.rawTimeStamp != timeStamp)
 				return null;
 			return setClasspath(this.rawClasspath, referencedEntries, this.outputLocation, this.rawClasspathStatus, newResolvedClasspath, newRootPathToRawEntries, newRootPathToResolvedEntries, newUnresolvedEntryStatus, addClasspathChange);
+		}
+
+		public synchronized void setJrtPackageRoots(IPath jrtPath, ObjectVector roots) {
+			if (this.jrtRoots == null) this.jrtRoots = new HashMap<>();
+			this.jrtRoots.put(jrtPath, roots);
 		}
 
 		/**
@@ -1437,6 +1524,7 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 	public static boolean CP_RESOLVE_VERBOSE_ADVANCED = false;
 	public static boolean CP_RESOLVE_VERBOSE_FAILURE = false;
 	public static boolean ZIP_ACCESS_VERBOSE = false;
+	public static boolean JRT_ACCESS_VERBOSE = false;
 	
 	/**
 	 * A cache of opened zip files per thread.
@@ -1450,11 +1538,14 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 	 * A set of IPaths for jars that are known to not contain a chaining (through MANIFEST.MF) to another library
 	 */
 	private Set nonChainingJars;
-	
+
+	// The amount of time from when an invalid archive is first sensed until that state is considered stale.
+	private static long INVALID_ARCHIVE_TTL_MILLISECONDS = 2 * 60 * 1000;
+
 	/*
-	 * A set of IPaths for jars that are known to be invalid - such as not being a valid/known format
+	 * A map of IPaths for jars that are known to be invalid (such as not being in a valid/known format), to an eviction timestamp.
 	 */
-	private Set invalidArchives;
+	private Map<IPath, Long> invalidArchives;
 
 	/*
 	 * A set of IPaths for files that are known to be external to the workspace.
@@ -1521,19 +1612,16 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 					propertyName.equals(JavaCore.CORE_OUTPUT_LOCATION_OVERLAPPING_ANOTHER_SOURCE)) {
 					JavaModelManager manager = JavaModelManager.getJavaModelManager();
 					IJavaModel model = manager.getJavaModel();
-					IJavaProject[] projects;
+					IJavaProject[] jProjects;
 					try {
-						projects = model.getJavaProjects();
-						for (int i = 0, pl = projects.length; i < pl; i++) {
-							JavaProject javaProject = (JavaProject) projects[i];
+						jProjects = model.getJavaProjects();
+						IProject[] projects = new IProject[jProjects.length];
+						for (int i = 0, pl = jProjects.length; i < pl; i++) {
+							JavaProject javaProject = (JavaProject) jProjects[i];
+							projects[i] = javaProject.getProject();
 							manager.deltaState.addClasspathValidation(javaProject);
-							try {
-								// need to touch the project to force validation by DeltaProcessor
-					            javaProject.getProject().touch(null);
-					        } catch (CoreException e) {
-					            // skip
-					        }
 						}
+						manager.touchProjects(projects, null);
 					} catch (JavaModelException e) {
 						// skip
 					}
@@ -1601,7 +1689,6 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 		if (Platform.isRunning()) {
 			this.indexManager = new IndexManager();
 			this.nonChainingJars = loadClasspathListCache(NON_CHAINING_JARS_CACHE);
-			this.invalidArchives = loadClasspathListCache(INVALID_ARCHIVES_CACHE);
 			this.externalFiles = loadClasspathListCache(EXTERNAL_FILES_CACHE);
 			this.assumedExternalFiles = loadClasspathListCache(ASSUMED_EXTERNAL_FILES_CACHE);
 			String includeContainerReferencedLib = System.getProperty(RESOLVE_REFERENCED_LIBRARIES_FOR_CONTAINERS);
@@ -1625,11 +1712,9 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 	public void addInvalidArchive(IPath path) {
 		// unlikely to be null
 		if (this.invalidArchives == null) {
-			this.invalidArchives = Collections.synchronizedSet(new HashSet());
+			this.invalidArchives = Collections.synchronizedMap(new HashMap());
 		}
-		if(this.invalidArchives != null) {
-			this.invalidArchives.add(path);
-		}
+		this.invalidArchives.put(path, System.currentTimeMillis() + INVALID_ARCHIVE_TTL_MILLISECONDS);
 	}
 
 	/**
@@ -1674,99 +1759,58 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 		}
 	}
 
-	/**
-	 * Configure the plugin with respect to option settings defined in ".options" file
-	 */
-	public void configurePluginDebugOptions(){
-		if(JavaCore.getPlugin().isDebugging()){
-			String option = Platform.getDebugOption(BUFFER_MANAGER_DEBUG);
-			if(option != null) BufferManager.VERBOSE = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(BUILDER_DEBUG);
-			if(option != null) JavaBuilder.DEBUG = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(COMPILER_DEBUG);
-			if(option != null) Compiler.DEBUG = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(BUILDER_STATS_DEBUG);
-			if(option != null) JavaBuilder.SHOW_STATS = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(COMPLETION_DEBUG);
-			if(option != null) CompletionEngine.DEBUG = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(CP_RESOLVE_DEBUG);
-			if(option != null) JavaModelManager.CP_RESOLVE_VERBOSE = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(CP_RESOLVE_ADVANCED_DEBUG);
-			if(option != null) JavaModelManager.CP_RESOLVE_VERBOSE_ADVANCED = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(CP_RESOLVE_FAILURE_DEBUG);
-			if(option != null) JavaModelManager.CP_RESOLVE_VERBOSE_FAILURE = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(DELTA_DEBUG);
-			if(option != null) DeltaProcessor.DEBUG = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(DELTA_DEBUG_VERBOSE);
-			if(option != null) DeltaProcessor.VERBOSE = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(DOM_AST_DEBUG);
-			if(option != null) SourceRangeVerifier.DEBUG = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(DOM_AST_DEBUG_THROW);
-			if(option != null) {
-				SourceRangeVerifier.DEBUG_THROW = option.equalsIgnoreCase(TRUE) ;
+	public static void registerDebugOptionsListener(BundleContext context) {
+		// register debug options listener
+		Hashtable<String, String> properties = new Hashtable<String, String>(2);
+		properties.put(DebugOptions.LISTENER_SYMBOLICNAME, JavaCore.PLUGIN_ID);
+		DEBUG_REGISTRATION = context.registerService(DebugOptionsListener.class, new DebugOptionsListener() {
+			@Override
+			public void optionsChanged(DebugOptions options) {
+				boolean debug = options.getBooleanOption(DEBUG, false);
+				BufferManager.VERBOSE = debug && options.getBooleanOption(BUFFER_MANAGER_DEBUG, false);
+				JavaBuilder.DEBUG = debug && options.getBooleanOption(BUILDER_DEBUG, false);
+				Compiler.DEBUG = debug && options.getBooleanOption(COMPILER_DEBUG, false);
+				JavaBuilder.SHOW_STATS = debug && options.getBooleanOption(BUILDER_STATS_DEBUG, false);
+				CompletionEngine.DEBUG = debug && options.getBooleanOption(COMPLETION_DEBUG, false);
+				JavaModelManager.CP_RESOLVE_VERBOSE = debug && options.getBooleanOption(CP_RESOLVE_DEBUG, false);
+				JavaModelManager.CP_RESOLVE_VERBOSE_ADVANCED = debug && options.getBooleanOption(CP_RESOLVE_ADVANCED_DEBUG, false);
+				JavaModelManager.CP_RESOLVE_VERBOSE_FAILURE = debug && options.getBooleanOption(CP_RESOLVE_FAILURE_DEBUG, false);
+				DeltaProcessor.DEBUG = debug && options.getBooleanOption(DELTA_DEBUG, false);
+				DeltaProcessor.VERBOSE = debug && options.getBooleanOption(DELTA_DEBUG_VERBOSE, false);
+				SourceRangeVerifier.DEBUG = debug && options.getBooleanOption(DOM_AST_DEBUG, false);
+				SourceRangeVerifier.DEBUG_THROW = debug && options.getBooleanOption(DOM_AST_DEBUG_THROW, false);
 				SourceRangeVerifier.DEBUG |= SourceRangeVerifier.DEBUG_THROW;
+				RewriteEventStore.DEBUG = debug && options.getBooleanOption(DOM_REWRITE_DEBUG, false);
+				TypeHierarchy.DEBUG = debug && options.getBooleanOption(HIERARCHY_DEBUG, false);
+				JobManager.VERBOSE = debug && options.getBooleanOption(INDEX_MANAGER_DEBUG, false);
+				IndexManager.DEBUG = debug && options.getBooleanOption(INDEX_MANAGER_ADVANCED_DEBUG, false);
+				JavaModelManager.VERBOSE = debug && options.getBooleanOption(JAVAMODEL_DEBUG, false);
+				JavaModelCache.VERBOSE = debug && options.getBooleanOption(JAVAMODELCACHE_DEBUG, false);
+				JavaModelOperation.POST_ACTION_VERBOSE = debug && options.getBooleanOption(POST_ACTION_DEBUG, false);
+				NameLookup.VERBOSE = debug && options.getBooleanOption(RESOLUTION_DEBUG, false);
+				BasicSearchEngine.VERBOSE = debug && options.getBooleanOption(SEARCH_DEBUG, false);
+				SelectionEngine.DEBUG = debug && options.getBooleanOption(SELECTION_DEBUG, false);
+				JavaModelManager.ZIP_ACCESS_VERBOSE = debug && options.getBooleanOption(ZIP_ACCESS_DEBUG, false);
+				SourceMapper.VERBOSE = debug && options.getBooleanOption(SOURCE_MAPPER_DEBUG_VERBOSE, false);
+				DefaultCodeFormatter.DEBUG = debug && options.getBooleanOption(FORMATTER_DEBUG, false);
+		
+				// configure performance options
+				if(PerformanceStats.ENABLED) {
+					CompletionEngine.PERF = PerformanceStats.isEnabled(COMPLETION_PERF);
+					SelectionEngine.PERF = PerformanceStats.isEnabled(SELECTION_PERF);
+					DeltaProcessor.PERF = PerformanceStats.isEnabled(DELTA_LISTENER_PERF);
+					JavaModelManager.PERF_VARIABLE_INITIALIZER = PerformanceStats.isEnabled(VARIABLE_INITIALIZER_PERF);
+					JavaModelManager.PERF_CONTAINER_INITIALIZER = PerformanceStats.isEnabled(CONTAINER_INITIALIZER_PERF);
+					ReconcileWorkingCopyOperation.PERF = PerformanceStats.isEnabled(RECONCILE_PERF);
+				}
 			}
-			
-			option = Platform.getDebugOption(DOM_REWRITE_DEBUG);
-			if(option != null) RewriteEventStore.DEBUG = option.equalsIgnoreCase(TRUE) ;
-			
-			option = Platform.getDebugOption(HIERARCHY_DEBUG);
-			if(option != null) TypeHierarchy.DEBUG = option.equalsIgnoreCase(TRUE) ;
+		}, properties);
+	}
 
-			option = Platform.getDebugOption(INDEX_MANAGER_DEBUG);
-			if(option != null) JobManager.VERBOSE = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(INDEX_MANAGER_ADVANCED_DEBUG);
-			if(option != null) IndexManager.DEBUG = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(JAVAMODEL_DEBUG);
-			if(option != null) JavaModelManager.VERBOSE = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(JAVAMODELCACHE_DEBUG);
-			if(option != null) JavaModelCache.VERBOSE = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(POST_ACTION_DEBUG);
-			if(option != null) JavaModelOperation.POST_ACTION_VERBOSE = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(RESOLUTION_DEBUG);
-			if(option != null) NameLookup.VERBOSE = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(SEARCH_DEBUG);
-			if(option != null) BasicSearchEngine.VERBOSE = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(SELECTION_DEBUG);
-			if(option != null) SelectionEngine.DEBUG = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(ZIP_ACCESS_DEBUG);
-			if(option != null) JavaModelManager.ZIP_ACCESS_VERBOSE = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(SOURCE_MAPPER_DEBUG_VERBOSE);
-			if(option != null) SourceMapper.VERBOSE = option.equalsIgnoreCase(TRUE) ;
-
-			option = Platform.getDebugOption(FORMATTER_DEBUG);
-			if(option != null) DefaultCodeFormatter.DEBUG = option.equalsIgnoreCase(TRUE) ;
-		}
-
-		// configure performance options
-		if(PerformanceStats.ENABLED) {
-			CompletionEngine.PERF = PerformanceStats.isEnabled(COMPLETION_PERF);
-			SelectionEngine.PERF = PerformanceStats.isEnabled(SELECTION_PERF);
-			DeltaProcessor.PERF = PerformanceStats.isEnabled(DELTA_LISTENER_PERF);
-			JavaModelManager.PERF_VARIABLE_INITIALIZER = PerformanceStats.isEnabled(VARIABLE_INITIALIZER_PERF);
-			JavaModelManager.PERF_CONTAINER_INITIALIZER = PerformanceStats.isEnabled(CONTAINER_INITIALIZER_PERF);
-			ReconcileWorkingCopyOperation.PERF = PerformanceStats.isEnabled(RECONCILE_PERF);
-		}
+	public static void unregisterDebugOptionsListener() {
+		// unregister debug options listener
+		DEBUG_REGISTRATION.unregister();
+		DEBUG_REGISTRATION = null;
 	}
 
 	/*
@@ -1987,7 +2031,7 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 	/**
 	 * Returns the set of elements which are out of synch with their buffers.
 	 */
-	protected HashSet getElementsOutOfSynchWithBuffers() {
+	protected HashSet<Openable> getElementsOutOfSynchWithBuffers() {
 		return this.elementsOutOfSynchWithBuffers;
 	}
 
@@ -2270,7 +2314,7 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 
 	// Do not modify without modifying getDefaultOptions()
 	private Hashtable getDefaultOptionsNoInitialization() {
-		Map defaultOptionsMap = new CompilerOptions().getMap(); // compiler defaults
+		Map<String, String> defaultOptionsMap = new CompilerOptions().getMap(); // compiler defaults
 
 		// Override some compiler defaults
 		defaultOptionsMap.put(JavaCore.COMPILER_LOCAL_VARIABLE_ATTR, JavaCore.GENERATE);
@@ -2316,6 +2360,7 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 		defaultOptionsMap.put(JavaCore.CODEASSIST_FORBIDDEN_REFERENCE_CHECK, JavaCore.ENABLED);
 		defaultOptionsMap.put(JavaCore.CODEASSIST_DISCOURAGED_REFERENCE_CHECK, JavaCore.DISABLED);
 		defaultOptionsMap.put(JavaCore.CODEASSIST_CAMEL_CASE_MATCH, JavaCore.ENABLED);
+		defaultOptionsMap.put(JavaCore.CODEASSIST_SUBSTRING_MATCH, JavaCore.ENABLED);
 		defaultOptionsMap.put(JavaCore.CODEASSIST_SUGGEST_STATIC_IMPORTS, JavaCore.ENABLED);
 
 		// Time out for parameter names
@@ -2664,20 +2709,17 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 		return this.workspaceScope;
 	}
 
-	public static boolean isJimage(IPath path) {
-		if (path.getFileExtension() != null && path.getFileExtension().equalsIgnoreCase(JIMAGE_EXT)) {
-			return true;
-		}
-		return false;
+	public static boolean isJrt(IPath path) {
+		return path.toString().endsWith(JRTUtil.JRT_FS_JAR);
 	}
 
-	public static boolean isJimage(String path) {
-		return isJimage(new Path(path));
+	public static boolean isJrt(String path) {
+		return isJrt(new Path(path));
 	}
 
 	public void verifyArchiveContent(IPath path) throws CoreException {
-		// TODO: We don't yet know how to open a jimage file given its path. So, simply don't attempt.
-		if (isJimage(path)) {
+		// TODO: we haven't finalized what path the JRT is represented by. Don't attempt to validate it.
+		if (isJrt(path)) {
 			return;
 		}
 		if (isInvalidArchive(path)) {
@@ -2699,8 +2741,11 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 	 * @exception CoreException If unable to create/open the ZipFile
 	 */
 	public ZipFile getZipFile(IPath path) throws CoreException {
+		return getZipFile(path, true);
+	}
 
-		if (isInvalidArchive(path))
+	private ZipFile getZipFile(IPath path, boolean checkInvalidArchiveCache) throws CoreException {
+		if (checkInvalidArchiveCache && isInvalidArchive(path))
 			throw new CoreException(new Status(IStatus.ERROR, JavaCore.PLUGIN_ID, -1, Messages.status_IOException, new ZipException()));
 		
 		ZipCache zipCache;
@@ -3116,6 +3161,26 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 		*/
 	}
 
+	void touchProjects(final IProject[] projectsToTouch, IProgressMonitor progressMonitor) throws JavaModelException {
+		WorkspaceJob touchJob = new WorkspaceJob(Messages.synchronizing_projects_job) {
+			public IStatus runInWorkspace(IProgressMonitor monitor) throws CoreException {
+				SubMonitor subMonitor = SubMonitor.convert(monitor, projectsToTouch.length);
+				for (IProject iProject : projectsToTouch) {
+					if (JavaBuilder.DEBUG) {
+						System.out.println("Touching project " + iProject.getName()); //$NON-NLS-1$
+					}
+					iProject.touch(subMonitor.split(1));
+				}
+				return Status.OK_STATUS;
+			}
+
+			public boolean belongsTo(Object family) {
+				return ResourcesPlugin.FAMILY_MANUAL_REFRESH == family;
+			}
+		};
+		touchJob.schedule();
+	}
+
 	private HashSet getClasspathBeingResolved() {
 	    HashSet result = (HashSet) this.classpathsBeingResolved.get();
 	    if (result == null) {
@@ -3142,12 +3207,41 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 	}
 	
 	public boolean isInvalidArchive(IPath path) {
-		return this.invalidArchives != null && this.invalidArchives.contains(path);
+		if (this.invalidArchives == null)
+			return false;
+		Long evictionTime = this.invalidArchives.get(path);
+		if (evictionTime == null)
+			return false;
+		long now = System.currentTimeMillis();
+
+		// If the TTL for this cache entry has expired, directly check whether the archive is still invalid.
+		// If it transitioned to being valid, remove it from the cache and force an update to project caches.
+		if (now > evictionTime) {
+			try {
+				getZipFile(path, false);
+				removeFromInvalidArchiveCache(path);
+				return false;
+			} catch (CoreException e) {
+				// Archive is still invalid, fall through to reporting it is invalid.
+			}
+		}
+		return true;
 	}
 
 	public void removeFromInvalidArchiveCache(IPath path) {
 		if (this.invalidArchives != null) {
-			this.invalidArchives.remove(path);
+			if (this.invalidArchives.remove(path) != null) {
+				try {
+					// Bug 455042: Force an update of the JavaProjectElementInfo project caches.
+					for (IJavaProject project : getJavaModel().getJavaProjects()) {
+						if (project.findPackageFragmentRoot(path) != null) {
+							((JavaProject) project).resetCaches();
+						}
+					}
+				} catch (JavaModelException e) {
+					Util.log(e, "Unable to retrieve the Java model."); //$NON-NLS-1$
+				}
+			}
 		}
 	}
 
@@ -3263,8 +3357,6 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 	private Set getClasspathListCache(String cacheName) throws CoreException {
 		if (cacheName == NON_CHAINING_JARS_CACHE) 
 			return getNonChainingJarsCache();
-		else if (cacheName == INVALID_ARCHIVES_CACHE)
-			return this.invalidArchives;
 		else if (cacheName == EXTERNAL_FILES_CACHE)
 			return this.externalFiles;
 		else if (cacheName == ASSUMED_EXTERNAL_FILES_CACHE)
@@ -3953,6 +4045,10 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 		return null;
 	}
 
+	void removeFromJarTypeCache(BinaryType type) {
+		this.cache.removeFromJarTypeCache(type);
+	}
+
 	public void removePerProjectInfo(JavaProject javaProject, boolean removeExtJarInfo) {
 		synchronized(this.perProjectInfos) { // use the perProjectInfo collection as its own lock
 			IProject project = javaProject.getProject();
@@ -4335,8 +4431,8 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 
 	private void traceVariableAndContainers(String action, long start) {
 
-		Long delta = new Long(System.currentTimeMillis() - start);
-		Long length = new Long(getVariableAndContainersFile().length());
+		Long delta = Long.valueOf(System.currentTimeMillis() - start);
+		Long length = Long.valueOf(getVariableAndContainersFile().length());
 		String pattern = "{0} {1} bytes in variablesAndContainers.dat in {2}ms"; //$NON-NLS-1$
 		String message = MessageFormat.format(pattern, new Object[]{action, length, delta});
 
@@ -4362,7 +4458,6 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 			case ISaveContext.FULL_SAVE : {
 				// save non-chaining jar, invalid jar and external file caches on full save
 				saveClasspathListCache(NON_CHAINING_JARS_CACHE);
-				saveClasspathListCache(INVALID_ARCHIVES_CACHE);
 				saveClasspathListCache(EXTERNAL_FILES_CACHE);
 				saveClasspathListCache(ASSUMED_EXTERNAL_FILES_CACHE);
 	
@@ -4560,15 +4655,36 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 			}
 
 			// Wait for the end of indexing or a cancel
-			while (this.indexManager.awaitingJobsCount() > 0) {
-				if (monitor != null && monitor.isCanceled()) {
-					return projectInfo.secondaryTypes;
-				}
-				try {
-					Thread.sleep(10);
-				} catch (InterruptedException e) {
-					return projectInfo.secondaryTypes;
-				}
+			try {
+				this.indexManager.performConcurrentJob(new IJob() {
+					@Override
+					public boolean belongsTo(String jobFamily) {
+						return true;
+					}
+
+					@Override
+					public void cancel() {
+						// job is cancelled through progress
+					}
+
+					@Override
+					public void ensureReadyToRun() {
+						// always ready
+					}
+
+					@Override
+					public boolean execute(IProgressMonitor progress) {
+						return progress == null || !progress.isCanceled();
+					}
+
+					@Override
+					public String getJobFamily() {
+						return ""; //$NON-NLS-1$
+					}
+				
+				}, IJob.WaitUntilReady, monitor);
+			} catch (OperationCanceledException oce) {
+				return projectInfo.secondaryTypes;
 			}
 		}
 
@@ -5010,8 +5126,6 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 
 	public void startup() throws CoreException {
 		try {
-			configurePluginDebugOptions();
-
 			// initialize Java model cache
 			this.cache = new JavaModelCache();
 
@@ -5063,6 +5177,9 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 					| IResourceChangeEvent.PRE_DELETE
 					| IResourceChangeEvent.PRE_CLOSE
 					| IResourceChangeEvent.PRE_REFRESH);
+
+			// listen to resource changes affecting external annotations
+			ExternalAnnotationTracker.start(workspace);
 
 			startIndexing();
 
@@ -5119,6 +5236,8 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 		IWorkspace workspace = ResourcesPlugin.getWorkspace();
 		workspace.removeResourceChangeListener(this.deltaState);
 		workspace.removeSaveParticipant(JavaCore.PLUGIN_ID);
+
+		ExternalAnnotationTracker.shutdown(workspace);
 
 		// Stop listening to content-type changes
 		Platform.getContentTypeManager().removeContentTypeChangeListener(this);

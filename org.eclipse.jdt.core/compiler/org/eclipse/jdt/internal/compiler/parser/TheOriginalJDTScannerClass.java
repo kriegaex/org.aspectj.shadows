@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -196,10 +196,10 @@ public class TheOriginalJDTScannerClass implements TerminalTokens {
 		newEntry6 = 0;
 	public boolean insideRecovery = false;
 	int lookBack[] = new int[2]; // fall back to spring forward.
-	private int nextToken = TokenNameNotAToken; // allows for one token push back, only the most recent token can be reliably ungotten.
+	int nextToken = TokenNameNotAToken; // allows for one token push back, only the most recent token can be reliably ungotten.
 	private VanguardScanner vanguardScanner;
 	private VanguardParser vanguardParser;
-	private ConflictedParser activeParser = null;
+	ConflictedParser activeParser = null;
 	private boolean consumingEllipsisAnnotations = false;
 	
 	public static final int RoundBracket = 0;
@@ -2532,7 +2532,9 @@ final char[] optimizedCurrentTokenSource6() {
 	//newIdentCount++;
 	return table[this.newEntry6 = max] = r; //(r = new char[] {c0, c1, c2, c3, c4, c5});
 }
-
+private boolean isInModuleDeclaration() {
+	return this.activeParser != null ? this.activeParser.isParsingModuleDeclaration() : false;
+}
 private void parseTags() {
 	int position = 0;
 	final int currentStartPosition = this.startPosition;
@@ -3095,7 +3097,7 @@ private int internalScanIdentifierOrKeyword(int index, int length, char[] data) 
 				default :
 					return TokenNameIdentifier;
 			}
-		case 'e' : //else extends
+		case 'e' : //else extends exports
 			switch (length) {
 				case 4 :
 					if (data[++index] == 'l') {
@@ -3116,15 +3118,18 @@ private int internalScanIdentifierOrKeyword(int index, int length, char[] data) 
 					}
 					return TokenNameIdentifier;
 				case 7 :
-					if ((data[++index] == 'x')
-						&& (data[++index] == 't')
-						&& (data[++index] == 'e')
-						&& (data[++index] == 'n')
-						&& (data[++index] == 'd')
-						&& (data[++index] == 's'))
-						return TokenNameextends;
-					else
-						return TokenNameIdentifier;
+						if ((data[++index] == 'x')) {
+							if ((data[++index] == 't') && (data[++index] == 'e') && (data[++index] == 'n')
+									&& (data[++index] == 'd') && (data[++index] == 's')) {
+								return TokenNameextends;
+							} else if (isInModuleDeclaration()
+									&& (data[index] == 'p') && (data[++index] == 'o') && (data[++index] == 'r')
+									&& (data[++index] == 't') && (data[++index] == 's')) {
+								return TokenNameexports;
+							} else
+								return TokenNameIdentifier;
+						} else
+							return TokenNameIdentifier;
 				default :
 					return TokenNameIdentifier;
 			}
@@ -3258,6 +3263,22 @@ private int internalScanIdentifierOrKeyword(int index, int length, char[] data) 
 			}
 			return TokenNameIdentifier;
 
+		case 'm': //module
+			switch (length) {
+				case 6 :
+					if (isInModuleDeclaration()
+						&& (data[++index] == 'o')
+						&& (data[++index] == 'd')
+						&& (data[++index] == 'u')
+						&& (data[++index] == 'l')
+						&& (data[++index] == 'e'))
+						return TokenNamemodule;
+					else
+						return TokenNameIdentifier;
+				default :
+					return TokenNameIdentifier;
+			}
+
 		case 'n' : //native new null
 			switch (length) {
 				case 3 :
@@ -3283,7 +3304,7 @@ private int internalScanIdentifierOrKeyword(int index, int length, char[] data) 
 					return TokenNameIdentifier;
 			}
 
-		case 'p' : //package private protected public
+		case 'p' : //package private protected public provides
 			switch (length) {
 				case 6 :
 					if ((data[++index] == 'u')
@@ -3314,6 +3335,18 @@ private int internalScanIdentifierOrKeyword(int index, int length, char[] data) 
 							return TokenNameprivate;
 						} else
 							return TokenNameIdentifier;
+				case 8 :
+					if (isInModuleDeclaration()
+						&& (data[++index] == 'r')
+						&& (data[++index] == 'o')
+						&& (data[++index] == 'v')
+						&& (data[++index] == 'i')
+						&& (data[++index] == 'd')
+						&& (data[++index] == 'e')
+						&& (data[++index] == 's')) {
+						return TokenNameprovides;
+					} else
+						return TokenNameIdentifier;
 				case 9 :
 					if ((data[++index] == 'r')
 						&& (data[++index] == 'o')
@@ -3331,15 +3364,29 @@ private int internalScanIdentifierOrKeyword(int index, int length, char[] data) 
 					return TokenNameIdentifier;
 			}
 
-		case 'r' : //return
-			if (length == 6) {
-				if ((data[++index] == 'e')
-					&& (data[++index] == 't')
-					&& (data[++index] == 'u')
-					&& (data[++index] == 'r')
-					&& (data[++index] == 'n')) {
-					return TokenNamereturn;
-				}
+		case 'r' : //return requires
+			switch (length) {
+				case 6:
+					if ((data[++index] == 'e')
+						&& (data[++index] == 't')
+						&& (data[++index] == 'u')
+						&& (data[++index] == 'r')
+						&& (data[++index] == 'n')) {
+						return TokenNamereturn;
+					} else 
+						return TokenNameIdentifier;
+				case 8:
+					if (isInModuleDeclaration()
+						&& (data[++index] == 'e')
+						&& (data[++index] == 'q')
+						&& (data[++index] == 'u')
+						&& (data[++index] == 'i')
+						&& (data[++index] == 'r')
+						&& (data[++index] == 'e')
+						&& (data[++index] == 's')) {
+						return TokenNamerequires;
+					} else 
+						return TokenNameIdentifier;
 			}
 			return TokenNameIdentifier;
 
@@ -3410,6 +3457,11 @@ private int internalScanIdentifierOrKeyword(int index, int length, char[] data) 
 
 		case 't' : //try throw throws transient this true
 			switch (length) {
+				case 2:
+					if (isInModuleDeclaration() && data[++index] == 'o')
+						return TokenNameto;
+					else
+						return TokenNameIdentifier;
 				case 3 :
 					if ((data[++index] == 'r') && (data[++index] == 'y'))
 						return TokenNametry;
@@ -3459,7 +3511,17 @@ private int internalScanIdentifierOrKeyword(int index, int length, char[] data) 
 				default :
 					return TokenNameIdentifier;
 			}
-
+		case 'u' : //uses
+			switch(length) {
+				case 4 :
+					if (isInModuleDeclaration() 
+							&& (data[++index] == 's') && (data[++index] == 'e') && (data[++index] == 's'))
+						return TokenNameuses;
+					else
+						return TokenNameIdentifier;
+				default :
+					return TokenNameIdentifier;
+			}
 		case 'v' : //void volatile
 			switch (length) {
 				case 4 :
@@ -3483,8 +3545,16 @@ private int internalScanIdentifierOrKeyword(int index, int length, char[] data) 
 					return TokenNameIdentifier;
 			}
 
-		case 'w' : //while widefp
+		case 'w' : //while widefp with
 			switch (length) {
+				case 4:
+					if (isInModuleDeclaration()
+						&& (data[++index] == 'i')
+						&& (data[++index] == 't')
+						&& (data[++index] == 'h'))
+						return TokenNamewith;
+					else
+						return TokenNameIdentifier;
 				case 5 :
 					if ((data[++index] == 'h')
 						&& (data[++index] == 'i')
@@ -3602,6 +3672,12 @@ public int scanNumber(boolean dotPrefix) throws InvalidInputException {
 					throw new InvalidInputException(INVALID_HEXA);
 				}
 			} else if (getNextChar('p', 'P') >= 0) { // consume next character
+				if (end == start) { // Has no digits before exponent
+					if (this.sourceLevel < ClassFileConstants.JDK1_5) {
+						throw new InvalidInputException(ILLEGAL_HEXA_LITERAL);
+					}
+					throw new InvalidInputException(INVALID_HEXA);
+				}
 				this.unicodeAsBackSlash = false;
 				if (((this.currentCharacter = this.source[this.currentPosition++]) == '\\')
 						&& (this.source[this.currentPosition] == 'u')) {
@@ -3992,6 +4068,12 @@ public String toStringAction(int act) {
 			return "volatile"; //$NON-NLS-1$
 		case TokenNamewhile :
 			return "while"; //$NON-NLS-1$
+		case TokenNamemodule :
+			return "module"; //$NON-NLS-1$
+		case TokenNamerequires :
+			return "requires"; //$NON-NLS-1$
+		case TokenNameexports :
+			return "exports"; //$NON-NLS-1$
 
 		case TokenNameIntegerLiteral :
 			return "Integer(" + new String(getCurrentTokenSource()) + ")"; //$NON-NLS-1$ //$NON-NLS-2$
@@ -4208,6 +4290,9 @@ public static boolean isKeyword(int token) {
 		case TerminalTokens.TokenNamevoid:
 		case TerminalTokens.TokenNamevolatile:
 		case TerminalTokens.TokenNamewhile:
+		case TerminalTokens.TokenNamemodule:
+		case TerminalTokens.TokenNamerequires:
+		case TerminalTokens.TokenNameexports:
 			return true;
 		default:
 			return false;
@@ -4222,9 +4307,19 @@ private static final class VanguardScanner extends Scanner {
 	}
 	
 	public int getNextToken() throws InvalidInputException {
-		int token = getNextToken0();
+		int token;
+		if (this.nextToken != TokenNameNotAToken) {
+			token = this.nextToken;
+			this.nextToken = TokenNameNotAToken;
+			return token; // presumed to be unambiguous.
+		}
+		token = getNextToken0();
 		if (token == TokenNameAT && atTypeAnnotation()) {
-			token = TokenNameAT308;
+			if (((VanguardParser) this.activeParser).currentGoal == Goal.LambdaParameterListGoal) {
+				token = disambiguatedToken(token);
+			} else {
+				token = TokenNameAT308;
+			}
 		}
 		return token == TokenNameEOF ? TokenNameNotAToken : token; 
 	}
@@ -4312,12 +4407,15 @@ private static final class VanguardParser extends Parser {
 	public static final boolean SUCCESS = true;
 	public static final boolean FAILURE = false;
 	
+	Goal currentGoal;
+
 	public VanguardParser(VanguardScanner scanner) {
 		this.scanner = scanner;
 	}
 	
 	// Canonical LALR pushdown automaton identical to Parser.parse() minus side effects of any kind, returns the rule reduced.
 	protected boolean parse(Goal goal) {
+		this.currentGoal = goal;
 		try {
 			int act = START_STATE;
 			this.stateStackTop = -1;
@@ -4473,7 +4571,7 @@ public void setActiveParser(ConflictedParser parser) {
 	this.activeParser  = parser;
 	this.lookBack[0] = this.lookBack[1] = TokenNameNotAToken;  // no hand me downs please.
 }
-private int disambiguatedToken(int token) {
+int disambiguatedToken(int token) {
 	final VanguardParser parser = getVanguardParser();
 	if (token == TokenNameLPAREN  && maybeAtLambdaOrCast()) {
 		if (parser.parse(Goal.LambdaParameterListGoal) == VanguardParser.SUCCESS) {

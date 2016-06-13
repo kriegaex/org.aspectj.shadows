@@ -1,10 +1,14 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ * 
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *     Kelly Campbell <kellyc@google.com> - Hangs in SourceMapper during java proposals - https://bugs.eclipse.org/bugs/show_bug.cgi?id=281575
@@ -13,6 +17,8 @@
 package org.eclipse.jdt.internal.core;
 
 import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -60,6 +66,7 @@ import org.eclipse.jdt.internal.compiler.ast.ImportReference;
 import org.eclipse.jdt.internal.compiler.env.IBinaryType;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.problem.DefaultProblemFactory;
+import org.eclipse.jdt.internal.compiler.util.JRTUtil;
 import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
 import org.eclipse.jdt.internal.compiler.util.Util;
 import org.eclipse.jdt.internal.core.util.ReferenceInfoAdapter;
@@ -328,7 +335,7 @@ public class SourceMapper
 		}
 		imports[importsCounter++] = name;
 		this.importsTable.put(this.binaryType, imports);
-		this.importsCounterTable.put(this.binaryType, new Integer(importsCounter));
+		this.importsCounterTable.put(this.binaryType, Integer.valueOf(importsCounter));
 	}
 
 	/**
@@ -453,6 +460,62 @@ public class SourceMapper
 		return -1;
 	}
 
+	class JrtPackageNamesAdderVisitor implements JRTUtil.JrtFileVisitor<java.nio.file.Path> {
+
+		public final HashSet firstLevelPackageNames;
+		final IPackageFragmentRoot root;
+		public String sourceLevel = null;
+		public String complianceLevel = null;
+		public boolean containsADefaultPackage;
+		public boolean containsJavaSource;
+
+		JrtPackageNamesAdderVisitor(HashSet firstLevelPackageNames, String sourceLevel, String complianceLevel,
+				boolean containsADefaultPackage, boolean containsJavaSource, IPackageFragmentRoot root) {
+			this.firstLevelPackageNames = firstLevelPackageNames;
+			this.root = root;
+			this.sourceLevel = sourceLevel;
+			this.complianceLevel = complianceLevel;
+			this.containsADefaultPackage = containsADefaultPackage;
+			this.containsJavaSource = containsJavaSource;
+		}
+		
+		@Override
+		public FileVisitResult visitPackage(java.nio.file.Path dir, java.nio.file.Path mod, BasicFileAttributes attrs) throws IOException {
+			return FileVisitResult.CONTINUE;
+		}
+		
+		@Override
+		public FileVisitResult visitFile(java.nio.file.Path file, java.nio.file.Path mod, BasicFileAttributes attrs) throws IOException {
+			String entryName = file.toString();
+			if (Util.isClassFileName(entryName)) {
+				int index = entryName.indexOf('/');
+				if (index != -1) {
+					String firstLevelPackageName = entryName.substring(0, index);
+					if (!this.firstLevelPackageNames.contains(firstLevelPackageName)) {
+						if (this.sourceLevel == null) {
+							IJavaProject project = this.root.getJavaProject();
+							this.sourceLevel = project.getOption(JavaCore.COMPILER_SOURCE, true);
+							this.complianceLevel = project.getOption(JavaCore.COMPILER_COMPLIANCE, true);
+						}
+						IStatus status = JavaConventions.validatePackageName(firstLevelPackageName, this.sourceLevel, this.complianceLevel);
+						if (status.isOK() || status.getSeverity() == IStatus.WARNING) {
+							this.firstLevelPackageNames.add(firstLevelPackageName);
+						}
+					}
+				} else {
+					this.containsADefaultPackage = true;
+				}
+			} else if (!this.containsJavaSource && org.eclipse.jdt.internal.core.util.Util.isJavaLikeFileName(entryName)) {
+				this.containsJavaSource = true;
+			}
+			return FileVisitResult.CONTINUE;
+		}
+
+		@Override
+		public FileVisitResult visitModule(java.nio.file.Path mod) throws IOException {
+			return FileVisitResult.CONTINUE;
+		}
+	}
 	private synchronized void computeAllRootPaths(IType type) {
 		if (this.areRootPathsComputed) {
 			return;
@@ -471,7 +534,22 @@ public class SourceMapper
 
 		String sourceLevel = null;
 		String complianceLevel = null;
-		if (root.isArchive()) {
+		if (Util.isJrt(pkgFragmentRootPath.toOSString())) {
+			try {
+				JrtPackageNamesAdderVisitor jrtPackageNamesAdderVisitor = new JrtPackageNamesAdderVisitor(firstLevelPackageNames, 
+						sourceLevel, complianceLevel, containsADefaultPackage, containsJavaSource, root);
+				org.eclipse.jdt.internal.compiler.util.JRTUtil.walkModuleImage(root.getPath().toFile(), jrtPackageNamesAdderVisitor, JRTUtil.NOTIFY_FILES);
+				sourceLevel = jrtPackageNamesAdderVisitor.sourceLevel;
+				complianceLevel = jrtPackageNamesAdderVisitor.complianceLevel;
+				containsADefaultPackage = jrtPackageNamesAdderVisitor.containsADefaultPackage;
+				containsJavaSource = jrtPackageNamesAdderVisitor.containsJavaSource;
+			} catch (IOException e) {
+				// We are not reading any specific file, so, move on for now
+				if (VERBOSE) {
+					e.printStackTrace();
+				}
+			}
+		} else if (root.isArchive()) {
 			JavaModelManager manager = JavaModelManager.getJavaModelManager();
 			ZipFile zip = null;
 			try {
@@ -1246,7 +1324,7 @@ public class SourceMapper
 		} else if (this.binaryType.getElementName().equals(typeName))
 			return this.binaryType;
 		else
-			return this.binaryType.getType(typeName);
+			return ((this.typeDepth <= 1) ? this.binaryType : this.types[this.typeDepth - 1]).getType(typeName);
 	}
 
 	/**

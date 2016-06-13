@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -15,6 +15,8 @@
  *								Bug 429958 - [1.8][null] evaluate new DefaultLocation attribute of @NonNullByDefault
  *								Bug 434600 - Incorrect null analysis error reporting on type parameters
  *								Bug 435570 - [1.8][null] @NonNullByDefault illegally tries to affect "throws E"
+ *								Bug 456508 - Unexpected RHS PolyTypeBinding for: <code-snippet>
+ *								Bug 466713 - Null Annotations: NullPointerException using <int @Nullable []> as Type Param
  *        Andy Clement - Contributions for
  *                          Bug 383624 - [1.8][compiler] Revive code generation support for type annotations (from Olivier's work)
  *******************************************************************************/
@@ -83,7 +85,6 @@ public class ParameterizedQualifiedTypeReference extends ArrayQualifiedTypeRefer
 				parameterizedType.boundCheck(scope, this.typeArguments[index]);
 			}
 		}
-		checkNullConstraints(scope, this.typeArguments[index]);
 	}
 	public TypeReference augmentTypeWithAdditionalDimensions(int additionalDimensions, Annotation[][] additionalAnnotations, boolean isVarargs) {
 		int totalDimensions = this.dimensions() + additionalDimensions;
@@ -100,20 +101,24 @@ public class ParameterizedQualifiedTypeReference extends ArrayQualifiedTypeRefer
 	}
 
 	@Override
-    public boolean hasNullTypeAnnotation() {
-    	if (super.hasNullTypeAnnotation())
-    		return true;
-    	if (this.resolvedType != null && !this.resolvedType.hasNullTypeAnnotations())
-    		return false; // shortcut
-    	if (this.typeArguments != null) {
-    		for (int i = 0; i < this.typeArguments.length; i++) {
-    			TypeReference[] arguments = this.typeArguments[i];
-    			for (int j = 0; j < arguments.length; j++) {				
-    				if (arguments[i].hasNullTypeAnnotation())
-    					return true;
+    public boolean hasNullTypeAnnotation(AnnotationPosition position) {
+		if (super.hasNullTypeAnnotation(position))
+			return true;
+		if (position == AnnotationPosition.ANY) {
+	    	if (this.resolvedType != null && !this.resolvedType.hasNullTypeAnnotations())
+	    		return false; // shortcut
+	    	if (this.typeArguments != null) {
+	    		for (int i = 0; i < this.typeArguments.length; i++) {
+	    			TypeReference[] arguments = this.typeArguments[i];
+	    			if (arguments != null) {
+		    			for (int j = 0; j < arguments.length; j++) {
+		    				if (arguments[j].hasNullTypeAnnotation(position))
+		    					return true;
+		    			}
+					}
 				}
-			}
-    	}
+	    	}
+		}
     	return false;
     }
 
@@ -192,9 +197,9 @@ public class ParameterizedQualifiedTypeReference extends ArrayQualifiedTypeRefer
 		TypeBinding type = internalResolveLeafType(scope, checkBounds);
 		createArrayType(scope);
 		resolveAnnotations(scope, location);
-		if (this.typeArguments != null && checkBounds)
+		if (this.typeArguments != null)
 			// relevant null annotations are on the inner most type:
-			checkNullConstraints(scope, this.typeArguments[this.typeArguments.length-1]); 
+			checkIllegalNullAnnotations(scope, this.typeArguments[this.typeArguments.length-1]);
 		return type == null ? type : this.resolvedType;
 	}
 	private TypeBinding internalResolveLeafType(Scope scope, boolean checkBounds) {
@@ -334,6 +339,8 @@ public class ParameterizedQualifiedTypeReference extends ArrayQualifiedTypeRefer
 						parameterizedType.boundCheck(scope, args);
 					else
 						scope.deferBoundCheck(this);
+				} else {
+		    		parameterizedType.arguments = ParameterizedSingleTypeReference.DIAMOND_TYPE_ARGUMENTS;
 				}
 				qualifyingType = parameterizedType;
 		    } else {

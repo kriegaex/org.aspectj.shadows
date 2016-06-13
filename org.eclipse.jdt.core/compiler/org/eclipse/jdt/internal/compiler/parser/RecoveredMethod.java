@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -40,7 +40,6 @@ import org.eclipse.jdt.internal.compiler.util.Util;
  * Internal method structure for parsing recovery
  */
 
-@SuppressWarnings("rawtypes")
 public class RecoveredMethod extends RecoveredElement implements TerminalTokens {
 
 	public AbstractMethodDeclaration methodDeclaration;
@@ -74,6 +73,9 @@ public RecoveredMethod(AbstractMethodDeclaration methodDeclaration, RecoveredEle
  * Record a nested block declaration
  */
 public RecoveredElement add(Block nestedBlockDeclaration, int bracketBalanceValue) {
+	return this.add(nestedBlockDeclaration, bracketBalanceValue, false);
+}
+public RecoveredElement add(Block nestedBlockDeclaration, int bracketBalanceValue, boolean isArgument) {
 	/* default behavior is to delegate recording to parent if any,
 	do not consider elements passed the known end (if set)
 	it must be belonging to an enclosing element
@@ -89,7 +91,7 @@ public RecoveredElement add(Block nestedBlockDeclaration, int bracketBalanceValu
 				}
 	}
 	/* consider that if the opening brace was not found, it is there */
-	if (!this.foundOpeningBrace){
+	if (!this.foundOpeningBrace && !isArgument){
 		this.foundOpeningBrace = true;
 		this.bracketBalance++;
 	}
@@ -174,7 +176,7 @@ public RecoveredElement add(LocalDeclaration localDeclaration, int bracketBalanc
 	if (this.methodBody == null){
 		Block block = new Block(0);
 		block.sourceStart = this.methodDeclaration.bodyStart;
-		RecoveredElement currentBlock = this.add(block, 1);
+		RecoveredElement currentBlock = this.add(block, 1, localDeclaration.isArgument());
 		if (this.bracketBalance > 0){
 			for (int i = 0; i < this.bracketBalance - 1; i++){
 				currentBlock = currentBlock.add(new Block(0), 1);
@@ -335,7 +337,7 @@ public void updateBodyStart(int bodyStart){
 	this.foundOpeningBrace = true;
 	this.methodDeclaration.bodyStart = bodyStart;
 }
-public AbstractMethodDeclaration updatedMethodDeclaration(int depth, Set knownTypes){
+public AbstractMethodDeclaration updatedMethodDeclaration(int depth, Set<TypeDeclaration> knownTypes){
 	/* update annotations */
 	if (this.modifiers != 0) {
 		this.methodDeclaration.modifiers |= this.modifiers;
@@ -574,7 +576,7 @@ public RecoveredElement updateOnOpeningBrace(int braceStart, int braceEnd){
 	return super.updateOnOpeningBrace(braceStart, braceEnd);
 }
 public void updateParseTree(){
-	updatedMethodDeclaration(0, new HashSet());
+	updatedMethodDeclaration(0, new HashSet<TypeDeclaration>());
 }
 /*
  * Update the declarationSourceEnd of the corresponding parse node

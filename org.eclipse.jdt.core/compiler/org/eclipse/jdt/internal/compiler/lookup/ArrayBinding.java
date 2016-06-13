@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -22,6 +22,7 @@
  *								Bug 428019 - [1.8][compiler] Type inference failure with nested generic invocation.
  *								Bug 438458 - [1.8][null] clean up handling of null type annotations wrt type variables
  *								Bug 440759 - [1.8][null] @NonNullByDefault should never affect wildcards and uses of a type variable
+ *								Bug 441693 - [1.8][null] Bogus warning for type argument annotated with @NonNull
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.lookup;
 
@@ -80,7 +81,7 @@ public TypeBinding closestMatch() {
 /**
  * @see org.eclipse.jdt.internal.compiler.lookup.TypeBinding#collectMissingTypes(java.util.List)
  */
-public List collectMissingTypes(List missingTypes) {
+public List<TypeBinding> collectMissingTypes(List<TypeBinding> missingTypes) {
 	if ((this.tagBits & TagBits.HasMissingType) != 0) {
 		missingTypes = this.leafComponentType.collectMissingTypes(missingTypes);
 	}
@@ -399,15 +400,12 @@ public void setTypeAnnotations(AnnotationBinding[] annotations, boolean evalNull
 		for (int i = 0, length = annotations.length; i < length; i++) {
 			AnnotationBinding annotation = annotations[i];
 			if (annotation != null) {
-				switch (annotation.type.id) {
-					case TypeIds.T_ConfiguredAnnotationNullable :
-						nullTagBits  |= TagBits.AnnotationNullable;
-						this.tagBits |= TagBits.HasNullTypeAnnotation;
-						break;
-					case TypeIds.T_ConfiguredAnnotationNonNull :
-						nullTagBits  |= TagBits.AnnotationNonNull;
-						this.tagBits |= TagBits.HasNullTypeAnnotation;
-						break;
+				if (annotation.type.hasNullBit(TypeIds.BitNullableAnnotation)) {
+					nullTagBits  |= TagBits.AnnotationNullable;
+					this.tagBits |= TagBits.HasNullTypeAnnotation;
+				} else if (annotation.type.hasNullBit(TypeIds.BitNonNullAnnotation)) {
+					nullTagBits  |= TagBits.AnnotationNonNull;
+					this.tagBits |= TagBits.HasNullTypeAnnotation;
 				}
 			} else {
 				// null signals end of annotations for the current dimension in the serialized form.
@@ -443,7 +441,14 @@ public void swapUnresolved(UnresolvedReferenceBinding unresolvedType, ReferenceB
 		/* Leaf component type is the key in the type system. If it undergoes change, the array has to be rehashed.
 		   We achieve by creating a fresh array with the new component type and equating this array's id with that.
 		   This means this array can still be found under the old key, but that is harmless (since the component type
-		   is always consulted (see TypeSystem.getArrayType())
+		   is always consulted (see TypeSystem.getArrayType()). 
+		   
+		   This also means that this array type is not a fully interned singleton: There is `this' object and there is 
+		   the array that is being created down below that gets cached by the type system and doled out for all further 
+		   array creations against the same (raw) component type, dimensions and annotations. This again is harmless, 
+		   since TypeBinding.id is consulted for (in)equality checks. 
+		   
+		   See https://bugs.eclipse.org/bugs/show_bug.cgi?id=430425 for details and a test case.
 		*/ 
 		if (this.leafComponentType != resolvedType) //$IDENTITY-COMPARISON$
 			this.id = env.createArrayType(this.leafComponentType, this.dimensions, this.typeAnnotations).id;
@@ -453,17 +458,15 @@ public void swapUnresolved(UnresolvedReferenceBinding unresolvedType, ReferenceB
 public String toString() {
 	return this.leafComponentType != null ? debugName() : "NULL TYPE ARRAY"; //$NON-NLS-1$
 }
-public TypeBinding unannotated(boolean removeOnlyNullAnnotations) {
-	if (!hasTypeAnnotations())
+public TypeBinding unannotated() {
+	return this.hasTypeAnnotations() ? this.environment.getUnannotatedType(this) : this;
+}
+@Override
+public TypeBinding withoutToplevelNullAnnotation() {
+	if (!hasNullTypeAnnotations())
 		return this;
-	if (removeOnlyNullAnnotations) {
-		if (!hasNullTypeAnnotations())
-			return this;
-		AnnotationBinding[] newAnnotations = this.environment.filterNullTypeAnnotations(this.typeAnnotations);
-		if (newAnnotations.length > 0)
-			return this.environment.createArrayType(this.leafComponentType.unannotated(false), this.dimensions, newAnnotations);
-	}
-	return this.environment.getUnannotatedType(this);
+	AnnotationBinding[] newAnnotations = this.environment.filterNullTypeAnnotations(this.typeAnnotations);
+	return this.environment.createArrayType(this.leafComponentType, this.dimensions, newAnnotations);
 }
 @Override
 public TypeBinding uncapture(Scope scope) {
@@ -475,5 +478,11 @@ public TypeBinding uncapture(Scope scope) {
 @Override
 public boolean acceptsNonNullDefault() {
 	return true;
+}
+@Override
+public long updateTagBits() {
+	if (this.leafComponentType != null)
+		this.tagBits |= this.leafComponentType.updateTagBits(); 
+	return super.updateTagBits();
 }
 }

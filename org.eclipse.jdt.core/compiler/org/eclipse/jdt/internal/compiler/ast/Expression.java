@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -7,7 +7,7 @@
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
- *     Stephan Herrmann <stephan@cs.tu-berlin.de> - Contributions for 
+ *     Stephan Herrmann - Contributions for 
  *								bug 292478 - Report potentially null across variable assignment
  *								bug 345305 - [compiler][null] Compiler misidentifies a case of "variable can only be null"
  *								bug 392862 - [1.8][compiler][null] Evaluate null annotations on array types
@@ -25,6 +25,9 @@
  *								Bug 426996 - [1.8][inference] try to avoid method Expression.unresolve()?
  *								Bug 428274 - [1.8] [compiler] Cannot cast from Number to double
  *								Bug 428352 - [1.8][compiler] Resolution errors don't always surface
+ *								Bug 452788 - [1.8][compiler] Type not correctly inferred in lambda expression
+ *     Lars Vogel <Lars.Vogel@vogella.com> - Contributions for
+ *     						Bug 473178
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.ast;
 
@@ -45,6 +48,7 @@ import org.eclipse.jdt.internal.compiler.lookup.Binding;
 import org.eclipse.jdt.internal.compiler.lookup.BlockScope;
 import org.eclipse.jdt.internal.compiler.lookup.ClassScope;
 import org.eclipse.jdt.internal.compiler.lookup.FieldBinding;
+import org.eclipse.jdt.internal.compiler.lookup.InferenceContext18;
 import org.eclipse.jdt.internal.compiler.lookup.LocalVariableBinding;
 import org.eclipse.jdt.internal.compiler.lookup.MethodBinding;
 import org.eclipse.jdt.internal.compiler.lookup.ReferenceBinding;
@@ -71,6 +75,9 @@ public abstract class Expression extends Statement {
 
 	public int implicitConversion;
 	public TypeBinding resolvedType;
+	
+	public static Expression [] NO_EXPRESSIONS = new Expression[0];
+	
 
 public static final boolean isConstantValueRepresentable(Constant constant, int constantTypeID, int targetTypeID) {
 	//true if there is no loss of precision while casting.
@@ -302,7 +309,7 @@ public final boolean checkCastTypesCompatibility(Scope scope, TypeBinding castTy
 		return true;
 	}
 
-	if (castType.isIntersectionCastType()) {
+	if (castType.isIntersectionType18()) {
 		ReferenceBinding [] intersectingTypes = castType.getIntersectingTypes();
 		for (int i = 0, length = intersectingTypes.length; i < length; i++) {
 			if (!checkCastTypesCompatibility(scope, intersectingTypes[i], expressionType, expression))
@@ -382,7 +389,7 @@ public final boolean checkCastTypesCompatibility(Scope scope, TypeBinding castTy
 			if (bound == null) bound = scope.getJavaLangObject();
 			// recursively on the type variable upper bound
 			return checkCastTypesCompatibility(scope, castType, bound, expression);
-		case Binding.INTERSECTION_CAST_TYPE:
+		case Binding.INTERSECTION_TYPE18:
 			ReferenceBinding [] intersectingTypes = expressionType.getIntersectingTypes();
 			for (int i = 0, length = intersectingTypes.length; i < length; i++) {
 				if (checkCastTypesCompatibility(scope, castType, intersectingTypes[i], expression))
@@ -566,9 +573,10 @@ public final boolean checkCastTypesCompatibility(Scope scope, TypeBinding castTy
  * @param scope the scope of the analysis
  * @param flowContext the current flow context
  * @param flowInfo the upstream flow info; caveat: may get modified
+ * @param ttlForFieldCheck if this is a reference to a field we will mark that field as nonnull for the specified timeToLive
  * @return could this expression be checked by the current implementation?
  */
-public boolean checkNPE(BlockScope scope, FlowContext flowContext, FlowInfo flowInfo) {
+public boolean checkNPE(BlockScope scope, FlowContext flowContext, FlowInfo flowInfo, int ttlForFieldCheck) {
 	boolean isNullable = false;
 	if (this.resolvedType != null) {
 		// 1. priority: @NonNull
@@ -600,6 +608,9 @@ public boolean checkNPE(BlockScope scope, FlowContext flowContext, FlowInfo flow
 		return true;
 	}
 	return false; // not checked
+}
+public boolean checkNPE(BlockScope scope, FlowContext flowContext, FlowInfo flowInfo) {
+	return checkNPE(scope, flowContext, flowInfo, 0); // default: don't mark field references as checked for null
 }
 
 /** If this expression requires unboxing check if that operation can throw NPE. */
@@ -652,6 +663,9 @@ public void computeConversion(Scope scope, TypeBinding runtimeType, TypeBinding 
 		TypeBinding boxedType = scope.environment().computeBoxingType(runtimeType);
 		if (TypeBinding.equalsEquals(boxedType, runtimeType)) // Object o = 12;
 			boxedType = compileTimeType;
+		if (boxedType.id >= TypeIds.T_LastWellKnownTypeId) {  // (Comparable & Serializable) 0
+			boxedType = compileTimeType;
+		}
 		this.implicitConversion = TypeIds.BOXING | (boxedType.id << 4) + compileTimeType.id;
 		scope.problemReporter().autoboxing(this, compileTimeType, scope.environment().computeBoxingType(boxedType));
 		return;
@@ -835,7 +849,7 @@ public void generateOptimizedStringConcatenationCreation(BlockScope blockScope, 
 }
 
 private MethodBinding[] getAllOriginalInheritedMethods(ReferenceBinding binding) {
-	ArrayList<MethodBinding> collector = new ArrayList<MethodBinding>();
+	ArrayList<MethodBinding> collector = new ArrayList<>();
 	getAllInheritedMethods0(binding, collector);
 	for (int i = 0, len = collector.size(); i < len; i++) {
 		collector.set(i, collector.get(i).original());
@@ -912,14 +926,6 @@ public boolean isConstantValueOfTypeAssignableToType(TypeBinding constantType, T
 		return isConstantValueRepresentable(this.constant, constantType.id, targetType.id);
 	}
 	return false;
-}
-
-public boolean isAssignmentCompatible (TypeBinding left, Scope scope) {
-	if (this.resolvedType == null)
-		return false;
-	return isConstantValueOfTypeAssignableToType(this.resolvedType, left) || 
-				this.resolvedType.isCompatibleWith(left) || 
-				isBoxingCompatible(this.resolvedType, left, this, scope);
 }
 
 public boolean isTypeReference() {
@@ -1062,14 +1068,8 @@ public TypeBinding resolveTypeExpecting(BlockScope scope, TypeBinding expectedTy
 	return expressionType;
 }
 
-/**
- * Once outer contexts have finalized the target type for this expression,
- * perform any checks that might have been delayed previously.
- * @param targetType the final target type (aka expectedType) for this expression.
- * @param scope scope for error reporting
- */
-public TypeBinding checkAgainstFinalTargetType(TypeBinding targetType, Scope scope) {
-	return this.resolvedType; // subclasses may choose to do real stuff here
+public Expression resolveExpressionExpecting(TypeBinding targetType, Scope scope, InferenceContext18 context) {
+	return this; // subclasses should implement for a better resolved expression if required.
 }
 
 /**
@@ -1164,15 +1164,11 @@ public boolean isCompatibleWith(TypeBinding left, Scope scope) {
 }
 
 public boolean isBoxingCompatibleWith(TypeBinding left, Scope scope) {
-	return isBoxingCompatible(this.resolvedType, left, this, scope);
+	return this.resolvedType != null && isBoxingCompatible(this.resolvedType, left, this, scope);
 }
 
 public boolean sIsMoreSpecific(TypeBinding s, TypeBinding t, Scope scope) {
 	return s.isCompatibleWith(t, scope);
-}
-
-public void tagAsEllipsisArgument() {
-	// don't care. Subclasses that are poly expressions in specific contexts should listen in and make note.
 }
 
 public boolean isExactMethodReference() {
@@ -1249,5 +1245,18 @@ public boolean statementExpression() {
 */
 public VariableBinding nullAnnotatedVariableBinding(boolean supportTypeAnnotations) {
 	return null;
+}
+
+public boolean isFunctionalType() {
+	return false;
+}
+
+/** Returns contained poly expressions, result could be 0, 1 or more (for conditional expression) */
+public Expression [] getPolyExpressions() {
+	return isPolyExpression() ? new Expression [] { this } : NO_EXPRESSIONS;
+}
+
+public boolean isPotentiallyCompatibleWith(TypeBinding targetType, Scope scope) {
+	return isCompatibleWith(targetType, scope); // for all but functional expressions, potential compatibility is the same as compatibility.
 }
 }

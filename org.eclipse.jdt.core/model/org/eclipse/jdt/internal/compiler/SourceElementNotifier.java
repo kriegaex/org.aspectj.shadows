@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2008, 2013 IBM Corporation and others.
+ * Copyright (c) 2008, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Map;
 
 import org.eclipse.jdt.core.compiler.CharOperation;
+import org.eclipse.jdt.internal.compiler.ISourceElementRequestor.ModuleInfo;
 import org.eclipse.jdt.internal.compiler.ISourceElementRequestor.ParameterInfo;
 import org.eclipse.jdt.internal.compiler.ISourceElementRequestor.TypeParameterInfo;
 import org.eclipse.jdt.internal.compiler.ast.ASTNode;
@@ -37,6 +38,7 @@ import org.eclipse.jdt.internal.compiler.ast.ImportReference;
 import org.eclipse.jdt.internal.compiler.ast.Initializer;
 import org.eclipse.jdt.internal.compiler.ast.MessageSend;
 import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.QualifiedAllocationExpression;
 import org.eclipse.jdt.internal.compiler.ast.ThisReference;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
@@ -201,6 +203,7 @@ private TypeParameterInfo[] getTypeParameterInfos(TypeParameter[] typeParameters
 		TypeParameter typeParameter = typeParameters[i];
 		char[][] typeParameterBounds = getTypeParameterBounds(typeParameter);
 		ISourceElementRequestor.TypeParameterInfo typeParameterInfo = new ISourceElementRequestor.TypeParameterInfo();
+		typeParameterInfo.typeAnnotated = ((typeParameter.bits & ASTNode.HasTypeAnnotations) != 0);
 		typeParameterInfo.declarationStart = typeParameter.declarationSourceStart;
 		typeParameterInfo.declarationEnd = typeParameter.declarationSourceEnd;
 		typeParameterInfo.name = typeParameter.name;
@@ -367,6 +370,8 @@ protected void notifySourceElementRequestor(AbstractMethodDeclaration methodDecl
 		methodInfo.categories = (char[][]) this.nodesToCategories.get(methodDeclaration);
 		methodInfo.annotations = methodDeclaration.annotations;
 		methodInfo.node = methodDeclaration;
+		methodInfo.enclosingType = declaringType;
+		methodInfo.declaringPackageName = currentPackage == null ? CharOperation.NO_CHAR : CharOperation.concatWith(currentPackage.tokens, '.');
 		this.requestor.enterMethod(methodInfo);
 	}
 
@@ -596,7 +601,7 @@ protected void notifySourceElementRequestor(TypeDeclaration typeDeclaration, boo
 		char[][] interfaceNames = getInterfaceNames(typeDeclaration);
 		int kind = TypeDeclaration.kind(typeDeclaration.modifiers);
 		char[] implicitSuperclassName = TypeConstants.CharArray_JAVA_LANG_OBJECT;
-		ISourceElementRequestor.TypeInfo typeInfo = new ISourceElementRequestor.TypeInfo();
+		ISourceElementRequestor.TypeInfo typeInfo = kind == TypeDeclaration.MODULE_DECL ? new ISourceElementRequestor.ModuleInfo(): new ISourceElementRequestor.TypeInfo();
 		typeInfo.typeAnnotated = ((typeDeclaration.bits & ASTNode.HasTypeAnnotations) != 0);
 		if (isInRange) {
 			int currentModifiers = typeDeclaration.modifiers;
@@ -646,6 +651,28 @@ protected void notifySourceElementRequestor(TypeDeclaration typeDeclaration, boo
 					break;
 				case TypeDeclaration.ANNOTATION_TYPE_DECL :
 					implicitSuperclassName = TypeConstants.CharArray_JAVA_LANG_ANNOTATION_ANNOTATION;
+					break;
+				case TypeDeclaration.MODULE_DECL:
+					ModuleDeclaration mod = (ModuleDeclaration)typeDeclaration;
+					ModuleInfo modInfo = (ModuleInfo)typeInfo;
+					modInfo.moduleName = mod.moduleName;
+					if (mod.requiresCount > 0) {
+						ISourceElementRequestor.RequiresInfo reqs[] = new ISourceElementRequestor.RequiresInfo[mod.requiresCount];
+						for (int i = 0; i < mod.requiresCount; i++) {
+							ISourceElementRequestor.RequiresInfo req = new ISourceElementRequestor.RequiresInfo();
+							req.moduleName = mod.requires[i].tokens;
+							req.modifiers = mod.requires[i].modifiers;
+						}
+						modInfo.requires = reqs;
+					}
+					if (mod.exportsCount > 0) {
+						ISourceElementRequestor.PackageExportInfo exports[] = new ISourceElementRequestor.PackageExportInfo[mod.exportsCount];
+						for (int i = 0; i < mod.exportsCount; i++) {
+							ISourceElementRequestor.PackageExportInfo exp = new ISourceElementRequestor.PackageExportInfo();
+							exp.pkgName = mod.exports[i].pkgName;
+							modInfo.exports = exports;
+						}					
+					}
 					break;
 			}
 		}

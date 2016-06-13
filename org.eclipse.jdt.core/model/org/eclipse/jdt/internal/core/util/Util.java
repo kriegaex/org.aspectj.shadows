@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2015 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -11,6 +11,8 @@
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
+ *     Stephan Herrmann - Contribution for
+ *								Bug 458577 - IClassFile.getWorkingCopy() may lead to NPE in BecomeWorkingCopyOperation
  *******************************************************************************/
 package org.eclipse.jdt.internal.core.util;
 
@@ -848,20 +850,19 @@ public class Util {
 						}
 					}
 					if (path != null) {
-						if (JavaModelManager.isJimage(path)) {
-							// TODO: Revisit: Possibly a wrong assumption depending on how things turn out in Java 9 world.
-							return ClassFileConstants.JDK1_9;
+						if (JavaModelManager.isJrt(path)) {
+							return ClassFileConstants.JDK9;
 						} else {
-						jar = JavaModelManager.getJavaModelManager().getZipFile(path);
-						for (Enumeration e= jar.entries(); e.hasMoreElements();) {
-							ZipEntry member= (ZipEntry) e.nextElement();
-							String entryName= member.getName();
-							if (org.eclipse.jdt.internal.compiler.util.Util.isClassFileName(entryName)) {
-								reader = ClassFileReader.read(jar, entryName);
-								break;
+							jar = JavaModelManager.getJavaModelManager().getZipFile(path);
+							for (Enumeration e= jar.entries(); e.hasMoreElements();) {
+								ZipEntry member= (ZipEntry) e.nextElement();
+								String entryName= member.getName();
+								if (org.eclipse.jdt.internal.compiler.util.Util.isClassFileName(entryName)) {
+									reader = ClassFileReader.read(jar, entryName);
+									break;
+								}
 							}
 						}
-					}
 					}
 				} catch (CoreException e) {
 					// ignore
@@ -1526,6 +1527,8 @@ public class Util {
 				return (JavaElement) declaringMethod.getTypeParameter(typeVariableName);
 			} else {
 				IType declaringType = (IType) getUnresolvedJavaElement((TypeBinding) declaringElement, workingCopyOwner, bindingsToNodes);
+				if (declaringType == null)
+					return null;
 				return (JavaElement) declaringType.getTypeParameter(typeVariableName);
 			}
 		} else {
@@ -2509,11 +2512,11 @@ public class Util {
 		int length = string.length;
 		// need a minimum 2 char
 		if (start >= length - 1) {
-			throw new IllegalArgumentException();
+			throw raiseIllegalSignatureException(string, start);
 		}
 		char c = string[start];
 		if (c != Signature.C_ARRAY) {
-			throw new IllegalArgumentException();
+			throw raiseUnexpectedCharacterException(string, start, c);
 		}
 
 		int index = start;
@@ -2521,7 +2524,7 @@ public class Util {
 		while(c == Signature.C_ARRAY) {
 			// need a minimum 2 char
 			if (index >= length - 1) {
-				throw new IllegalArgumentException();
+				throw raiseIllegalSignatureException(string, start);
 			}
 			c = string[++index];
 		}
@@ -2871,16 +2874,16 @@ public class Util {
 		switch (constant.typeID()) {
 			case TypeIds.T_int :
 				memberValuePair.valueKind = IMemberValuePair.K_INT;
-				return new Integer(constant.intValue());
+				return Integer.valueOf(constant.intValue());
 			case TypeIds.T_byte :
 				memberValuePair.valueKind = IMemberValuePair.K_BYTE;
-				return new Byte(constant.byteValue());
+				return Byte.valueOf(constant.byteValue());
 			case TypeIds.T_short :
 				memberValuePair.valueKind = IMemberValuePair.K_SHORT;
-				return new Short(constant.shortValue());
+				return Short.valueOf(constant.shortValue());
 			case TypeIds.T_char :
 				memberValuePair.valueKind = IMemberValuePair.K_CHAR;
-				return new Character(constant.charValue());
+				return Character.valueOf(constant.charValue());
 			case TypeIds.T_float :
 				memberValuePair.valueKind = IMemberValuePair.K_FLOAT;
 				return new Float(constant.floatValue());
@@ -2892,7 +2895,7 @@ public class Util {
 				return Boolean.valueOf(constant.booleanValue());
 			case TypeIds.T_long :
 				memberValuePair.valueKind = IMemberValuePair.K_LONG;
-				return new Long(constant.longValue());
+				return Long.valueOf(constant.longValue());
 			case TypeIds.T_JavaLangString :
 				memberValuePair.valueKind = IMemberValuePair.K_STRING;
 				return constant.stringValue();
@@ -2914,7 +2917,7 @@ public class Util {
 		switch (constant.typeID()) {
 			case TypeIds.T_int :
 				memberValuePair.valueKind = IMemberValuePair.K_INT;
-				return new Integer(constant.intValue() * -1);
+				return Integer.valueOf(constant.intValue() * -1);
 			case TypeIds.T_float :
 				memberValuePair.valueKind = IMemberValuePair.K_FLOAT;
 				return new Float(constant.floatValue() * -1.0f);
@@ -2923,7 +2926,7 @@ public class Util {
 				return new Double(constant.doubleValue() * -1.0);
 			case TypeIds.T_long :
 				memberValuePair.valueKind = IMemberValuePair.K_LONG;
-				return new Long(constant.longValue() * -1L);
+				return Long.valueOf(constant.longValue() * -1L);
 			default:
 				memberValuePair.valueKind = IMemberValuePair.K_UNKNOWN;
 				return null;
@@ -3008,7 +3011,7 @@ public class Util {
 	public static char[] toAnchor(int startingIndex, char[] methodSignature, char[] methodName, boolean isVargArgs) {
 		int firstParen = CharOperation.indexOf(Signature.C_PARAM_START, methodSignature);
 		if (firstParen == -1) {
-			throw new IllegalArgumentException();
+			throw new IllegalArgumentException(new String(methodSignature));
 		}
 
 		StringBuffer buffer = new StringBuffer(methodSignature.length + 10);
@@ -3041,7 +3044,7 @@ public class Util {
 	private static int appendTypeSignatureForAnchor(char[] string, int start, StringBuffer buffer, boolean isVarArgs) {
 		// need a minimum 1 char
 		if (start >= string.length) {
-			throw new IllegalArgumentException();
+			throw raiseIllegalSignatureException(string, start);
 		}
 		char c = string[start];
 		if (isVarArgs) {
@@ -3064,7 +3067,8 @@ public class Util {
 				case Signature.C_SUPER:
 				case Signature.C_CAPTURE:
 				default:
-					throw new IllegalArgumentException(); // a var args is an array type
+					// a var args is an array type
+					throw raiseUnexpectedCharacterException(string, start, c);
 			}
 		} else {
 			switch (c) {
@@ -3110,14 +3114,15 @@ public class Util {
 				case Signature.C_SUPER:
 					return appendTypeArgumentSignatureForAnchor(string, start, buffer);
 				default :
-					throw new IllegalArgumentException();
+					throw raiseIllegalSignatureException(string, start);
 			}
 		}
 	}
+
 	private static int appendTypeArgumentSignatureForAnchor(char[] string, int start, StringBuffer buffer) {
 		// need a minimum 1 char
 		if (start >= string.length) {
-			throw new IllegalArgumentException();
+			throw raiseIllegalSignatureException(string, start);
 		}
 		char c = string[start];
 		switch(c) {
@@ -3134,11 +3139,11 @@ public class Util {
 	private static int appendCaptureTypeSignatureForAnchor(char[] string, int start, StringBuffer buffer) {
 		// need a minimum 2 char
 		if (start >= string.length - 1) {
-			throw new IllegalArgumentException();
+			throw raiseIllegalSignatureException(string, start);
 		}
 		char c = string[start];
 		if (c != Signature.C_CAPTURE) {
-			throw new IllegalArgumentException();
+			throw raiseUnexpectedCharacterException(string, start, c);
 		}
 		return appendTypeArgumentSignatureForAnchor(string, start + 1, buffer);
 	}
@@ -3146,11 +3151,11 @@ public class Util {
 		int length = string.length;
 		// need a minimum 2 char
 		if (start >= length - 1) {
-			throw new IllegalArgumentException();
+			throw raiseIllegalSignatureException(string, start);
 		}
 		char c = string[start];
 		if (c != Signature.C_ARRAY) {
-			throw new IllegalArgumentException();
+			throw raiseUnexpectedCharacterException(string, start, c);
 		}
 
 		int index = start;
@@ -3158,7 +3163,7 @@ public class Util {
 		while(c == Signature.C_ARRAY) {
 			// need a minimum 2 char
 			if (index >= length - 1) {
-				throw new IllegalArgumentException();
+				throw raiseIllegalSignatureException(string, start);
 			}
 			c = string[++index];
 		}
@@ -3179,17 +3184,17 @@ public class Util {
 	private static int appendClassTypeSignatureForAnchor(char[] string, int start, StringBuffer buffer) {
 		// need a minimum 3 chars "Lx;"
 		if (start >= string.length - 2) {
-			throw new IllegalArgumentException();
+			throw raiseIllegalSignatureException(string, start);
 		}
 		// must start in "L" or "Q"
 		char c = string[start];
 		if (c != Signature.C_RESOLVED && c != Signature.C_UNRESOLVED) {
-			throw new IllegalArgumentException();
+			throw raiseUnexpectedCharacterException(string, start, c);
 		}
 		int p = start + 1;
 		while (true) {
 			if (p >= string.length) {
-				throw new IllegalArgumentException();
+				throw raiseIllegalSignatureException(string, start);
 			}
 			c = string[p];
 			switch(c) {
@@ -3223,6 +3228,15 @@ public class Util {
 			p++;
 		}
 	}
+
+	private static IllegalArgumentException raiseIllegalSignatureException(char[] string, int start) {
+		throw new IllegalArgumentException("\"" + new String(string) + "\" starting at " + start); //$NON-NLS-1$ //$NON-NLS-2$
+	}
+
+	private static IllegalArgumentException raiseUnexpectedCharacterException(char[] string, int start, char unexpected) {
+		throw new IllegalArgumentException("Unexpected '" + unexpected + "' in \"" + new String(string) + "\" starting at " + start); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+	}
+
 	private static int scanGenericEnd(char[] string, int start) {
 		if (string[start] == Signature.C_GENERIC_END) {
 			return start;

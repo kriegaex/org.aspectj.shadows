@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2011 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -11,6 +15,7 @@
  *******************************************************************************/
 package org.eclipse.jdt.internal.core;
 
+import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.jdt.core.*;
@@ -20,22 +25,24 @@ import org.eclipse.jdt.internal.codeassist.ISearchRequestor;
 import org.eclipse.jdt.internal.compiler.env.AccessRestriction;
 import org.eclipse.jdt.internal.compiler.env.IBinaryType;
 import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
-import org.eclipse.jdt.internal.compiler.env.INameEnvironment;
+import org.eclipse.jdt.internal.compiler.env.IModule;
 import org.eclipse.jdt.internal.compiler.env.ISourceType;
 import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
+import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
 import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.core.search.BasicSearchEngine;
 import org.eclipse.jdt.internal.core.search.IRestrictedAccessConstructorRequestor;
 import org.eclipse.jdt.internal.core.search.IRestrictedAccessTypeRequestor;
 import org.eclipse.jdt.internal.core.search.indexing.IndexManager;
+import org.eclipse.jdt.internal.core.search.processing.IJob;
 import org.eclipse.jdt.internal.core.util.Util;
 
 /**
  *	This class provides a <code>SearchableBuilderEnvironment</code> for code assist which
  *	uses the Java model as a search tool.
  */
-public class SearchableEnvironment
-	implements INameEnvironment, IJavaSearchConstants {
+public class SearchableEnvironment extends ModuleEnvironment
+	implements IJavaSearchConstants {
 
 	public NameLookup nameLookup;
 	protected ICompilationUnit unitToSkip;
@@ -89,7 +96,7 @@ public class SearchableEnvironment
 	 * Returns the given type in the the given package if it exists,
 	 * otherwise <code>null</code>.
 	 */
-	protected NameEnvironmentAnswer find(String typeName, String packageName) {
+	protected NameEnvironmentAnswer find(String typeName, String packageName, IModule[] module) {
 		if (packageName == null)
 			packageName = IPackageFragment.DEFAULT_PACKAGE_NAME;
 		if (this.owner != null) {
@@ -135,7 +142,7 @@ public class SearchableEnvironment
 						if (!otherType.equals(topLevelType) && index < length) // check that the index is in bounds (see https://bugs.eclipse.org/bugs/show_bug.cgi?id=62861)
 							sourceTypes[index++] = otherType;
 					}
-					return new NameEnvironmentAnswer(sourceTypes, answer.restriction);
+					return new NameEnvironmentAnswer(sourceTypes, answer.restriction, getExternalAnnotationPath(answer.entry));
 				} catch (JavaModelException jme) {
 					if (jme.isDoesNotExist() && String.valueOf(TypeConstants.PACKAGE_INFO_NAME).equals(typeName)) {
 						// in case of package-info.java the type doesn't exist in the model,
@@ -147,6 +154,15 @@ public class SearchableEnvironment
 			}
 		}
 		return null;
+	}
+
+	private String getExternalAnnotationPath(IClasspathEntry entry) {
+		if (entry == null)
+			return null;
+		IPath path = ClasspathEntry.getExternalAnnotationPath(entry, this.project.getProject(), true);
+		if (path == null)
+			return null;
+		return path.toOSString();
 	}
 
 	/**
@@ -265,15 +281,15 @@ public class SearchableEnvironment
 	}
 
 	/**
-	 * @see org.eclipse.jdt.internal.compiler.env.INameEnvironment#findType(char[][])
+	 * @see ModuleEnvironment#findType(char[][], IModule[])
 	 */
-	public NameEnvironmentAnswer findType(char[][] compoundTypeName) {
+	public NameEnvironmentAnswer findType(char[][] compoundTypeName, IModule[] module) {
 		if (compoundTypeName == null) return null;
 
 		int length = compoundTypeName.length;
 		if (length <= 1) {
 			if (length == 0) return null;
-			return find(new String(compoundTypeName[0]), null);
+			return find(new String(compoundTypeName[0]), null, module);
 		}
 
 		int lengthM1 = length - 1;
@@ -282,18 +298,18 @@ public class SearchableEnvironment
 
 		return find(
 			new String(compoundTypeName[lengthM1]),
-			CharOperation.toString(packageName));
+			CharOperation.toString(packageName), module);
 	}
 
 	/**
-	 * @see org.eclipse.jdt.internal.compiler.env.INameEnvironment#findType(char[], char[][])
+	 * @see ModuleEnvironment#findType(char[], char[][], IModule[])
 	 */
-	public NameEnvironmentAnswer findType(char[] name, char[][] packageName) {
+	public NameEnvironmentAnswer findType(char[] name, char[][] packageName, IModule[] module) {
 		if (name == null) return null;
 
 		return find(
 			new String(name),
-			packageName == null || packageName.length == 0 ? null : CharOperation.toString(packageName));
+			packageName == null || packageName.length == 0 ? null : CharOperation.toString(packageName), module);
 	}
 
 	/**
@@ -589,16 +605,34 @@ public class SearchableEnvironment
 			if (camelCaseMatch) matchRule |= SearchPattern.R_CAMELCASE_MATCH;
 			if (monitor != null) {
 				IndexManager indexManager = JavaModelManager.getIndexManager();
-				while (indexManager.awaitingJobsCount() > 0) {
-					try {
-						Thread.sleep(50); // indexes are not ready,  sleep 50ms...
-					} catch (InterruptedException e) {
-						// Do nothing
+				// Wait for the end of indexing or a cancel
+				indexManager.performConcurrentJob(new IJob() {
+					@Override
+					public boolean belongsTo(String jobFamily) {
+						return true;
 					}
-					if (monitor.isCanceled()) {
-						throw new OperationCanceledException();
+
+					@Override
+					public void cancel() {
+						// job is cancelled through progress
 					}
-				}
+
+					@Override
+					public void ensureReadyToRun() {
+						// always ready
+					}
+
+					@Override
+					public boolean execute(IProgressMonitor progress) {
+						return progress == null || !progress.isCanceled();
+					}
+
+					@Override
+					public String getJobFamily() {
+						return ""; //$NON-NLS-1$
+					}
+				
+				}, IJob.WaitUntilReady, monitor);
 				new BasicSearchEngine(this.workingCopies).searchAllConstructorDeclarations(
 						qualification,
 						simpleName,
@@ -666,9 +700,9 @@ public class SearchableEnvironment
 	}
 
 	/**
-	 * @see org.eclipse.jdt.internal.compiler.env.INameEnvironment#isPackage(char[][], char[])
+	 * @see ModuleEnvironment#isPackage(char[][], char[], IModule[])
 	 */
-	public boolean isPackage(char[][] parentPackageName, char[] subPackageName) {
+	public boolean isPackage(char[][] parentPackageName, char[] subPackageName, IModule[] modules) {
 		String[] pkgName;
 		if (parentPackageName == null)
 			pkgName = new String[] {new String(subPackageName)};
@@ -705,5 +739,15 @@ public class SearchableEnvironment
 
 	public void cleanup() {
 		// nothing to do
+	}
+
+	@Override
+	public IModule getModule(char[] name) {
+		IModule module = null;
+		NameLookup.Answer answer = this.nameLookup.findModule(CharOperation.charToString(name));
+		if (answer != null) {
+			module = answer.module;
+		}
+		return module;
 	}
 }

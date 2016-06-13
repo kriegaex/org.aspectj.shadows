@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -29,9 +29,11 @@ import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.ast.ASTNode;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
+import org.eclipse.jdt.internal.compiler.classfmt.ClassFileReader;
 import org.eclipse.jdt.internal.compiler.env.AccessRestriction;
 import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
 import org.eclipse.jdt.internal.compiler.env.IBinaryType;
+import org.eclipse.jdt.internal.compiler.env.IModule;
 import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.compiler.parser.ScannerHelper;
 import org.eclipse.jdt.internal.compiler.util.HashtableOfObjectToInt;
@@ -60,10 +62,17 @@ import org.eclipse.jdt.internal.core.util.Util;
 public class NameLookup implements SuffixConstants {
 	public static class Answer {
 		public IType type;
+		public IModule module;
 		AccessRestriction restriction;
-		Answer(IType type, AccessRestriction restriction) {
+		IClasspathEntry entry;
+		Answer(IType type, AccessRestriction restriction, IClasspathEntry entry) {
 			this.type = type;
 			this.restriction = restriction;
+			this.entry = entry;
+		}
+		Answer(IModule module) {
+			this.module = module;
+			this.restriction = null;
 		}
 		public boolean ignoreIfBetter() {
 			return this.restriction != null && this.restriction.ignoreIfBetter();
@@ -663,10 +672,14 @@ public class NameLookup implements SuffixConstants {
 			type = findType(typeName, packages[i], partialMatch, acceptFlags, waitForIndexes, considerSecondaryTypes);
 			if (type != null) {
 				AccessRestriction accessRestriction = null;
-				if (checkRestrictions) {
-					accessRestriction = getViolatedRestriction(typeName, packageName, type, accessRestriction);
+				PackageFragmentRoot root = (PackageFragmentRoot) type.getAncestor(IJavaElement.PACKAGE_FRAGMENT_ROOT);
+				ClasspathEntry entry = (ClasspathEntry) this.rootToResolvedEntries.get(root);
+				if (entry != null) { // reverse map always contains resolved CP entry
+					if (checkRestrictions) {
+						accessRestriction = getViolatedRestriction(typeName, packageName, entry, accessRestriction);
+					}
 				}
-				Answer answer = new Answer(type, accessRestriction);
+				Answer answer = new Answer(type, accessRestriction, entry);
 				if (!answer.ignoreIfBetter()) {
 					if (answer.isBetter(suggestedAnswer))
 						return answer;
@@ -722,20 +735,16 @@ public class NameLookup implements SuffixConstants {
 				if (!typeFound) type = null;
 			}
 		}
-		return type == null ? null : new Answer(type, null);
+		return type == null ? null : new Answer(type, null, null);
 	}
 
-	private AccessRestriction getViolatedRestriction(String typeName, String packageName, IType type, AccessRestriction accessRestriction) {
-		PackageFragmentRoot root = (PackageFragmentRoot) type.getAncestor(IJavaElement.PACKAGE_FRAGMENT_ROOT);
-		ClasspathEntry entry = (ClasspathEntry) this.rootToResolvedEntries.get(root);
-		if (entry != null) { // reverse map always contains resolved CP entry
-			AccessRuleSet accessRuleSet = entry.getAccessRuleSet();
-			if (accessRuleSet != null) {
-				// TODO (philippe) improve char[] <-> String conversions to avoid performing them on the fly
-				char[][] packageChars = CharOperation.splitOn('.', packageName.toCharArray());
-				char[] typeChars = typeName.toCharArray();
-				accessRestriction = accessRuleSet.getViolatedRestriction(CharOperation.concatWith(packageChars, typeChars, '/'));
-			}
+	private AccessRestriction getViolatedRestriction(String typeName, String packageName, ClasspathEntry entry, AccessRestriction accessRestriction) {
+		AccessRuleSet accessRuleSet = entry.getAccessRuleSet();
+		if (accessRuleSet != null) {
+			// TODO (philippe) improve char[] <-> String conversions to avoid performing them on the fly
+			char[][] packageChars = CharOperation.splitOn('.', packageName.toCharArray());
+			char[] typeChars = typeName.toCharArray();
+			accessRestriction = accessRuleSet.getViolatedRestriction(CharOperation.concatWith(packageChars, typeChars, '/'));
 		}
 		return accessRestriction;
 	}
@@ -843,6 +852,15 @@ public class NameLookup implements SuffixConstants {
 			className= name.substring(index + 1);
 		}
 		return findType(className, packageName, partialMatch, acceptFlags, considerSecondaryTypes, waitForIndexes, checkRestrictions, monitor);
+	}
+	public Answer findModule(String moduleName) {
+		JavaElementRequestor requestor = new JavaElementRequestor();
+		seekModules(moduleName, requestor);
+		org.eclipse.jdt.internal.compiler.env.IModule[] modules = requestor.getModules();
+		if (modules.length == 1) {
+			return new Answer(modules[0]);
+		}
+		return null;
 	}
 
 	private IType getMemberType(IType type, String name, int dot) {
@@ -962,6 +980,54 @@ public class NameLookup implements SuffixConstants {
 		seekTypes(name, pkg, partialMatch, acceptFlags, requestor, true);
 	}
 
+	public void seekModules(String name, JavaElementRequestor requestor) {
+		int count= this.packageFragmentRoots.length;
+		for (int i= 0; i < count; i++) {
+			if (requestor.isCanceled())
+				return;
+			//Answer answer = findType(String.valueOf(TypeConstants.MODULE_INFO_NAME), false, 0, false);
+			IPackageFragmentRoot root= this.packageFragmentRoots[i];
+			IModule module = null;
+			if (root instanceof JarPackageFragmentRoot) {
+				if (!root.getElementName().equals(name)) {
+					continue;
+				}
+			} else {
+				try {
+					module = ((PackageFragmentRootInfo) ((PackageFragmentRoot) root).getElementInfo()).getModule();
+				} catch (JavaModelException e1) {
+					//
+					continue;
+				}
+			}
+			if (module != null && CharOperation.equals(module.name(), name.toCharArray()))
+				requestor.acceptModuleDeclaration(module);
+			else if (module == null) {
+				try {
+					IJavaElement[] compilationUnits = root.getChildren();
+					for (int j = 0, length = compilationUnits.length; j < length; j++) {
+						if (requestor.isCanceled())
+							return;
+						// only look in the default package
+						if (compilationUnits[j].getElementName().length() > 0)
+							continue;
+						IType type = findType(String.valueOf(TypeConstants.MODULE_INFO_NAME), (PackageFragment)compilationUnits[j], false, 0, false, false);
+						if (type == null)
+							continue;
+						if (type.isBinary()) {
+								module = ((ClassFileReader)(((BinaryType)type).getElementInfo())).getModuleDeclaration();
+						} else {
+							module = (IModule)(((SourceType)type).getElementInfo());
+						}
+						if (module != null && CharOperation.equals(module.name(), name.toCharArray()))
+							requestor.acceptModuleDeclaration(module);
+					}
+				} catch (JavaModelException e) {
+					//
+				}
+			}
+		}
+	}
 	/**
 	 * Notifies the given requestor of all types (classes and interfaces) in the
 	 * given package fragment with the given (unqualified) name.
@@ -1174,6 +1240,12 @@ public class NameLookup implements SuffixConstants {
 		 */
 		ICompilationUnit cu = (ICompilationUnit) type.getParent();
 		String cuName = cu.getElementName().substring(0, cu.getElementName().lastIndexOf('.'));
+		/*
+		 * Secondary types along with primary types have their parent as the compilation unit.
+		 * The names of the primary type would match with their compilation unit.
+		 */
+		if (!cuName.equals(type.getElementName()))
+			return false;
 		if (partialMatch) {
 			return cuName.regionMatches(0, name, 0, name.length());
 		} else {

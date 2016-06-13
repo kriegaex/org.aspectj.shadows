@@ -1,13 +1,19 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
- *     Stephan Herrmann - Contribution for bug 186342 - [compiler][null] Using annotations for null checking
+ *     Stephan Herrmann - Contribution for
+ *								Bug 186342 - [compiler][null] Using annotations for null checking
+ *								Bug 440474 - [null] textual encoding of external null annotations
  *     Andy Clement (GoPivotal, Inc) aclement@gopivotal.com - Contributions for
  *         Bug 407191 - [1.8] Binary access support for type annotations
  *******************************************************************************/
@@ -23,6 +29,9 @@ import org.eclipse.jdt.internal.compiler.env.IBinaryMethod;
 import org.eclipse.jdt.internal.compiler.env.IBinaryNestedType;
 import org.eclipse.jdt.internal.compiler.env.IBinaryType;
 import org.eclipse.jdt.internal.compiler.env.IBinaryTypeAnnotation;
+import org.eclipse.jdt.internal.compiler.env.ITypeAnnotationWalker;
+import org.eclipse.jdt.internal.compiler.lookup.LookupEnvironment;
+import org.eclipse.jdt.internal.compiler.lookup.BinaryTypeBinding.ExternalAnnotationStatus;
 import org.eclipse.jdt.internal.core.util.Util;
 
 /**
@@ -65,7 +74,7 @@ public class CodeSnippetSkeleton implements IBinaryType, EvaluationConstants {
 		public int getModifiers() {
 			return ClassFileConstants.AccPublic;
 		}
-		public IBinaryAnnotation[] getParameterAnnotations(int index) {
+		public IBinaryAnnotation[] getParameterAnnotations(int index, char[] classFileName) {
 			return null;
 		}
 		public int getAnnotatedParametersCount() {
@@ -189,5 +198,17 @@ public boolean isMember() {
 }
 public char[] sourceFileName() {
 	return null;
+}
+public ITypeAnnotationWalker enrichWithExternalAnnotationsFor(ITypeAnnotationWalker walker, Object member, LookupEnvironment environment) {
+	return walker;
+}
+@Override
+public char[] getModule() {
+	// TODO BETA_JAVA9 Auto-generated method stub
+	return null;
+}
+@Override
+public ExternalAnnotationStatus getExternalAnnotationStatus() {
+	return ExternalAnnotationStatus.NOT_EEA_CONFIGURED;
 }
 }

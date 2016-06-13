@@ -42,6 +42,7 @@ public FlowInfo analyseCode(BlockScope currentScope, FlowContext flowContext, Fl
 	}
 
 	targetContext.recordAbruptExit();
+	targetContext.expireNullCheckedFieldInfo();
 
 	if (targetContext == FlowContext.NotContinuableContext) {
 		currentScope.problemReporter().invalidContinue(this);
@@ -97,5 +98,13 @@ public StringBuffer printStatement(int tab, StringBuffer output) {
 public void traverse(ASTVisitor visitor, 	BlockScope blockScope) {
 	visitor.visit(this, blockScope);
 	visitor.endVisit(this, blockScope);
+}
+@Override
+public boolean doesNotCompleteNormally() {
+	return true;
+}
+@Override
+public boolean completesByContinue() {
+	return true;
 }
 }

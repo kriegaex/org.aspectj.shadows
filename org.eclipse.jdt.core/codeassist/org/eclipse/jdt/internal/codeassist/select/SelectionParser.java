@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -33,6 +33,7 @@ import org.eclipse.jdt.internal.compiler.ast.CaseStatement;
 import org.eclipse.jdt.internal.compiler.ast.CastExpression;
 import org.eclipse.jdt.internal.compiler.ast.CompilationUnitDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ExplicitConstructorCall;
+import org.eclipse.jdt.internal.compiler.ast.ExportReference;
 import org.eclipse.jdt.internal.compiler.ast.Expression;
 import org.eclipse.jdt.internal.compiler.ast.FieldReference;
 import org.eclipse.jdt.internal.compiler.ast.ImportReference;
@@ -41,6 +42,7 @@ import org.eclipse.jdt.internal.compiler.ast.LocalDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.MarkerAnnotation;
 import org.eclipse.jdt.internal.compiler.ast.MemberValuePair;
 import org.eclipse.jdt.internal.compiler.ast.MessageSend;
+import org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.NameReference;
 import org.eclipse.jdt.internal.compiler.ast.NormalAnnotation;
 import org.eclipse.jdt.internal.compiler.ast.QualifiedAllocationExpression;
@@ -52,13 +54,13 @@ import org.eclipse.jdt.internal.compiler.ast.SingleNameReference;
 import org.eclipse.jdt.internal.compiler.ast.Statement;
 import org.eclipse.jdt.internal.compiler.ast.SuperReference;
 import org.eclipse.jdt.internal.compiler.ast.SwitchStatement;
+import org.eclipse.jdt.internal.compiler.ast.ThisReference;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.TypeReference;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
 import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
 import org.eclipse.jdt.internal.compiler.lookup.BlockScope;
 import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
-import org.eclipse.jdt.internal.compiler.parser.CommitRollbackParser;
 import org.eclipse.jdt.internal.compiler.parser.JavadocParser;
 import org.eclipse.jdt.internal.compiler.parser.RecoveredType;
 import org.eclipse.jdt.internal.compiler.problem.ProblemReporter;
@@ -73,8 +75,9 @@ public class SelectionParser extends AssistParser {
 	protected static final int K_BETWEEN_CASE_AND_COLON = SELECTION_PARSER + 1; // whether we are inside a block
 	protected static final int K_INSIDE_RETURN_STATEMENT = SELECTION_PARSER + 2; // whether we are between the keyword 'return' and the end of a return statement
 	protected static final int K_CAST_STATEMENT = SELECTION_PARSER + 3; // whether we are between ')' and the end of a cast statement
-	
 
+	// https://bugs.eclipse.org/bugs/show_bug.cgi?id=476693
+	private boolean selectionNodeFound;
 	public ASTNode assistNodeParent; // the parent node of assist node
 
 	/* public fields */
@@ -117,8 +120,14 @@ protected void attachOrphanCompletionNode(){
 				this.currentElement = this.currentElement.add(statement, 0);
 			}
 		}
-		if (!isIndirectlyInsideLambdaExpression())
+		if (isIndirectlyInsideLambdaExpression()) {
+			if (this.currentToken == TokenNameLBRACE)
+				this.ignoreNextOpeningBrace = true;
+			else if (this.currentToken == TokenNameRBRACE)
+				this.ignoreNextClosingBrace = true;
+		} else {
 			this.currentToken = 0; // given we are not on an eof, we do not want side effects caused by looked-ahead token
+		}
 	}
 }
 private void buildMoreCompletionContext(Expression expression) {
@@ -551,8 +560,10 @@ protected void consumeEnterAnonymousClassBody(boolean qualified) {
 	if (!this.diet){
 		this.restartRecovery	= true;	// force to restart in recovery mode
 		this.lastIgnoredToken = -1;
-		if (!isIndirectlyInsideLambdaExpression())
-			this.currentToken = 0; // opening brace already taken into account
+		if (isIndirectlyInsideLambdaExpression())
+			this.ignoreNextOpeningBrace = true;
+		else 
+			this.currentToken = 0; // opening brace already taken into account.
 		this.hasReportedError = true;
 	}
 
@@ -562,8 +573,10 @@ protected void consumeEnterAnonymousClassBody(boolean qualified) {
 	if (this.currentElement != null){
 		this.lastCheckPoint = anonymousType.bodyStart;
 		this.currentElement = this.currentElement.add(anonymousType, 0);
-		if (!isIndirectlyInsideLambdaExpression())
-			this.currentToken = 0; // opening brace already taken into account
+		if (isIndirectlyInsideLambdaExpression())
+			this.ignoreNextOpeningBrace = true;
+		else 
+			this.currentToken = 0; // opening brace already taken into account.
 		this.lastIgnoredToken = -1;
 	}
 }
@@ -768,6 +781,8 @@ protected void consumeLambdaExpression() {
 			this.expressionStack[this.expressionPtr] = new SelectionOnLambdaExpression(expression);
 		}
 	}
+	if (!(this.selectionStart >= expression.sourceStart && this.selectionEnd <= expression.sourceEnd))
+		popElement(K_LAMBDA_EXPRESSION_DELIMITER);
 }
 @Override
 protected void consumeReferenceExpression(ReferenceExpression referenceExpression) {
@@ -786,13 +801,28 @@ protected void consumeLocalVariableDeclarationStatement() {
 	super.consumeLocalVariableDeclarationStatement();
 
 	// force to restart in recovery mode if the declaration contains the selection
-	if (!this.diet) {
+	if (!this.diet && this.astStack[this.astPtr] instanceof LocalDeclaration) {
 		LocalDeclaration localDeclaration = (LocalDeclaration) this.astStack[this.astPtr];
 		if ((this.selectionStart >= localDeclaration.sourceStart)
 				&&  (this.selectionEnd <= localDeclaration.sourceEnd)) {
 			this.restartRecovery	= true;
 			this.lastIgnoredToken = -1;
 		}
+	}
+	if (this.selectionNodeFound) {
+		this.restartRecovery = true;
+	}
+}
+protected void consumeAssignment() {
+	super.consumeAssignment();
+	if (this.selectionNodeFound) {
+		this.restartRecovery = true;
+	}
+}
+protected void consumeBlockStatement() {
+	super.consumeBlockStatement();
+	if (this.selectionNodeFound) {
+		this.restartRecovery = true;
 	}
 }
 protected void consumeMarkerAnnotation(boolean isTypeAnnotation) {
@@ -885,6 +915,18 @@ protected void consumeMethodInvocationName() {
 		}
 	} else {
 		super.consumeMethodInvocationName();
+		if (requireExtendedRecovery()) {
+			// https://bugs.eclipse.org/bugs/show_bug.cgi?id=430572, compensate for the hacks elsewhere where super/this gets treated as identifier. See getUnspecifiedReference
+			if (this.astPtr >= 0 && this.astStack[this.astPtr] == this.assistNode && this.assistNode instanceof ThisReference) {
+				MessageSend messageSend = (MessageSend) this.expressionStack[this.expressionPtr];
+				if (messageSend.receiver instanceof SingleNameReference) {
+					SingleNameReference snr = (SingleNameReference) messageSend.receiver;
+					if (snr.token == CharOperation.NO_CHAR) { // dummy reference created by getUnspecifiedReference ???
+						messageSend.receiver = (Expression) this.astStack[this.astPtr--];
+					}
+				}
+			}
+		}
 		return;
 	}
 
@@ -1215,11 +1257,19 @@ protected void consumeTypeImportOnDemandDeclarationName() {
 		this.restartRecovery = true; // used to avoid branching back into the regular automaton
 	}
 }
-protected CommitRollbackParser createSnapShotParser() {
+protected SelectionParser createSnapShotParser() {
 	return new SelectionParser(this.problemReporter);
+}
+public ExportReference createAssistExportReference(char[][] tokens, long[] positions){
+	return new SelectionOnExportReference(tokens, positions);
 }
 public ImportReference createAssistImportReference(char[][] tokens, long[] positions, int mod){
 	return new SelectionOnImportReference(tokens, positions, mod);
+}
+@Override
+public ModuleDeclaration createAssistModuleDeclaration(CompilationResult compilationResult, char[][] tokens,
+		long[] positions) {
+	return new SelectionOnModuleDeclaration(compilationResult, tokens, positions);
 }
 public ImportReference createAssistPackageReference(char[][] tokens, long[] positions){
 	return new SelectionOnPackageReference(tokens, positions);
@@ -1402,7 +1452,9 @@ protected MessageSend newMessageSend() {
 	}
 	this.assistNode = messageSend;
 	if (!this.diet){
-		this.restartRecovery	= true;	// force to restart in recovery mode
+		// Don't restart recovery, not yet, until variable decl statement has been consumed.
+		// This is to ensure chained method invocations are taken into account for resolution.
+		this.selectionNodeFound = true;
 		this.lastIgnoredToken = -1;
 	}
 
@@ -1427,7 +1479,9 @@ protected MessageSend newMessageSendWithTypeArguments() {
 	}
 	this.assistNode = messageSend;
 	if (!this.diet){
-		this.restartRecovery	= true;	// force to restart in recovery mode
+		// Don't restart recovery, not yet, until variable decl statement has been consumed.
+		// This is to ensure chained method invocations are taken into account for resolution.
+		this.selectionNodeFound = true;
 		this.lastIgnoredToken = -1;
 	}
 

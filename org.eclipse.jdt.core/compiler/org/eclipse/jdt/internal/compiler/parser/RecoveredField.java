@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -24,10 +24,10 @@ import org.eclipse.jdt.internal.compiler.ast.ArrayQualifiedTypeReference;
 import org.eclipse.jdt.internal.compiler.ast.ArrayTypeReference;
 import org.eclipse.jdt.internal.compiler.ast.Expression;
 import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.LocalDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.Statement;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
 
-@SuppressWarnings("rawtypes")
 public class RecoveredField extends RecoveredElement {
 
 	public FieldDeclaration fieldDeclaration;
@@ -48,6 +48,14 @@ public RecoveredField(FieldDeclaration fieldDeclaration, RecoveredElement parent
 	super(parent, bracketBalance, parser);
 	this.fieldDeclaration = fieldDeclaration;
 	this.alreadyCompletedFieldInitialization = fieldDeclaration.initialization != null;
+}
+/*
+ * Record a local declaration
+ */
+public RecoveredElement add(LocalDeclaration localDeclaration, int bracketBalanceValue) {
+	if (this.lambdaNestLevel > 0) // current element is really the lambda which is recovered in full elsewhere.
+		return this;
+	return super.add(localDeclaration, bracketBalanceValue);
 }
 /*
  * Record a field declaration
@@ -172,7 +180,7 @@ public String toString(int tab){
 	}
 	return buffer.toString();
 }
-public FieldDeclaration updatedFieldDeclaration(int depth, Set knownTypes){
+public FieldDeclaration updatedFieldDeclaration(int depth, Set<TypeDeclaration> knownTypes){
 	/* update annotations */
 	if (this.modifiers != 0) {
 		this.fieldDeclaration.modifiers |= this.modifiers;
@@ -262,7 +270,7 @@ public RecoveredElement updateOnClosingBrace(int braceStart, int braceEnd){
 		this.bracketBalance--;
 		if (this.bracketBalance == 0) {
 			if(this.fieldDeclaration.getKind() == AbstractVariableDeclaration.ENUM_CONSTANT) {
-				updateSourceEndIfNecessary(braceEnd - 1);
+				updateSourceEndIfNecessary(braceEnd);
 				return this.parent;
 			} else {
 				if (this.fieldDeclaration.declarationSourceEnd > 0)
@@ -307,7 +315,7 @@ public RecoveredElement updateOnOpeningBrace(int braceStart, int braceEnd){
 	return this.parent.updateOnOpeningBrace(braceStart, braceEnd);
 }
 public void updateParseTree(){
-	updatedFieldDeclaration(0, new HashSet());
+	updatedFieldDeclaration(0, new HashSet<TypeDeclaration>());
 }
 /*
  * Update the declarationSourceEnd of the corresponding parse node

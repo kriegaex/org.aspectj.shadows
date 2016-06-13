@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2013, 2014 GK Software AG.
+ * Copyright (c) 2013, 2015 GK Software AG.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -21,12 +21,18 @@ public class InferenceVariable extends TypeVariableBinding {
 
 	InvocationSite site;
 	TypeBinding typeParameter;
-	long nullHints;
+	long nullHints; // one of TagBits.{AnnotationNonNull,AnnotationNullable} may steer inference into inferring nullness as well; set both bits to request avoidance.
 	private InferenceVariable prototype;
+	int varId; // this is used for constructing a source name like T#0. NB: varId and sourceName are mutable, to be updated when two InferenceContext18 are integrated.
 	
-	public InferenceVariable(TypeBinding typeParameter, int variableRank, InvocationSite site, LookupEnvironment environment, ReferenceBinding object) {
-		super(CharOperation.concat(typeParameter.shortReadableName(), Integer.toString(variableRank).toCharArray(), '#'), 
-				null/*declaringElement*/, variableRank, environment);
+	public InferenceVariable(TypeBinding typeParameter, int parameterRank, int iVarId, InvocationSite site, LookupEnvironment environment, ReferenceBinding object) {
+		this(typeParameter, parameterRank, site,
+				CharOperation.concat(typeParameter.shortReadableName(), Integer.toString(iVarId).toCharArray(), '#'),
+				environment, object);
+		this.varId = iVarId;
+	}
+	private InferenceVariable(TypeBinding typeParameter, int parameterRank, InvocationSite site, char[] sourceName, LookupEnvironment environment, ReferenceBinding object) {
+		super(sourceName, null/*declaringElement*/, parameterRank, environment);
 		this.site = site;
 		this.typeParameter = typeParameter;
 		this.tagBits |= typeParameter.tagBits & TagBits.AnnotationNullMASK;
@@ -43,12 +49,21 @@ public class InferenceVariable extends TypeVariableBinding {
 		this.superclass = object;
 		this.prototype = this;
 	}
+	void updateSourceName(int newId) {
+		int hashPos = CharOperation.indexOf('#', this.sourceName);
+		this.varId = newId;
+		this.sourceName = CharOperation.concat(
+				CharOperation.subarray(this.sourceName, 0, hashPos),
+				Integer.toString(this.varId).toCharArray(),
+				'#');
+	}
 	
 	@Override
 	public TypeBinding clone(TypeBinding enclosingType) {
-		InferenceVariable clone = new InferenceVariable(this.typeParameter, this.rank, this.site, this.environment, this.superclass);
+		InferenceVariable clone = new InferenceVariable(this.typeParameter, this.rank, this.site, this.sourceName, this.environment, this.superclass);
 		clone.tagBits = this.tagBits;
 		clone.nullHints = this.nullHints;
+		clone.varId = this.varId;
 		clone.prototype = this;
 		return clone;
 	}
@@ -115,16 +130,19 @@ public class InferenceVariable extends TypeVariableBinding {
 	}
 	
 	public int hashCode() {
-		if (this.sourceName != null)
-			return this.sourceName.hashCode();
-		return super.hashCode();
+		int code = this.typeParameter.hashCode() + 17 * this.rank;
+		if (this.site != null)
+			return 31 * code + this.site.hashCode();
+		else
+			return code;
 	}
 	public boolean equals(Object obj) {
 		if (!(obj instanceof InferenceVariable))
 			return false;
-		if (this.sourceName != null)
-			return this.sourceName.equals(((InferenceVariable)obj).sourceName);
-		return super.equals(obj);
+		InferenceVariable other = (InferenceVariable) obj;
+		return this.rank == other.rank
+				&& this.site == other.site
+				&& TypeBinding.equalsEquals(this.typeParameter, other.typeParameter);
 	}
 
 	public TypeBinding erasure() {

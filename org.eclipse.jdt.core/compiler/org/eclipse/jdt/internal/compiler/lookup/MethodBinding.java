@@ -1,5 +1,6 @@
+// ASPECTJ
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -22,6 +23,11 @@
  *								Bug 429958 - [1.8][null] evaluate new DefaultLocation attribute of @NonNullByDefault
  *								Bug 438012 - [1.8][null] Bogus Warning: The nullness annotation is redundant with a default that applies to this location
  *								Bug 440759 - [1.8][null] @NonNullByDefault should never affect wildcards and uses of a type variable
+ *								Bug 443347 - [1.8][null] @NonNullByDefault should not affect constructor arguments of an anonymous instantiation
+ *								Bug 435805 - [1.8][compiler][null] Java 8 compiler does not recognize declaration style null annotations
+ *								Bug 466713 - Null Annotations: NullPointerException using <int @Nullable []> as Type Param
+ *								Bug 456584 - [1.8][null] Bogus warning for return type variable's @NonNull annotation being 'redundant'
+ *								Bug 471611 - Error on hover on call to generic method with null annotation
  *     Jesper Steen Moller - Contributions for
  *								Bug 412150 [1.8] [compiler] Enable reflected parameter names during annotation processing
  *******************************************************************************/
@@ -37,6 +43,7 @@ import org.eclipse.jdt.internal.compiler.ast.Argument;
 import org.eclipse.jdt.internal.compiler.ast.LambdaExpression;
 import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.TypeReference.AnnotationPosition;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
 import org.eclipse.jdt.internal.compiler.codegen.ConstantPool;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
@@ -55,6 +62,8 @@ public class MethodBinding extends Binding {
 	public TypeVariableBinding[] typeVariables = Binding.NO_TYPE_VARIABLES;
 	char[] signature;
 	public long tagBits;
+	// Used only for constructors
+	protected AnnotationBinding [] typeAnnotations = Binding.NO_ANNOTATIONS;
 
 	/** Store nullness information from annotation (incl. applicable default). */
 	public Boolean[] parameterNonNullness;  // TRUE means @NonNull declared, FALSE means @Nullable declared, null means nothing declared
@@ -92,6 +101,7 @@ public MethodBinding(MethodBinding initialMethodBinding, ReferenceBinding declar
 	this.parameters = initialMethodBinding.parameters;
 	this.thrownExceptions = initialMethodBinding.thrownExceptions;
 	this.declaringClass = declaringClass;
+	// AspectJ
 	if (declaringClass!=null) declaringClass.storeAnnotationHolder(this, initialMethodBinding.declaringClass.retrieveAnnotationHolder(initialMethodBinding, true)); // New AspectJ Extension - check for null
 }
 /* Answer true if the argument types & the receiver's parameters have the same erasure
@@ -418,12 +428,12 @@ public boolean canBeSeenBy(TypeBinding receiverType, InvocationSite invocationSi
 		}
 		PackageBinding currentPackage = currentType.fPackage;
 		// package could be null for wildcards/intersection types, ignore and recurse in superclass
-		if (currentPackage != null && currentPackage != declaringPackage) return false;
+		if (!currentType.isCapture() && currentPackage != null && currentPackage != declaringPackage) return false;
 	} while ((currentType = currentType.superclass()) != null);
 	return false;
 }
 
-public List collectMissingTypes(List missingTypes) {
+public List<TypeBinding> collectMissingTypes(List<TypeBinding> missingTypes) {
 	if ((this.tagBits & TagBits.HasMissingType) != 0) {
 		missingTypes = this.returnType.collectMissingTypes(missingTypes);
 		for (int i = 0, max = this.parameters.length; i < max; i++) {
@@ -578,18 +588,18 @@ protected void fillInDefaultNonNullness18(AbstractMethodDeclaration sourceMethod
 						sourceMethod.arguments[i].binding.type = this.parameters[i];
 				}
 			} else if (sourceMethod != null && (parameter.tagBits & TagBits.AnnotationNonNull) != 0
-							&& sourceMethod.arguments[i].hasNullTypeAnnotation()) {
+							&& sourceMethod.arguments[i].hasNullTypeAnnotation(AnnotationPosition.MAIN_TYPE)) {
 				sourceMethod.scope.problemReporter().nullAnnotationIsRedundant(sourceMethod, i);
 			}
 		}
 		if (added)
 			this.tagBits |= TagBits.HasParameterAnnotations;
 	}
-	if (this.returnType != null && hasNonNullDefaultFor(DefaultLocationReturnType, true)) {
-		if (this.returnType.acceptsNonNullDefault() && (this.returnType.tagBits & TagBits.AnnotationNullMASK) == 0) {
+	if (this.returnType != null && hasNonNullDefaultFor(DefaultLocationReturnType, true) && this.returnType.acceptsNonNullDefault()) {
+		if ((this.returnType.tagBits & TagBits.AnnotationNullMASK) == 0) {
 			this.returnType = env.createAnnotatedType(this.returnType, new AnnotationBinding[]{env.getNonNullAnnotation()});
 		} else if (sourceMethod instanceof MethodDeclaration && (this.returnType.tagBits & TagBits.AnnotationNonNull) != 0 
-						&& ((MethodDeclaration)sourceMethod).hasNullTypeAnnotation()) {
+						&& ((MethodDeclaration)sourceMethod).hasNullTypeAnnotation(AnnotationPosition.MAIN_TYPE)) {
 			sourceMethod.scope.problemReporter().nullAnnotationIsRedundant(sourceMethod, -1/*signifies method return*/);
 		}
 	}
@@ -682,13 +692,13 @@ public long getAnnotationTagBits() {
 				ASTNode.resolveAnnotations(methodDecl.scope, methodDecl.annotations, originalMethod);
 			CompilerOptions options = scope.compilerOptions();
 			if (options.isAnnotationBasedNullAnalysisEnabled) {
-				boolean isJdk18 = options.sourceLevel >= ClassFileConstants.JDK1_8;
-				long nullDefaultBits = isJdk18 ? this.defaultNullness
+				boolean usesNullTypeAnnotations = scope.environment().usesNullTypeAnnotations();
+				long nullDefaultBits = usesNullTypeAnnotations ? this.defaultNullness
 						: this.tagBits & (TagBits.AnnotationNonNullByDefault|TagBits.AnnotationNullUnspecifiedByDefault);
 				if (nullDefaultBits != 0 && this.declaringClass instanceof SourceTypeBinding) {
 					SourceTypeBinding declaringSourceType = (SourceTypeBinding) this.declaringClass;
-					if (declaringSourceType.checkRedundantNullnessDefaultOne(methodDecl, methodDecl.annotations, nullDefaultBits, isJdk18)) {
-						declaringSourceType.checkRedundantNullnessDefaultRecurse(methodDecl, methodDecl.annotations, nullDefaultBits, isJdk18);
+					if (declaringSourceType.checkRedundantNullnessDefaultOne(methodDecl, methodDecl.annotations, nullDefaultBits, usesNullTypeAnnotations)) {
+						declaringSourceType.checkRedundantNullnessDefaultRecurse(methodDecl, methodDecl.annotations, nullDefaultBits, usesNullTypeAnnotations);
 					}
 				}
 			}
@@ -738,7 +748,7 @@ public AnnotationBinding[][] getParameterAnnotations() {
 		if (this.declaringClass instanceof SourceTypeBinding) {
 			SourceTypeBinding sourceType = (SourceTypeBinding) this.declaringClass;
 			if (sourceType.scope != null) {
-				AbstractMethodDeclaration methodDecl = sourceType.scope.referenceType().declarationOf(this);
+				AbstractMethodDeclaration methodDecl = sourceType.scope.referenceType().declarationOf(originalMethod);
 				for (int i = 0; i < length; i++) {
 					Argument argument = methodDecl.arguments[i];
 					if (argument.annotations != null) {
@@ -768,6 +778,22 @@ public TypeVariableBinding getTypeVariable(char[] variableName) {
 		if (CharOperation.equals(this.typeVariables[i].sourceName, variableName))
 			return this.typeVariables[i];
 	return null;
+}
+
+public TypeVariableBinding[] getAllTypeVariables(boolean isDiamond) {
+	TypeVariableBinding[] allTypeVariables = this.typeVariables;
+	if (isDiamond) {
+		TypeVariableBinding[] classTypeVariables = this.declaringClass.typeVariables();
+		int l1 = allTypeVariables.length;
+		int l2 = classTypeVariables.length;
+		if (l1 == 0) {
+			allTypeVariables = classTypeVariables;
+		} else if (l2 != 0) {
+			System.arraycopy(allTypeVariables, 0, allTypeVariables=new TypeVariableBinding[l1+l2], 0, l1);
+			System.arraycopy(classTypeVariables, 0, allTypeVariables, l1, l2);
+		}
+	}
+	return allTypeVariables;
 }
 
 /**
@@ -928,6 +954,9 @@ public final boolean isUsed() {
 public boolean isVarargs() {
 	return (this.modifiers & ClassFileConstants.AccVarargs) != 0;
 }
+public boolean isParameterizedGeneric() {
+	return false;
+}
 public boolean isPolymorphic() {
 	return false;
 }
@@ -978,6 +1007,13 @@ public char[] readableName() /* foo(int, Thread) */ {
 	}
 	buffer.append(')');
 	return buffer.toString().toCharArray();
+}
+final public AnnotationBinding[] getTypeAnnotations() {
+	return this.typeAnnotations;
+}
+
+public void setTypeAnnotations(AnnotationBinding[] annotations) {
+	this.typeAnnotations = annotations;
 }
 public void setAnnotations(AnnotationBinding[] annotations) {
 	this.declaringClass.storeAnnotations(this, annotations);
@@ -1339,6 +1375,8 @@ public TypeVariableBinding[] typeVariables() {
 }
 //pre: null annotation analysis is enabled
 public boolean hasNonNullDefaultFor(int location, boolean useTypeAnnotations) {
+	if ((this.modifiers & ExtraCompilerModifiers.AccIsDefaultConstructor) != 0)
+		return false;
 	if (useTypeAnnotations) {
 		if (this.defaultNullness != 0)
 			return (this.defaultNullness & location) != 0;

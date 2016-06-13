@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -14,8 +14,11 @@
  *								bug 383368 - [compiler][null] syntactic null analysis for field references
  *								Bug 412203 - [compiler] Internal compiler error: java.lang.IllegalArgumentException: info cannot be null
  *								Bug 400874 - [1.8][compiler] Inference infrastructure should evolve to meet JLS8 18.x (Part G of JSR335 spec)
+ *								Bug 458396 - NPE in CodeStream.invoke()
  *     Jesper S Moller - Contributions for
  *								Bug 378674 - "The method can be declared as static" is wrong
+ *     Robert Roth <robert.roth.off@gmail.com> - Contributions for
+ *								Bug 361039 - NPE in FieldReference.optimizedBooleanConstant
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.ast;
 
@@ -121,7 +124,7 @@ public FlowInfo analyseAssignment(BlockScope currentScope, FlowContext flowConte
 			// assigning a final field outside an initializer or constructor or wrong reference
 			currentScope.problemReporter().cannotAssignToFinalField(this.binding, this);
 		}
-	} else if (this.binding.isNonNull()) {
+	} else if (this.binding.isNonNull() || this.binding.type.isTypeVariable()) {
 		// in a context where it can be assigned?
 		if (   !isCompound
 			&& this.receiver.isThis()
@@ -142,20 +145,29 @@ public FlowInfo analyseCode(BlockScope currentScope, FlowContext flowContext, Fl
 	boolean nonStatic = !this.binding.isStatic();
 	this.receiver.analyseCode(currentScope, flowContext, flowInfo, nonStatic);
 	if (nonStatic) {
-		this.receiver.checkNPE(currentScope, flowContext, flowInfo);
+		this.receiver.checkNPE(currentScope, flowContext, flowInfo, 1);
 	}
 
 	if (valueRequired || currentScope.compilerOptions().complianceLevel >= ClassFileConstants.JDK1_4) {
 		manageSyntheticAccessIfNecessary(currentScope, flowInfo, true /*read-access*/);
 	}
+	if (currentScope.compilerOptions().complianceLevel >= ClassFileConstants.JDK1_7) {
+		FieldBinding fieldBinding = this.binding;
+		if (this.receiver.isThis() && fieldBinding.isBlankFinal() && currentScope.needBlankFinalFieldInitializationCheck(fieldBinding)) {
+			FlowInfo fieldInits = flowContext.getInitsForFinalBlankInitializationCheck(fieldBinding.declaringClass.original(), flowInfo);
+			if (!fieldInits.isDefinitelyAssigned(fieldBinding)) {
+				currentScope.problemReporter().uninitializedBlankFinalField(fieldBinding, this);
+			}
+		}
+	}
 	return flowInfo;
 }
 
-public boolean checkNPE(BlockScope scope, FlowContext flowContext, FlowInfo flowInfo) {
+public boolean checkNPE(BlockScope scope, FlowContext flowContext, FlowInfo flowInfo, int ttlForFieldCheck) {
 	if (flowContext.isNullcheckedFieldAccess(this)) {
 		return true; // enough seen
 	}
-	return checkNullableFieldDereference(scope, this.binding, this.nameSourcePosition);
+	return checkNullableFieldDereference(scope, this.binding, this.nameSourcePosition, flowContext, ttlForFieldCheck);
 }
 
 /**
@@ -496,6 +508,11 @@ public boolean isSuperAccess() {
 	return this.receiver.isSuper();
 }
 
+@Override
+public boolean isQualifiedSuper() {
+	return this.receiver.isQualifiedSuper();
+}
+
 public boolean isTypeAccess() {
 	return this.receiver != null && this.receiver.isTypeReference();
 }
@@ -525,7 +542,7 @@ public void manageSyntheticAccessIfNecessary(BlockScope currentScope, FlowInfo f
 	FieldBinding codegenBinding = this.binding.original();
 	if (this.binding.isPrivate()) {
 		if ((TypeBinding.notEquals(currentScope.enclosingSourceType(), codegenBinding.declaringClass))
-				&& this.binding.constant() == Constant.NotAConstant) {
+				&& this.binding.constant(currentScope) == Constant.NotAConstant) {
 			if (this.syntheticAccessors == null)
 				this.syntheticAccessors = new MethodBinding[2];
 			this.syntheticAccessors[isReadAccess ? FieldReference.READ : FieldReference.WRITE] =
@@ -561,6 +578,8 @@ public void manageSyntheticAccessIfNecessary(BlockScope currentScope, FlowInfo f
 }
 
 public Constant optimizedBooleanConstant() {
+	if (this.resolvedType == null)
+		return Constant.NotAConstant;
 	switch (this.resolvedType.id) {
 		case T_boolean :
 		case T_JavaLangBoolean :
@@ -683,7 +702,7 @@ public TypeBinding resolveType(BlockScope scope) {
 		scope.problemReporter().deprecatedField(fieldBinding, this);
 	}
 	boolean isImplicitThisRcv = this.receiver.isImplicitThis();
-	this.constant = isImplicitThisRcv ? fieldBinding.constant() : Constant.NotAConstant;
+	this.constant = isImplicitThisRcv ? fieldBinding.constant(scope) : Constant.NotAConstant;
 	if (fieldBinding.isStatic()) {
 		// static field accessed through receiver? legal but unoptimal (optional warning)
 		if (!(isImplicitThisRcv
@@ -712,7 +731,7 @@ public TypeBinding resolveType(BlockScope scope) {
 	TypeBinding fieldType = fieldBinding.type;
 	if (fieldType != null) {
 		if ((this.bits & ASTNode.IsStrictlyAssigned) == 0) {
-			fieldType = fieldType.capture(scope, this.sourceEnd);	// perform capture conversion if read access
+			fieldType = fieldType.capture(scope, this.sourceStart, this.sourceEnd);	// perform capture conversion if read access
 		}
 		this.resolvedType = fieldType;
 		if ((fieldType.tagBits & TagBits.HasMissingType) != 0) {

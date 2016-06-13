@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -264,6 +264,9 @@ public final class ASTRewriteAnalyzer extends ASTVisitor {
 		return this.lineInfo;
 	}
 
+	final LineCommentEndOffsets getLineCommentEndOffsets() {
+		return this.lineCommentEndOffsets;
+	}
 	/**
 	 * Returns the extended source range for a node.
 	 *
@@ -590,6 +593,19 @@ public final class ASTRewriteAnalyzer extends ASTVisitor {
 			return !isInsertBoundToPrevious(node);
 		}
 
+		private boolean lineCommentSwallowsActualCode(int prevEnd) {
+			if (ASTRewriteAnalyzer.this.getLineCommentEndOffsets().isEndOfLineComment(prevEnd)) {
+				int lastEndOffset = getEndOfNode((ASTNode) this.list[this.list.length - 1].getOriginalValue());
+				LineInformation lInfo = ASTRewriteAnalyzer.this.getLineInformation();
+				try {
+					return lInfo.getLineOfOffset(lastEndOffset) == lInfo.getLineOfOffset(getScanner().getNextStartOffset(lastEndOffset, false));
+				} catch (CoreException e) {
+					// ignore
+				}
+			}
+			return false;
+		}
+
 		protected boolean mustRemoveSeparator(int originalOffset, int nodeIndex) {
 			return true;
 		}
@@ -717,6 +733,7 @@ public final class ASTRewriteAnalyzer extends ASTVisitor {
 						// is last, remove previous separator: split delete to allow range copies
 						doTextRemove(prevEnd, currPos - prevEnd, editGroup); // remove separator
 						doTextRemoveAndVisit(currPos, currEnd - currPos, node, editGroup); // remove node
+						if (lineCommentSwallowsActualCode(prevEnd)) doTextInsert(currEnd, getLineDelimiter(), editGroup);
 						currPos= currEnd;
 						prevEnd= currEnd;
 					} else {
@@ -1567,10 +1584,19 @@ public final class ASTRewriteAnalyzer extends ASTVisitor {
 				|| node instanceof AnnotatableType && property == ((AnnotatableType) node).getAnnotationsProperty();
 		Prefix formatterPrefix;
 		if (property == SingleVariableDeclaration.MODIFIERS2_PROPERTY || 
-				property == TypeParameter.MODIFIERS_PROPERTY || isAnnotationsProperty)
+				property == VariableDeclarationExpression.MODIFIERS2_PROPERTY ||
+				property == VariableDeclarationStatement.MODIFIERS2_PROPERTY ||
+				property == TypeParameter.MODIFIERS_PROPERTY || isAnnotationsProperty) {
+			ASTNode parent = node.getParent();
+			if (parent instanceof MethodDeclaration)
 			formatterPrefix= this.formatter.PARAM_ANNOTATION_SEPARATION;
+			else if (parent instanceof Block || parent instanceof TryStatement || parent instanceof ForStatement)
+				formatterPrefix= this.formatter.LOCAL_ANNOTATION_SEPARATION;
 		else
+				formatterPrefix= this.formatter.TYPE_ANNOTATION_SEPARATION;
+		} else {
 			formatterPrefix= this.formatter.ANNOTATION_SEPARATION;
+		}
 
 		int endPos= new ModifierRewriter(formatterPrefix).rewriteList(node, property, pos, keyword, " "); //$NON-NLS-1$ 
 

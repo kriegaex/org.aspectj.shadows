@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2007, 2013 BEA Systems, Inc. and others
+ * Copyright (c) 2007, 2015 BEA Systems, Inc. and others
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -23,7 +23,7 @@ import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeVisitor;
 
 /**
- * An implementation of NoType, which is used to represent certain psuedo-types.
+ * An implementation of NoType, which is used to represent certain pseudo-types.
  * @see NoType
  */
 public class NoTypeImpl implements NoType, NullType
@@ -62,7 +62,7 @@ public class NoTypeImpl implements NoType, NullType
 		switch (_kind) {
 		default:
 		case NONE:
-			return "<none>"; //$NON-NLS-1$
+			return "none"; //$NON-NLS-1$
 		case NULL:
 			return "null"; //$NON-NLS-1$
 		case VOID:

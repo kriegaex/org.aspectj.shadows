@@ -185,6 +185,7 @@ public class ParameterizedMethodBinding extends MethodBinding {
 		 */
 		this.tagBits = originalMethod.tagBits & ~TagBits.HasMissingType;
 		this.parameterNonNullness = originalMethod.parameterNonNullness;
+		this.defaultNullness = originalMethod.defaultNullness;
 
 		final TypeVariableBinding[] originalVariables = originalMethod.typeVariables;
 		Substitution substitution = null;
@@ -306,10 +307,18 @@ public class ParameterizedMethodBinding extends MethodBinding {
 		ReferenceBinding genericClassType = scope.getJavaLangClass();
 		LookupEnvironment environment = scope.environment();
 		TypeBinding rawType = environment.convertToRawType(receiverType.erasure(), false /*do not force conversion of enclosing types*/);
+		if (environment.usesNullTypeAnnotations())
+			rawType = environment.createAnnotatedType(rawType, new AnnotationBinding[] { environment.getNonNullAnnotation() });
 		method.returnType = environment.createParameterizedType(
 			genericClassType,
 			new TypeBinding[] {  environment.createWildcard(genericClassType, 0, rawType, null /*no extra bound*/, Wildcard.EXTENDS) },
 			null);
+		if (environment.globalOptions.isAnnotationBasedNullAnalysisEnabled) {
+			if (environment.usesNullTypeAnnotations())
+				method.returnType = environment.createAnnotatedType(method.returnType, new AnnotationBinding[] { environment.getNonNullAnnotation() });
+			else
+				method.tagBits |= TagBits.AnnotationNonNull;
+		}
 		if ((method.returnType.tagBits & TagBits.HasMissingType) != 0) {
 			method.tagBits |=  TagBits.HasMissingType;
 		}

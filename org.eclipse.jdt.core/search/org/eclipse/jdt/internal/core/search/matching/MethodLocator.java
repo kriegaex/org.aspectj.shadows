@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -13,6 +13,7 @@
  *******************************************************************************/
 package org.eclipse.jdt.internal.core.search.matching;
 
+import java.util.Arrays;
 import java.util.HashMap;
 
 import org.eclipse.core.resources.IResource;
@@ -24,6 +25,7 @@ import org.eclipse.jdt.internal.compiler.ast.*;
 import org.eclipse.jdt.internal.compiler.env.IBinaryType;
 import org.eclipse.jdt.internal.compiler.lookup.*;
 import org.eclipse.jdt.internal.compiler.util.SimpleSet;
+import org.eclipse.jdt.internal.core.BinaryMethod;
 import org.eclipse.jdt.internal.core.search.BasicSearchEngine;
 
 @SuppressWarnings({ "rawtypes", "unchecked" })
@@ -149,6 +151,22 @@ protected boolean isVirtualInvoke(MethodBinding method, MessageSend messageSend)
 			&& !(method.isDefault() && this.pattern.focus != null 
 			&& !CharOperation.equals(this.pattern.declaringPackageName, method.declaringClass.qualifiedPackageName()));
 }
+protected ReferenceBinding checkMethodRef(MethodBinding method, ReferenceExpression referenceExpression) {
+	boolean result = (!method.isStatic() && !method.isPrivate()
+		&&	referenceExpression.isMethodReference()  
+		&& !(method.isDefault() && this.pattern.focus != null 
+		&& !CharOperation.equals(this.pattern.declaringPackageName, method.declaringClass.qualifiedPackageName())));
+	if (result) {
+		Expression lhs = referenceExpression.lhs;
+		if (lhs instanceof NameReference) {
+			Binding binding = ((NameReference) lhs).binding;
+			if (binding instanceof ReferenceBinding)
+				return (ReferenceBinding) binding;
+		}
+	}
+	
+	return null;
+}
 public int match(ASTNode node, MatchingNodeSet nodeSet) {
 	int declarationsLevel = IMPOSSIBLE_MATCH;
 	if (this.pattern.findReferences) {
@@ -243,6 +261,8 @@ public int match(MessageSend node, MatchingNodeSet nodeSet) {
 public int match(ReferenceExpression node, MatchingNodeSet nodeSet) {
 	if (!this.pattern.findReferences) return IMPOSSIBLE_MATCH;
 	if (!matchesName(this.pattern.selector, node.selector)) return IMPOSSIBLE_MATCH;
+	if (node.selector != null &&  Arrays.equals(node.selector, org.eclipse.jdt.internal.compiler.codegen.ConstantPool.Init))
+		return IMPOSSIBLE_MATCH; // :: new
 	nodeSet.mustResolve = true;
 	return nodeSet.addMatch(node, this.pattern.mustResolve ? POSSIBLE_MATCH : ACCURATE_MATCH);
 }
@@ -309,15 +329,27 @@ protected int matchMethod(MethodBinding method, boolean skipImpossibleArg) {
 			return INACCURATE_MATCH;
 		}
 		boolean foundTypeVariable = false;
+		MethodBinding focusMethodBinding = null;
+		boolean checkedFocus = false;
+		boolean isBinary = this.pattern!= null && this.pattern.focus instanceof BinaryMethod;
 		// verify each parameter
 		for (int i = 0; i < parameterCount; i++) {
 			TypeBinding argType = method.parameters[i];
 			int newLevel = IMPOSSIBLE_MATCH;
-			if (argType.isMemberType()) {
-				// only compare source name for member type (bug 41018)
-				newLevel = CharOperation.match(this.pattern.parameterSimpleNames[i], argType.sourceName(), this.isCaseSensitive)
-					? ACCURATE_MATCH
-					: IMPOSSIBLE_MATCH;
+			boolean foundLevel = false;
+			if (argType.isMemberType() || this.pattern.parameterQualifications[i] != null) {
+				if (!checkedFocus) {
+					focusMethodBinding = this.matchLocator.getMethodBinding(this.pattern);
+					checkedFocus = true;
+				}
+				if (focusMethodBinding != null) {// textual comparison insufficient
+					TypeBinding[] parameters = focusMethodBinding.parameters;
+					if (parameters.length >= parameterCount) {
+						newLevel = (isBinary ? argType.erasure().isEquivalentTo((parameters[i].erasure())) :argType.isEquivalentTo((parameters[i]))) ? 
+								ACCURATE_MATCH : IMPOSSIBLE_MATCH;
+						foundLevel = true;
+					}
+				}
 			} else {
 				// TODO (frederic) use this call to refine accuracy on parameter types
 //				 newLevel = resolveLevelForType(this.pattern.parameterSimpleNames[i], this.pattern.parameterQualifications[i], this.pattern.parametersTypeArguments[i], 0, argType);
@@ -328,7 +360,9 @@ protected int matchMethod(MethodBinding method, boolean skipImpossibleArg) {
 					if (skipImpossibleArg) {
 						// Do not consider match as impossible while finding declarations and source level >= 1.5
 					 	// (see  bugs https://bugs.eclipse.org/bugs/show_bug.cgi?id=79990, 96761, 96763)
-						newLevel = level;
+						if (!foundLevel) {
+							newLevel = level;
+						}
 					} else if (argType.isTypeVariable()) {
 						newLevel = level;
 						foundTypeVariable = true;
@@ -342,7 +376,8 @@ protected int matchMethod(MethodBinding method, boolean skipImpossibleArg) {
 		if (foundTypeVariable) {
 			if (!method.isStatic() && !method.isPrivate()) {
 				// https://bugs.eclipse.org/bugs/show_bug.cgi?id=123836, No point in textually comparing type variables, captures etc with concrete types. 
-				MethodBinding focusMethodBinding = this.matchLocator.getMethodBinding(this.pattern);
+				if (!checkedFocus)
+					focusMethodBinding = this.matchLocator.getMethodBinding(this.pattern);
 				if (focusMethodBinding != null) {
 					if (matchOverriddenMethod(focusMethodBinding.declaringClass, focusMethodBinding, method)) {
 						return ACCURATE_MATCH;
@@ -777,7 +812,28 @@ protected int resolveLevel(ReferenceExpression referenceExpression) {
 
 	// receiver type
 	if (this.pattern.declaringSimpleName == null && this.pattern.declaringQualification == null) return methodLevel; // since any declaring class will do
-	int declaringLevel = resolveLevelForType(this.pattern.declaringSimpleName, this.pattern.declaringQualification, method.declaringClass);
+	int declaringLevel;
+	ReferenceBinding ref = checkMethodRef(method, referenceExpression);
+	if (ref != null) {
+		declaringLevel = resolveLevelAsSubtype(this.pattern.declaringSimpleName, this.pattern.declaringQualification, ref, method.selector, method.parameters, ref.qualifiedPackageName(), method.isDefault());
+		if (declaringLevel == IMPOSSIBLE_MATCH) {
+			if (method.declaringClass == null || this.allSuperDeclaringTypeNames == null) {
+				declaringLevel = INACCURATE_MATCH;
+			} else {
+				char[][][] superTypeNames = (method.isDefault() && this.pattern.focus == null) ? this.samePkgSuperDeclaringTypeNames: this.allSuperDeclaringTypeNames;
+				if (superTypeNames != null && resolveLevelAsSuperInvocation(ref, method.parameters, superTypeNames, true)) {
+						declaringLevel = methodLevel // since this is an ACCURATE_MATCH so return the possibly weaker match
+							| SUPER_INVOCATION_FLAVOR; // TODO: not an invocation really but ref -> add flavor to returned level
+				}
+			}
+		}
+		if ((declaringLevel & FLAVORS_MASK) != 0) {
+			// level got some flavors => return it
+			return declaringLevel;
+		}
+	} else {
+		declaringLevel = resolveLevelForType(this.pattern.declaringSimpleName, this.pattern.declaringQualification, method.declaringClass);
+	}
 	return (methodLevel & MATCH_LEVEL_MASK) > (declaringLevel & MATCH_LEVEL_MASK) ? declaringLevel : methodLevel; // return the weaker match
 }
 

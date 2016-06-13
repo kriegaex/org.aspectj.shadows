@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -20,18 +20,20 @@ import org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ASTNode;
 import org.eclipse.jdt.internal.compiler.ast.Block;
 import org.eclipse.jdt.internal.compiler.ast.CompilationUnitDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.ExportReference;
 import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ImportReference;
 import org.eclipse.jdt.internal.compiler.ast.Initializer;
+import org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
 
-@SuppressWarnings("rawtypes")
 public class RecoveredUnit extends RecoveredElement {
 
 	public CompilationUnitDeclaration unitDeclaration;
 
 	public RecoveredImport[] imports;
 	public int importCount;
+	public RecoveredModule module;
 	public RecoveredType[] types;
 	public int typeCount;
 
@@ -92,7 +94,9 @@ public RecoveredElement add(AbstractMethodDeclaration methodDeclaration, int bra
 				kind != TypeDeclaration.INTERFACE_DECL &&
 				kind != TypeDeclaration.ANNOTATION_TYPE_DECL) {
 			// the } of the last type can be considered as the end of an initializer
-			Initializer initializer = new Initializer(new Block(0), 0);
+			Block block = new Block(0);
+			block.sourceStart = block.sourceEnd = end;
+			Initializer initializer = new Initializer(block, 0);
 			initializer.bodyStart = end;
 			initializer.bodyEnd = end;
 			initializer.declarationSourceStart = end;
@@ -126,6 +130,10 @@ public RecoveredElement add(FieldDeclaration fieldDeclaration, int bracketBalanc
 	}
 	return this; // ignore
 }
+public RecoveredElement add(ExportReference exportReference, int bracketBalanceValue) {
+	return this.module != null ? this.module.add(exportReference, bracketBalanceValue) : null;
+}
+
 public RecoveredElement add(ImportReference importReference, int bracketBalanceValue) {
 	resetPendingModifiers();
 
@@ -150,6 +158,11 @@ public RecoveredElement add(ImportReference importReference, int bracketBalanceV
 	return this;
 }
 public RecoveredElement add(TypeDeclaration typeDeclaration, int bracketBalanceValue) {
+	
+	if (typeDeclaration instanceof ModuleDeclaration) {
+		this.module = new RecoveredModule((ModuleDeclaration)typeDeclaration, this, bracketBalanceValue);
+		return this.module;
+	}
 
 	if ((typeDeclaration.bits & ASTNode.IsAnonymousType) != 0){
 		if (this.typeCount > 0) {
@@ -242,6 +255,11 @@ public CompilationUnitDeclaration updatedCompilationUnitDeclaration(){
 		}
 		this.unitDeclaration.imports = importRefences;
 	}
+	if (this.module != null) {
+		this.unitDeclaration.moduleDeclaration = this.module.updatedModuleDeclaration();
+		this.unitDeclaration.types = new TypeDeclaration[1];
+		this.unitDeclaration.createModuleInfoType(this.unitDeclaration.moduleDeclaration);
+	}
 	/* update types */
 	if (this.typeCount > 0){
 		int existingCount = this.unitDeclaration.types == null ? 0 : this.unitDeclaration.types.length;
@@ -255,7 +273,7 @@ public CompilationUnitDeclaration updatedCompilationUnitDeclaration(){
 			this.types[this.typeCount - 1].typeDeclaration.bodyEnd = this.unitDeclaration.sourceEnd;
 		}
 		
-		Set knownTypes = new HashSet();
+		Set<TypeDeclaration> knownTypes = new HashSet<>();
 		int actualCount = existingCount;
 		for (int i = 0; i < this.typeCount; i++){
 			TypeDeclaration typeDecl = this.types[i].updatedTypeDeclaration(0, knownTypes);

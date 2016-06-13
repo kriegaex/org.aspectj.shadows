@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -194,6 +194,8 @@
  *									NullityMismatchAgainstFreeTypeVariable
  *									ImplicitObjectBoundNoNullDefault
  *									IllegalParameterNullityRedefinition
+ *									ContradictoryNullAnnotationsInferredFunctionType
+ *									IllegalReturnNullityRedefinitionFreeTypeVariable
  *      Jesper S Moller  - added the following constants
  *									TargetTypeNotAFunctionalInterface
  *									OuterLocalMustBeEffectivelyFinal
@@ -220,8 +222,9 @@ import org.eclipse.jdt.internal.compiler.lookup.ProblemReasons;
  * technology reusing the compiler.
  * A problem provides access to:
  * <ul>
- * <li> its location (originating source file name, source position, line number), </li>
- * <li> its message description and a predicate to check its severity (warning or error). </li>
+ * <li> its location (originating source file name, source position, line number) </li>
+ * <li> its message description </li>
+ * <li> predicates to check its severity (error, warning, or info) </li>
  * <li> its ID : a number identifying the very nature of this problem. All possible IDs are listed
  * as constants on this interface. </li>
  * </ul>
@@ -286,18 +289,26 @@ int getSourceLineNumber();
 int getSourceStart();
 
 /**
- * Checks the severity to see if the Error bit is set.
+ * Returns whether the severity of this problem is 'Error'.
  *
- * @return true if the Error bit is set for the severity, false otherwise
+ * @return true if the severity of this problem is 'Error', false otherwise
  */
 boolean isError();
 
 /**
- * Checks the severity to see if the Error bit is not set.
+ * Returns whether the severity of this problem is 'Warning'.
  *
- * @return true if the Error bit is not set for the severity, false otherwise
+ * @return true if the severity of this problem is 'Warning', false otherwise
  */
 boolean isWarning();
+
+/**
+ * Returns whether the severity of this problem is 'Info'.
+ *
+ * @return true if the severity of this problem is 'Info', false otherwise
+ * @since 3.12
+ */
+boolean isInfo();
 
 /**
  * Set the end position of the problem (inclusive), or -1 if unknown.
@@ -1318,6 +1329,8 @@ void setSourceStart(int sourceStart);
 
 	/** @since 3.9 */
 	int UnsafeElementTypeConversion = TypeRelated + 585;
+	/** @since 3.11 */
+    int InvalidTypeArguments = MethodRelated + TypeRelated + 586;
 
 	/**
 	 * 1.5 Syntax errors (when source level < 1.5)
@@ -1668,7 +1681,8 @@ void setSourceStart(int sourceStart);
 	int IllegalArrayTypeInIntersectionCast = TypeRelated + 893;
 	/** @since 3.10 */
 	int DuplicateBoundInIntersectionCast = TypeRelated + 894;
-	/** @since 3.10 */
+	/** @deprecated This problem is no longer reported; number Of functional interface is not an issue, number of abstract methods is.
+	 * @since 3.10 */
 	int MultipleFunctionalInterfaces = TypeRelated + 895;
 	/** @since 3.10 */
 	int StaticInterfaceMethodNotBelow18 = Internal + Syntax + 896;
@@ -1822,6 +1836,24 @@ void setSourceStart(int sourceStart);
 	int ImplicitObjectBoundNoNullDefault = 971;
 	/** @since 3.11 */
 	int IllegalParameterNullityRedefinition = MethodRelated + 972;
+	/** @since 3.11 */
+	int ContradictoryNullAnnotationsInferredFunctionType = MethodRelated + 973;
+	/** @since 3.11 */
+	int IllegalReturnNullityRedefinitionFreeTypeVariable = MethodRelated + 974;
+	/** @since 3.12 */
+	int IllegalRedefinitionOfTypeVariable = 975;
+	/** @since 3.12 */
+	int UncheckedAccessOfValueOfFreeTypeVariable = 976;
+	/** @since 3.12 */
+	int UninitializedFreeTypeVariableField = 977;
+	/** @since 3.12 */
+	int UninitializedFreeTypeVariableFieldHintMissingDefault = 978;
+	/** @since 3.12 */
+	int RequiredNonNullButProvidedFreeTypeVariable = TypeRelated + 979;
+	/** @since 3.12 */
+	int NonNullTypeVariableFromLegacyMethod = TypeRelated + 980;
+	/** @since 3.12 */
+	int NonNullMethodTypeVariableFromLegacyMethod = TypeRelated + 981;
 
 
 	// Java 8 work
@@ -1857,9 +1889,23 @@ void setSourceStart(int sourceStart);
 	/** @since 3.10 */
 	int IllegalDefaultModifierSpecification = MethodRelated + 1058;
 
+	/** @since 3.12 */
+	int UndefinedModule = TypeRelated + 1200;
+	/** @since 3.12 */
+	int DuplicateRequires = TypeRelated + 1201;
+	/** @since 3.12 */
+	int DuplicateExports = TypeRelated + 1202;
+	/** @since 3.12 */
+	int DuplicateUses = TypeRelated + 1203;
+	/** @since 3.12 */
+	int DuplicateServices = TypeRelated + 1204;
+	/** @since 3.12 */
+	int CyclicModuleDependency = TypeRelated + 1205;
+
 	/** @since 3.10 */
 	int GenericInferenceError = 1100; 	// FIXME: This is just a stop-gap measure, be more specific via https://bugs.eclipse.org/404675
 	
-	/** @since 3.10 */
+	/** @deprecated - problem is no longer generated (implementation issue has been resolved)
+	 * @since 3.10 */
 	int LambdaShapeComputationError = 1101;
 }

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -9,6 +9,10 @@
  *     IBM Corporation - initial API and implementation
  *     Terry Parker <tparker@google.com> - DeltaProcessor misses state changes in archive files, see https://bugs.eclipse.org/bugs/show_bug.cgi?id=357425
  *     Thirumala Reddy Mutchukota <thirumala@google.com> - Avoid optional library classpath entries validation - https://bugs.eclipse.org/bugs/show_bug.cgi?id=412882
+ *     Stephan Herrmann - Contribution for
+ *								Bug 440477 - [null] Infrastructure for feeding external annotations into compilation
+ *								Bug 462768 - [null] NPE when using linked folder for external annotations
+ *                              Bug 465296 - precedence of extra attributes on a classpath container
  *******************************************************************************/
 package org.eclipse.jdt.internal.core;
 
@@ -31,6 +35,7 @@ import java.util.zip.ZipFile;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IMarker;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.IWorkspaceRoot;
@@ -43,6 +48,7 @@ import org.eclipse.jdt.core.IAccessRule;
 import org.eclipse.jdt.core.IClasspathAttribute;
 import org.eclipse.jdt.core.IClasspathContainer;
 import org.eclipse.jdt.core.IClasspathEntry;
+import org.eclipse.jdt.core.IJavaModelMarker;
 import org.eclipse.jdt.core.IJavaModelStatus;
 import org.eclipse.jdt.core.IJavaModelStatusConstants;
 import org.eclipse.jdt.core.IJavaProject;
@@ -330,12 +336,21 @@ public class ClasspathEntry implements IClasspathEntry {
 	}
 
 	/**
-	 * Used to perform export/restriction propagation across referring projects/containers
+	 * Used to perform export/restriction propagation across referring projects/containers.
+	 * Also: propagating extraAttributes.
 	 */
 	public ClasspathEntry combineWith(ClasspathEntry referringEntry) {
 		if (referringEntry == null) return this;
-		if (referringEntry.isExported() || referringEntry.getAccessRuleSet() != null ) {
+		IClasspathAttribute[] referringExtraAttributes = referringEntry.getExtraAttributes();
+		if (referringEntry.isExported() || referringEntry.getAccessRuleSet() != null || referringExtraAttributes.length > 0) {
 			boolean combine = this.entryKind == CPE_SOURCE || referringEntry.combineAccessRules();
+			IClasspathAttribute[] combinedAttributes = this.extraAttributes;
+			int lenRefer = referringExtraAttributes.length;
+			if (lenRefer > 0) {
+				int lenEntry = combinedAttributes.length;
+				System.arraycopy(combinedAttributes, 0, combinedAttributes=new IClasspathAttribute[lenEntry+lenRefer], lenRefer, lenEntry);
+				System.arraycopy(referringExtraAttributes, 0, combinedAttributes, 0, lenRefer);
+			}
 			return new ClasspathEntry(
 								getContentKind(),
 								getEntryKind(),
@@ -348,7 +363,7 @@ public class ClasspathEntry implements IClasspathEntry {
 								referringEntry.isExported() || this.isExported, // duplicate container entry for tagging it as exported
 								combine(referringEntry.getAccessRules(), getAccessRules(), combine),
 								this.combineAccessRules,
-								this.extraAttributes);
+								combinedAttributes);
 		}
 		// no need to clone
 		return this;
@@ -1245,6 +1260,112 @@ public class ClasspathEntry implements IClasspathEntry {
 		return this.sourceAttachmentRootPath;
 	}
 
+	/**
+	 * Internal API: answer the path for external annotations (for null analysis) associated with
+	 * the given classpath entry.
+	 * Four shapes of paths are supported:
+	 * <ol>
+	 * <li>relative, variable (VAR/relpath): resolve classpath variable VAR and append relpath</li>
+	 * <li>relative, project (relpath): interpret relpath as a relative path within the given project</li>
+	 * <li>absolute, workspace (/Proj/relpath): an absolute path in the workspace</li>
+	 * <li>absolute, filesystem (/abspath): an absolute path in the filesystem</li>
+	 * </ol>
+	 * In case of ambiguity, workspace lookup has higher priority than filesystem lookup
+	 * (in fact filesystem paths are never validated).
+	 * 
+	 * @param entry classpath entry to work on
+	 * @param project project whose classpath we are analysing
+	 * @param resolve if true, any workspace-relative paths will be resolved to filesystem paths.
+	 * @return a path (in the workspace or filesystem-absolute) or null
+	 */
+	public static IPath getExternalAnnotationPath(IClasspathEntry entry, IProject project, boolean resolve) {
+		String rawAnnotationPath = getRawExternalAnnotationPath(entry);
+		if (rawAnnotationPath != null) {
+			IPath annotationPath = new Path(rawAnnotationPath);
+			if (annotationPath.isAbsolute()) {
+				if (!resolve)
+					return annotationPath;
+
+				// try Workspace-absolute:
+				IResource resource = project.getWorkspace().getRoot().findMember(annotationPath);
+				if (resource != null) {
+					return resource.getLocation();
+				} else if (new File(annotationPath.toOSString()).exists()) { // absolute, not in workspace, must be Filesystem-absolute
+					return annotationPath;
+				}
+				invalidExternalAnnotationPath(project);
+			} else {
+				// try Variable (always resolved):
+				IPath resolved = JavaCore.getResolvedVariablePath(annotationPath);
+				if (resolved != null)
+					return resolved;
+
+				// Project-relative:
+				if (project != null) {
+					if (resolve) {
+						IResource member = project.findMember(annotationPath);
+						if (member != null)
+							return member.getLocation();
+						invalidExternalAnnotationPath(project);
+					} else {
+						return new Path(project.getName()).append(annotationPath).makeAbsolute();
+					}
+				}
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Answer the raw external annotation path as specified in .classpath, or null.
+	 * @param entry where to look
+	 * @return the attached external annotation path, or null.
+	 */
+	static String getRawExternalAnnotationPath(IClasspathEntry entry) {
+		IClasspathAttribute[] extraAttributes = entry.getExtraAttributes();
+		for (int i = 0, length = extraAttributes.length; i < length; i++) {
+			IClasspathAttribute attribute = extraAttributes[i];
+			if (IClasspathAttribute.EXTERNAL_ANNOTATION_PATH.equals(attribute.getName())) {
+				return attribute.getValue();
+			}
+		}
+		return null;
+	}
+
+	private static void invalidExternalAnnotationPath(IProject project) {
+		try {
+			IMarker[] markers = project.findMarkers(IJavaModelMarker.BUILDPATH_PROBLEM_MARKER, false, IResource.DEPTH_ZERO);
+			for (int i = 0, l = markers.length; i < l; i++) {
+				if (markers[i].getAttribute(IMarker.SEVERITY, -1) == IMarker.SEVERITY_ERROR)
+					return; // one marker is enough
+			}
+		} catch (CoreException ce) {
+			return;
+		}
+		// no buildpath marker yet, trigger validation to create one:
+		new ClasspathValidation((JavaProject) JavaCore.create(project)).validate();
+	}
+
+	private IJavaModelStatus validateExternalAnnotationPath(IJavaProject javaProject, IPath annotationPath) {
+		IProject project = javaProject.getProject();
+		if (annotationPath.isAbsolute()) {
+			if (project.getWorkspace().getRoot().exists(annotationPath) // workspace absolute
+					|| new File(annotationPath.toOSString()).exists())  // file system abolute
+			{
+				return null;
+			}
+		} else {
+			if (JavaCore.getResolvedVariablePath(annotationPath) != null // variable (relative)
+					|| project.exists(annotationPath))					 // project relative
+			{
+				return null;
+			}
+		}
+		return new JavaModelStatus(IJavaModelStatusConstants.CP_INVALID_EXTERNAL_ANNOTATION_PATH,
+				javaProject,
+				Messages.bind(Messages.classpath_invalidExternalAnnotationPath, 
+						new String[] { annotationPath.toString(), project.getName(), this.path.toString()}));
+	}
 
 	public IClasspathEntry getReferencingEntry() {
 		return this.referencingEntry;
@@ -1945,6 +2066,14 @@ public class ClasspathEntry implements IClasspathEntry {
 								if (!set.add(attName)) {
 									status = new JavaModelStatus(IJavaModelStatusConstants.NAME_COLLISION, Messages.bind(Messages.classpath_duplicateEntryExtraAttribute, new String[] {attName, entryPathMsg, projectName}));
 									break;
+								}
+							}
+							if (status == null) {
+								String annotationPath = getRawExternalAnnotationPath(entry);
+								if (annotationPath != null) {
+									status = ((ClasspathEntry) entry).validateExternalAnnotationPath(project, new Path(annotationPath));
+									if (status != null)
+										return status;
 								}
 							}
 						}

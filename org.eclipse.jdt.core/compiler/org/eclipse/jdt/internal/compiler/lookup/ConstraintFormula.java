@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2013, 2014 GK Software AG.
+ * Copyright (c) 2013, 2015 GK Software AG.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -7,6 +7,8 @@
  *
  * Contributors:
  *     Stephan Herrmann - initial API and implementation
+ *     Lars Vogel <Lars.Vogel@vogella.com> - Contributions for
+ *     						Bug 473178
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.lookup;
 
@@ -30,32 +32,12 @@ abstract class ConstraintFormula extends ReductionResult {
 
 	public abstract Object reduce(InferenceContext18 inferenceContext) throws InferenceFailureException;
 
-	/** 5.3: compatibility check which includes the option of boxing/unboxing. */
-	protected boolean isCompatibleWithInLooseInvocationContext(TypeBinding one, TypeBinding two, InferenceContext18 context) {
-		if (one.isCompatibleWith(two, context.scope))
-			return true;
-		if (one.isBaseType() == two.isBaseType()) // this also protects against comparing null & primitive
-			return false;
-		if (one.isPrimitiveType()) {
-			if (!two.isBaseType()) {
-				TypeBinding boxingType = context.environment.computeBoxingType(one);
-				if (boxingType != one) //$IDENTITY-COMPARISON$ just checking if boxing could help
-					return boxingType.isCompatibleWith(two, context.scope);
-			}
-		} else if (two.isPrimitiveType()) {
-			TypeBinding boxingType = context.environment.computeBoxingType(two);
-			if (boxingType != two) //$IDENTITY-COMPARISON$ just checking if boxing could help
-				return one.isCompatibleWith(boxingType, context.scope);
-		}
-		return false;
-	}
-
 	Collection<InferenceVariable> inputVariables(InferenceContext18 context) {
 		return EMPTY_VARIABLE_LIST;
 	}
 	
 	Collection<InferenceVariable> outputVariables(InferenceContext18 context) {
-		Set<InferenceVariable> variables = new HashSet<InferenceVariable>();
+		Set<InferenceVariable> variables = new HashSet<>();
 		this.right.collectInferenceVariables(variables);
 		if (!variables.isEmpty())
 			variables.removeAll(inputVariables(context));

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -12,6 +12,7 @@
  *     							bug 349326 - [1.7] new warning for missing try-with-resources
  *								bug 345305 - [compiler][null] Compiler misidentifies a case of "variable can only be null"
  *								bug 403147 - [compiler][null] FUP of bug 400761: consolidate interaction between unboxing, NPE, and deferred checking
+ *								Bug 415790 - [compiler][resource]Incorrect potential resource leak warning in for loop with close in try/catch
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.ast;
 
@@ -128,6 +129,11 @@ public class WhileStatement extends Statement {
 				if ((combinedTagBits & FlowInfo.UNREACHABLE_OR_DEAD) != 0)
 					this.continueLabel = null;
 				exitBranch.addInitializationsFrom(condInfo.initsWhenFalse());
+				actionInfo = actionInfo.mergedWith(loopingContext.initsOnContinue.unconditionalInits());
+				condLoopContext.complainOnDeferredNullChecks(currentScope,
+						actionInfo, false);
+				loopingContext.complainOnDeferredNullChecks(currentScope,
+						actionInfo, false);
 			} else {
 				condLoopContext.complainOnDeferredFinalChecks(currentScope,
 						condInfo);
@@ -145,8 +151,9 @@ public class WhileStatement extends Statement {
 			}
 			if (loopingContext.hasEscapingExceptions()) { // https://bugs.eclipse.org/bugs/show_bug.cgi?id=321926
 				FlowInfo loopbackFlowInfo = flowInfo.copy();
-				if (this.continueLabel != null) {  // we do get to the bottom 
-					loopbackFlowInfo.mergedWith(actionInfo.unconditionalCopy());
+				if (this.continueLabel != null) {  // we do get to the bottom
+					// loopback | (loopback + action):
+					loopbackFlowInfo = loopbackFlowInfo.mergedWith(loopbackFlowInfo.unconditionalCopy().addNullInfoFrom(actionInfo).unconditionalInits());
 				}
 				loopingContext.simulateThrowAfterLoopBack(loopbackFlowInfo);
 			}
@@ -284,5 +291,19 @@ public class WhileStatement extends Statement {
 				this.action.traverse(visitor, blockScope);
 		}
 		visitor.endVisit(this, blockScope);
+	}
+
+	@Override
+	public boolean doesNotCompleteNormally() {
+		Constant cst = this.condition.constant;
+		boolean isConditionTrue = cst == null || cst != Constant.NotAConstant && cst.booleanValue() == true;
+		cst = this.condition.optimizedBooleanConstant();
+		boolean isConditionOptimizedTrue = cst == null ? true : cst != Constant.NotAConstant && cst.booleanValue() == true;
+		return (isConditionTrue || isConditionOptimizedTrue) && (this.action == null || !this.action.breaksOut(null));
+	}
+	
+	@Override
+	public boolean completesByContinue() {
+		return this.action.continuesAtOuterLabel();
 	}
 }

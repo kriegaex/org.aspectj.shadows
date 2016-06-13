@@ -1,5 +1,6 @@
+// ASPECTJ
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -21,6 +22,9 @@
  *								Bug 439516 - [1.8][null] NonNullByDefault wrongly applied to implicit type bound of binary type
  *								Bug 438458 - [1.8][null] clean up handling of null type annotations wrt type variables
  *								Bug 435570 - [1.8][null] @NonNullByDefault illegally tries to affect "throws E"
+ *								Bug 435805 - [1.8][compiler][null] Java 8 compiler does not recognize declaration style null annotations
+ *								Bug 437072 - [compiler][null] Null analysis emits possibly incorrect warning for new int[][] despite @NonNullByDefault
+ *								Bug 466713 - Null Annotations: NullPointerException using <int @Nullable []> as Type Param 
  *        Andy Clement (GoPivotal, Inc) aclement@gopivotal.com - Contributions for
  *                          Bug 383624 - [1.8][compiler] Revive code generation support for type annotations (from Olivier's work)
  *                          Bug 409236 - [1.8][compiler] Type annotations on intersection cast types dropped by code generator
@@ -33,7 +37,6 @@ import java.util.List;
 
 import org.eclipse.jdt.internal.compiler.ASTVisitor;
 import org.eclipse.jdt.internal.compiler.ast.NullAnnotationMatching.CheckMode;
-import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
 import org.eclipse.jdt.internal.compiler.codegen.AnnotationContext;
 import org.eclipse.jdt.internal.compiler.codegen.AnnotationTargetTypeConstants;
 import org.eclipse.jdt.internal.compiler.flow.FlowContext;
@@ -51,14 +54,32 @@ import org.eclipse.jdt.internal.compiler.lookup.ProblemReasons;
 import org.eclipse.jdt.internal.compiler.lookup.ProblemReferenceBinding;
 import org.eclipse.jdt.internal.compiler.lookup.ReferenceBinding;
 import org.eclipse.jdt.internal.compiler.lookup.Scope;
+import org.eclipse.jdt.internal.compiler.lookup.Substitution;
 import org.eclipse.jdt.internal.compiler.lookup.TagBits;
 import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
 import org.eclipse.jdt.internal.compiler.lookup.TypeIds;
-import org.eclipse.jdt.internal.compiler.lookup.TypeVariableBinding;
 import org.eclipse.jdt.internal.compiler.problem.ProblemSeverities;
 @SuppressWarnings({"rawtypes", "unchecked"})
 public abstract class TypeReference extends Expression {
 	public static final TypeReference[] NO_TYPE_ARGUMENTS = new TypeReference[0];
+
+	/**
+	 * Simplified specification of where in a (possibly complex) type reference
+	 * we are looking for type annotations.
+	 * @see TypeReference#hasNullTypeAnnotation(AnnotationPosition)
+	 */
+	public static enum AnnotationPosition {
+		/**
+		 * For arrays: the outermost dimension, for parameterized types the type, for nested types the innermost type.
+		 * This is the level that a declaration annotation would apply to.
+		 */
+		MAIN_TYPE,
+		/** For arrays: the leaf component type, else like MAIN_TYPE. */
+		LEAF_TYPE,
+		/** Any position admitting type annotations. */
+		ANY
+	}
+	
 static class AnnotationCollector extends ASTVisitor {
 	List annotationContexts;
 	Expression typeReference;
@@ -657,62 +678,63 @@ protected void resolveAnnotations(Scope scope, int location) {
 public int getAnnotatableLevels() {
 	return 1;
 }
-/** Check all typeArguments against null constraints on their corresponding type variables. */
-protected void checkNullConstraints(Scope scope, TypeReference[] typeArguments) {
-	CompilerOptions compilerOptions = scope.compilerOptions();
-	if (compilerOptions.isAnnotationBasedNullAnalysisEnabled
-			&& compilerOptions.sourceLevel >= ClassFileConstants.JDK1_8
-			&& typeArguments != null)
-	{
-		TypeVariableBinding[] typeVariables = this.resolvedType.original().typeVariables();
+/** Check all typeArguments for illegal null annotations on base types. */
+protected void checkIllegalNullAnnotations(Scope scope, TypeReference[] typeArguments) {
+	if (scope.environment().usesNullTypeAnnotations() && typeArguments != null) {
 		for (int i = 0; i < typeArguments.length; i++) {
 			TypeReference arg = typeArguments[i];
 			if (arg.resolvedType != null)
-				arg.checkNullConstraints(scope, typeVariables, i);
+				arg.checkIllegalNullAnnotation(scope);
 		}
 	}
 }
 /** Check whether this type reference conforms to the null constraints defined for the corresponding type variable. */
-protected void checkNullConstraints(Scope scope, TypeBinding[] variables, int rank) {
+protected void checkNullConstraints(Scope scope, Substitution substitution, TypeBinding[] variables, int rank) {
 	if (variables != null && variables.length > rank) {
 		TypeBinding variable = variables[rank];
 		if (variable.hasNullTypeAnnotations()) {
-			if (NullAnnotationMatching.analyse(variable, this.resolvedType, null, -1, CheckMode.BOUND_CHECK).isAnyMismatch())
+			if (NullAnnotationMatching.analyse(variable, this.resolvedType, null, substitution, -1, null, CheckMode.BOUND_CHECK).isAnyMismatch())
 				scope.problemReporter().nullityMismatchTypeArgument(variable, this.resolvedType, this);
     	}
 	}
+	checkIllegalNullAnnotation(scope);
+}
+protected void checkIllegalNullAnnotation(Scope scope) {
+	if (this.resolvedType.leafComponentType().isBaseType() && hasNullTypeAnnotation(AnnotationPosition.LEAF_TYPE))
+		scope.problemReporter().illegalAnnotationForBaseType(this, this.annotations[0], this.resolvedType.tagBits & TagBits.AnnotationNullMASK);	
 }
 /** Retrieve the null annotation that has been translated to the given nullTagBits. */
 public Annotation findAnnotation(long nullTagBits) {
 	if (this.annotations != null) {
 		Annotation[] innerAnnotations = this.annotations[this.annotations.length-1];
 		if (innerAnnotations != null) {
-			int annId = nullTagBits == TagBits.AnnotationNonNull ? TypeIds.T_ConfiguredAnnotationNonNull : TypeIds.T_ConfiguredAnnotationNullable;
+			int annBit = nullTagBits == TagBits.AnnotationNonNull ? TypeIds.BitNonNullAnnotation : TypeIds.BitNullableAnnotation;
 			for (int i = 0; i < innerAnnotations.length; i++) {
-				if (innerAnnotations[i] != null 
-						&& innerAnnotations[i].resolvedType != null 
-						&& innerAnnotations[i].resolvedType.id == annId)
+				if (innerAnnotations[i] != null && innerAnnotations[i].hasNullBit(annBit))
 					return innerAnnotations[i];
 			}
 		}
 	}
 	return null;
 }
-public boolean hasNullTypeAnnotation() {
+public boolean hasNullTypeAnnotation(AnnotationPosition position) {
 	if (this.annotations != null) {
+		if (position == AnnotationPosition.MAIN_TYPE) {
 		Annotation[] innerAnnotations = this.annotations[this.annotations.length-1];
-		if (containsNullAnnotation(innerAnnotations))
+			return containsNullAnnotation(innerAnnotations);
+		} else {
+			for (Annotation[] someAnnotations: this.annotations) {
+				if (containsNullAnnotation(someAnnotations))
 			return true;
+	}
+		}
 	}
 	return false;
 }
 public static boolean containsNullAnnotation(Annotation[] annotations) {
 	if (annotations != null) {
 		for (int i = 0; i < annotations.length; i++) {
-			if (annotations[i] != null 
-					&& annotations[i].resolvedType != null 
-					&& (annotations[i].resolvedType.id == TypeIds.T_ConfiguredAnnotationNonNull
-						|| annotations[i].resolvedType.id == TypeIds.T_ConfiguredAnnotationNullable))
+			if (annotations[i] != null && (annotations[i].hasNullBit(TypeIds.BitNonNullAnnotation|TypeIds.BitNullableAnnotation)))
 				return true;
 		}
 	}
@@ -720,5 +742,9 @@ public static boolean containsNullAnnotation(Annotation[] annotations) {
 }
 public TypeReference[] getTypeReferences() {
 	return new TypeReference [] { this };
+}
+
+public boolean isBaseTypeReference() {
+	return false;
 }
 }

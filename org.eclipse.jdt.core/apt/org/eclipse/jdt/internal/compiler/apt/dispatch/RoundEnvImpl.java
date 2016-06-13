@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2005, 2014 IBM Corporation and others.
+ * Copyright (c) 2005, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -8,6 +8,7 @@
  * Contributors:
  *    IBM Corporation - initial API and implementation
  *    IBM Corporation - Fix for bug 328575
+ *    het@google.com - Bug 415274 - Annotation processing throws a NPE in getElementsAnnotatedWith()
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.apt.dispatch;
 
@@ -131,7 +132,7 @@ public class RoundEnvImpl implements RoundEnvironment
 		}
 		Binding annoBinding = ((TypeElementImpl)a)._binding;
 		if (0 != (annoBinding.getAnnotationTagBits() & TagBits.AnnotationInherited)) {
-			Set<Element> annotatedElements = new HashSet<Element>(_annoToUnit.getValues(a));
+			Set<Element> annotatedElements = new HashSet<>(_annoToUnit.getValues(a));
 			// For all other root elements that are TypeElements, and for their recursively enclosed
 			// types, add each element if it has a superclass are annotated with 'a'
 			ReferenceBinding annoTypeBinding = (ReferenceBinding) annoBinding;
@@ -194,6 +195,9 @@ public class RoundEnvImpl implements RoundEnvironment
 			throw new IllegalArgumentException("Argument must represent an annotation type"); //$NON-NLS-1$
 		}
 		TypeElement annoType = _processingEnv.getElementUtils().getTypeElement(canonicalName);
+		if (annoType == null) {
+			return Collections.emptySet();
+		}
 		return getElementsAnnotatedWith(annoType);
 	}
 
@@ -204,7 +208,7 @@ public class RoundEnvImpl implements RoundEnvironment
 			return Collections.emptySet();
 		}
 		if (_rootElements == null) {
-			Set<Element> elements = new HashSet<Element>(_units.length);
+			Set<Element> elements = new HashSet<>(_units.length);
 			for (CompilationUnitDeclaration unit : _units) {
 				if (null == unit.scope || null == unit.scope.topLevelTypes)
 					continue;

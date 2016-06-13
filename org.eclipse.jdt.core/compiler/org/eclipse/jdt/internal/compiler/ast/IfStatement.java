@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2014 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -103,6 +103,8 @@ public FlowInfo analyseCode(BlockScope currentScope, FlowContext flowContext, Fl
 			}
 		}
 		thenFlowInfo = this.thenStatement.analyseCode(currentScope, flowContext, thenFlowInfo);
+		if (!(this.thenStatement instanceof Block))
+			flowContext.expireNullCheckedFieldInfo();
 	}
 	// any null check from the condition is now expired
 	flowContext.expireNullCheckedFieldInfo();
@@ -131,6 +133,8 @@ public FlowInfo analyseCode(BlockScope currentScope, FlowContext flowContext, Fl
 			}
 		}
 		elseFlowInfo = this.elseStatement.analyseCode(currentScope, flowContext, elseFlowInfo);
+		if (!(this.elseStatement instanceof Block))
+			flowContext.expireNullCheckedFieldInfo();
 	}
 	// process AutoCloseable resources closed in only one branch:
 	currentScope.correlateTrackingVarsIfElse(thenFlowInfo, elseFlowInfo);
@@ -283,5 +287,14 @@ public void traverse(ASTVisitor visitor, BlockScope blockScope) {
 			this.elseStatement.traverse(visitor, blockScope);
 	}
 	visitor.endVisit(this, blockScope);
+}
+
+@Override
+public boolean doesNotCompleteNormally() {
+	return this.thenStatement != null && this.thenStatement.doesNotCompleteNormally() && this.elseStatement != null && this.elseStatement.doesNotCompleteNormally();
+}
+@Override
+public boolean completesByContinue() {
+	return this.thenStatement != null && this.thenStatement.completesByContinue() || this.elseStatement != null && this.elseStatement.completesByContinue();
 }
 }

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -26,6 +26,8 @@
  *								Bug 435962 - [RC2] StackOverFlowError when building
  *								Bug 438458 - [1.8][null] clean up handling of null type annotations wrt type variables
  *								Bug 440759 - [1.8][null] @NonNullByDefault should never affect wildcards and uses of a type variable
+ *								Bug 441693 - [1.8][null] Bogus warning for type argument annotated with @NonNull
+ *								Bug 446434 - [1.8][null] Enable interned captures also when analysing null type annotations
  *      Jesper S Moller <jesper@selskabet.org> -  Contributions for
  *								bug 382701 - [1.8][compiler] Implement semantic analysis of Lambda expressions & Reference expression
  *******************************************************************************/
@@ -48,7 +50,6 @@ import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
  *
  * null is NOT a valid value for a non-public field... it just means the field is not initialized.
  */
-@SuppressWarnings("rawtypes")
 abstract public class TypeBinding extends Binding {
 
 	public int id = TypeIds.NoId;
@@ -97,9 +98,9 @@ public TypeBinding() {
 	super();
 }
 	
-public TypeBinding(TypeBinding prototype) {  // faithfully copy all instance state - clone operation should specialize/override suitably.
+public TypeBinding(TypeBinding prototype) {  // faithfully copy most instance state - clone operation should specialize/override suitably.
 	this.id = prototype.id;
-	this.tagBits = prototype.tagBits;
+	this.tagBits = prototype.tagBits & ~TagBits.AnnotationNullMASK;
 }
 
 /**
@@ -181,7 +182,7 @@ public boolean canBeInstantiated() {
 /**
  * Perform capture conversion on a given type (only effective on parameterized type with wildcards)
  */
-public TypeBinding capture(Scope scope, int position) {
+public TypeBinding capture(Scope scope, int start, int end) {
 	return this;
 }
 
@@ -205,7 +206,7 @@ public TypeBinding closestMatch() {
  * @param missingTypes
  * @return missing types
  */
-public List collectMissingTypes(List missingTypes) {
+public List<TypeBinding> collectMissingTypes(List<TypeBinding> missingTypes) {
 	return missingTypes;
 }
 
@@ -251,6 +252,13 @@ public int dimensions() {
 public int depth() {
 	return 0;
 }
+
+/* Answer the receiver's enclosing method ... null if the receiver is not a local type.
+ */
+public MethodBinding enclosingMethod() {
+	return null;
+}
+
 
 /* Answer the receiver's enclosing type... null if the receiver is a top level type or is an array or a non reference type.
  */
@@ -432,6 +440,16 @@ public TypeBinding findSuperTypeOriginatingFrom(TypeBinding otherType) {
 					}
 				}
 			}
+			break;
+		case Binding.INTERSECTION_TYPE18:
+			IntersectionTypeBinding18 itb18 = (IntersectionTypeBinding18) this;
+			ReferenceBinding[] intersectingTypes = itb18.getIntersectingTypes();
+			for (int i = 0, length = intersectingTypes.length; i < length; i++) {
+				TypeBinding superType = intersectingTypes[i].findSuperTypeOriginatingFrom(otherType);
+				if (superType != null)
+					return superType;
+			}
+			break;
 	}
 	return null;
 }
@@ -595,6 +613,31 @@ public boolean isCompatibleWith(TypeBinding right) {
 // version that allows to capture a type bound using 'scope':
 public abstract boolean isCompatibleWith(TypeBinding right, /*@Nullable*/ Scope scope);
 
+public boolean isPotentiallyCompatibleWith(TypeBinding right, /*@Nullable*/ Scope scope) {
+	return isCompatibleWith(right, scope);
+}
+
+/* Answer true if the receiver type can be assigned to the argument type (right) with boxing/unboxing applied.
+ */
+public boolean isBoxingCompatibleWith(TypeBinding right, /*@NonNull */ Scope scope) {
+	
+	if (right == null)
+		return false;
+
+	if (TypeBinding.equalsEquals(this, right))
+		return true;
+	
+	if (this.isCompatibleWith(right, scope))
+		return true;
+	
+	if (this.isBaseType() != right.isBaseType()) {
+		TypeBinding convertedType = scope.environment().computeBoxingType(this);
+		if (TypeBinding.equalsEquals(convertedType, right) || convertedType.isCompatibleWith(right, scope))
+			return true;
+	}
+	return false;
+}
+
 public boolean isEnum() {
 	return false;
 }
@@ -692,7 +735,7 @@ public boolean acceptsNonNullDefault() {
 	return false;
 }
 
-public boolean isIntersectionCastType() {
+public boolean isIntersectionType18() {
 	return false;
 }
 
@@ -739,6 +782,11 @@ public boolean isParameterizedWithOwnVariables() {
 public boolean isProperType(boolean admitCapture18) {
 	return true;
 }
+
+public boolean isPolyType() {
+	return false;
+}
+
 /**
  * Substitute all occurrences of 'var' within the current type by 'substituteType.
  * @param var an inference variable (JLS8 18.1.1)
@@ -1209,6 +1257,12 @@ public boolean isTypeArgumentContainedBy(TypeBinding otherType) {
 			TypeBinding otherBound = otherWildcard.bound;
 			switch (otherWildcard.boundKind) {
 				case Wildcard.EXTENDS:
+					if (otherBound instanceof IntersectionTypeBinding18) {
+						TypeBinding [] intersectingTypes = ((IntersectionTypeBinding18) otherBound).intersectingTypes;
+						for (int i = 0, length = intersectingTypes.length; i < length; i++)
+							if (TypeBinding.equalsEquals(intersectingTypes[i], this))
+								return true;
+					}
 					if (TypeBinding.equalsEquals(otherBound, this))
 						return true; // ? extends T  <=  ? extends ? extends T
 					if (upperBound == null)
@@ -1221,6 +1275,12 @@ public boolean isTypeArgumentContainedBy(TypeBinding otherType) {
 					return upperBound.isCompatibleWith(otherBound);
 
 				case Wildcard.SUPER:
+					if (otherBound instanceof IntersectionTypeBinding18) {
+						TypeBinding [] intersectingTypes = ((IntersectionTypeBinding18) otherBound).intersectingTypes;
+						for (int i = 0, length = intersectingTypes.length; i < length; i++)
+							if (TypeBinding.equalsEquals(intersectingTypes[i], this))
+								return true;
+					}
 					if (TypeBinding.equalsEquals(otherBound, this))
 						return true; // ? super T  <=  ? super ? super T
 					if (lowerBound == null)
@@ -1402,17 +1462,24 @@ public TypeBinding original() {
 		case Binding.PARAMETERIZED_TYPE :
 		case Binding.RAW_TYPE :
 		case Binding.ARRAY_TYPE :
-			return erasure().unannotated(false);
+			return erasure().unannotated();
 		default :
-			return this.unannotated(false);
+			return this.unannotated();
 	}
 }
 
 /** 
  * Return this type minus its type annotations
- * @param removeOnlyNullAnnotations if true only null type annotations are removed, otherwise all type annotations.
  */
-public TypeBinding unannotated(boolean removeOnlyNullAnnotations) {
+public TypeBinding unannotated() {
+	return this;
+}
+
+/**
+ * Return this type minus its toplevel null annotations. Any annotations on type arguments or
+ * bounds are retained. 
+ */
+public TypeBinding withoutToplevelNullAnnotation() {
 	return this;
 }
 
@@ -1458,18 +1525,19 @@ public void setTypeAnnotations(AnnotationBinding[] annotations, boolean evalNull
 		for (int i = 0, length = annotations.length; i < length; i++) {
 			AnnotationBinding annotation = annotations[i];
 			if (annotation != null) {
-				switch (annotation.type.id) {
-					case TypeIds.T_ConfiguredAnnotationNullable :
-						this.tagBits |= TagBits.AnnotationNullable | TagBits.HasNullTypeAnnotation;
-						break;
-					case TypeIds.T_ConfiguredAnnotationNonNull :
-						this.tagBits |= TagBits.AnnotationNonNull  | TagBits.HasNullTypeAnnotation;
-						break;
-				}
+				if (annotation.type.hasNullBit(TypeIds.BitNullableAnnotation))
+					this.tagBits |= TagBits.AnnotationNullable | TagBits.HasNullTypeAnnotation;
+				else if (annotation.type.hasNullBit(TypeIds.BitNonNullAnnotation))
+					this.tagBits |= TagBits.AnnotationNonNull  | TagBits.HasNullTypeAnnotation;
 			}
 		}
 		// we do accept contradictory tagBits here, to support detecting contradictions caused by type substitution
 	}
+}
+
+// return a name that can be passed to Signature.createTypeSignature
+public char [] signableName() {
+	return readableName();
 }
 
 /**
@@ -1497,11 +1565,12 @@ public TypeVariableBinding[] typeVariables() {
 }
 
 /**
- * Return the single abstract method of a functional interface, or null, if the receiver is not a functional interface as defined in JLS 9.8.
+ * Return the single abstract method of a functional interface, or one of {@code null} or {@link ReferenceBinding#samProblemBinding}, if the receiver is not a functional interface as defined in JLS 9.8.
+ * In particular {@code null} is answered if the receiver is not a reference type, or is a problem type.
  * @param scope scope
  * @param replaceWildcards Should wildcards be replaced following JLS 9.8? Say false for lambdas with explicit argument types which should apply 18.5.3
  *  
- * @return The single abstract method of a functional interface, or null, if the receiver is not a functional interface. 
+ * @return The single abstract method of a functional interface, or one of {@code null} or {@link ReferenceBinding#samProblemBinding}, if the receiver is not a functional interface. 
  */
 public MethodBinding getSingleAbstractMethod(Scope scope, boolean replaceWildcards) {
 	return null;
@@ -1599,5 +1668,20 @@ public boolean enterRecursiveFunction() {
  */
 public void exitRecursiveFunction() {
 	// empty, subclasses to override
+}
+
+public boolean isFunctionalType() {
+	return false;
+}
+/**
+ * Refresh some tagBits from details into the main type.
+ * Currently handled: TagBits.HasNullTypeAnnotation
+ */
+public long updateTagBits() {
+	return this.tagBits & TagBits.HasNullTypeAnnotation; // subclasses to override
+}
+
+public boolean isFreeTypeVariable() {
+	return false;
 }
 }

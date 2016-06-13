@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -19,8 +19,11 @@
  *								bug 400421 - [compiler] Null analysis for fields does not take @com.google.inject.Inject into account
  *								Bug 392099 - [1.8][compiler][null] Apply null annotation on types for null analysis
  *								Bug 416176 - [1.8][compiler][null] null type annotations cause grief on type variables
+ *								Bug 435805 - [1.8][compiler][null] Java 8 compiler does not recognize declaration style null annotations
  *        Andy Clement (GoPivotal, Inc) aclement@gopivotal.com - Contributions for
  *                          Bug 415399 - [1.8][compiler] Type annotations on constructor results dropped by the code generator
+ *     Ulrich Grave <ulrich.grave@gmx.de> - Contributions for
+ *                              bug 386692 - Missing "unused" warning on "autowired" fields
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.ast;
 
@@ -142,10 +145,7 @@ public void analyseCode(ClassScope classScope, InitializationFlowContext initial
 		}
 
 		// nullity and mark as assigned
-		if (classScope.compilerOptions().sourceLevel < ClassFileConstants.JDK1_8)
-			analyseArguments(flowInfo, this.arguments, this.binding);
-		else
-			analyseArguments18(flowInfo, this.arguments, this.binding);
+		analyseArguments(classScope.environment(), flowInfo, this.arguments, this.binding);
 
 		// propagate to constructor call
 		if (this.constructorCall != null) {
@@ -204,7 +204,7 @@ public void analyseCode(ClassScope classScope, InitializationFlowContext initial
 								((this.bits & ASTNode.IsDefaultConstructor) != 0)
 									? (ASTNode) this.scope.referenceType().declarationOf(field.original())
 									: this);
-					} else if (field.isNonNull()) {
+					} else if (field.isNonNull() || field.type.isFreeTypeVariable()) {
 						FieldDeclaration fieldDecl = this.scope.referenceType().declarationOf(field.original());
 						if (!isValueProvidedUsingAnnotation(fieldDecl))
 							this.scope.problemReporter().uninitializedNonNullField(
@@ -242,6 +242,14 @@ boolean isValueProvidedUsingAnnotation(FieldDeclaration fieldDecl) {
 					// if "optional=false" is specified, don't rely on initialization by the injector:
 					if (CharOperation.equals(memberValuePairs[j].name, TypeConstants.OPTIONAL))
 						return memberValuePairs[j].value instanceof FalseLiteral;
+				}
+			} else if (annotation.resolvedType.id == TypeIds.T_OrgSpringframeworkBeansFactoryAnnotationAutowired) {
+				MemberValuePair[] memberValuePairs = annotation.memberValuePairs();
+				if (memberValuePairs == Annotation.NoValuePairs)
+					return true;
+				for (int j = 0; j < memberValuePairs.length; j++) {
+					if (CharOperation.equals(memberValuePairs[j].name, TypeConstants.REQUIRED))
+						return memberValuePairs[j].value instanceof TrueLiteral;
 				}
 			}
 		}
@@ -459,7 +467,9 @@ private void internalGenerateCode(ClassScope classScope, ClassFile classFile) {
 }
 
 public void getAllAnnotationContexts(int targetType, List allAnnotationContexts) {
-	AnnotationCollector collector = new AnnotationCollector(null, targetType, allAnnotationContexts);
+	TypeReference fakeReturnType = new SingleTypeReference(this.selector, 0);
+	fakeReturnType.resolvedType = this.binding.declaringClass;
+	AnnotationCollector collector = new AnnotationCollector(fakeReturnType, targetType, allAnnotationContexts);
 	for (int i = 0, max = this.annotations.length; i < max; i++) {
 		Annotation annotation = this.annotations[i];
 		annotation.traverse(collector, (BlockScope) null);

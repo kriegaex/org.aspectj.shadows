@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -12,6 +16,7 @@
  *           -  Another problem with inner classes referenced from jars or class folders: "The type ... cannot be resolved"
  *     Stephan Herrmann - Contribution for
  *								Bug 392727 - Cannot compile project when a java file contains $ in its file name
+ *								Bug 440477 - [null] Infrastructure for feeding external annotations into compilation
  *******************************************************************************/
 package org.eclipse.jdt.internal.core.builder;
 
@@ -21,6 +26,8 @@ import org.eclipse.core.runtime.*;
 import org.eclipse.jdt.core.*;
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.env.*;
+import org.eclipse.jdt.internal.compiler.env.IModule;
+import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
 import org.eclipse.jdt.internal.compiler.problem.AbortCompilation;
 import org.eclipse.jdt.internal.compiler.util.SimpleLookupTable;
 import org.eclipse.jdt.internal.compiler.util.SimpleSet;
@@ -31,7 +38,7 @@ import java.io.*;
 import java.util.*;
 
 @SuppressWarnings({"rawtypes", "unchecked"})
-public class NameEnvironment implements INameEnvironment, SuffixConstants {
+public class NameEnvironment extends ModuleEnvironment implements SuffixConstants {
 
 boolean isIncrementalBuild;
 ClasspathMultiDirectory[] sourceLocations;
@@ -103,6 +110,7 @@ private void computeClasspathLocations(
 		ClasspathEntry entry = (ClasspathEntry) classpathEntries[i];
 		IPath path = entry.getPath();
 		Object target = JavaModel.getTarget(path, true);
+		IPath externalAnnotationPath = ClasspathEntry.getExternalAnnotationPath(entry, javaProject.getProject(), true);
 		if (target == null) continue nextEntry;
 
 		switch(entry.getEntryKind()) {
@@ -119,8 +127,13 @@ private void computeClasspathLocations(
 					if (!outputFolder.exists())
 						createOutputFolder(outputFolder);
 				}
-				sLocations.add(
-					ClasspathLocation.forSourceFolder((IContainer) target, outputFolder, entry.fullInclusionPatternChars(), entry.fullExclusionPatternChars(), entry.ignoreOptionalProblems()));
+					sLocations.add(ClasspathLocation.forSourceFolder(
+							(IContainer) target, 
+							outputFolder,
+							entry.fullInclusionPatternChars(), 
+							entry.fullExclusionPatternChars(),
+							entry.ignoreOptionalProblems(),
+							this));
 				continue nextEntry;
 
 			case IClasspathEntry.CPE_PROJECT :
@@ -144,7 +157,7 @@ private void computeClasspathLocations(
 							: (IContainer) root.getFolder(prereqOutputPath);
 						if (binaryFolder.exists() && !seen.contains(binaryFolder)) {
 							seen.add(binaryFolder);
-							ClasspathLocation bLocation = ClasspathLocation.forBinaryFolder(binaryFolder, true, entry.getAccessRuleSet());
+							ClasspathLocation bLocation = ClasspathLocation.forBinaryFolder(binaryFolder, true, entry.getAccessRuleSet(), externalAnnotationPath, this);
 							bLocations.add(bLocation);
 							if (binaryLocationsPerProject != null) { // normal builder mode
 								ClasspathLocation[] existingLocations = (ClasspathLocation[]) binaryLocationsPerProject.get(prereqProject);
@@ -172,14 +185,14 @@ private void computeClasspathLocations(
 							&& JavaCore.IGNORE.equals(javaProject.getOption(JavaCore.COMPILER_PB_DISCOURAGED_REFERENCE, true)))
 								? null
 								: entry.getAccessRuleSet();
-						bLocation = ClasspathLocation.forLibrary((IFile) resource, accessRuleSet);
+						bLocation = ClasspathLocation.forLibrary((IFile) resource, accessRuleSet, externalAnnotationPath, this);
 					} else if (resource instanceof IContainer) {
 						AccessRuleSet accessRuleSet =
 							(JavaCore.IGNORE.equals(javaProject.getOption(JavaCore.COMPILER_PB_FORBIDDEN_REFERENCE, true))
 							&& JavaCore.IGNORE.equals(javaProject.getOption(JavaCore.COMPILER_PB_DISCOURAGED_REFERENCE, true)))
 								? null
 								: entry.getAccessRuleSet();
-						bLocation = ClasspathLocation.forBinaryFolder((IContainer) target, false, accessRuleSet);	 // is library folder not output folder
+						bLocation = ClasspathLocation.forBinaryFolder((IContainer) target, false, accessRuleSet, externalAnnotationPath, this);	 // is library folder not output folder
 					}
 					bLocations.add(bLocation);
 					if (binaryLocationsPerProject != null) { // normal builder mode
@@ -200,7 +213,7 @@ private void computeClasspathLocations(
 							&& JavaCore.IGNORE.equals(javaProject.getOption(JavaCore.COMPILER_PB_DISCOURAGED_REFERENCE, true)))
 								? null
 								: entry.getAccessRuleSet();
-					bLocations.add(ClasspathLocation.forLibrary(path.toString(), accessRuleSet));
+					bLocations.add(ClasspathLocation.forLibrary(path.toString(), accessRuleSet, externalAnnotationPath, this));
 				}
 				continue nextEntry;
 		}
@@ -262,7 +275,7 @@ private void createParentFolder(IContainer parent) throws CoreException {
 	}
 }
 
-private NameEnvironmentAnswer findClass(String qualifiedTypeName, char[] typeName) {
+private NameEnvironmentAnswer findClass(String qualifiedTypeName, char[] typeName, IModule[] modules) {
 	if (this.notifier != null)
 		this.notifier.checkCancelWithinCompiler();
 
@@ -305,14 +318,18 @@ private NameEnvironmentAnswer findClass(String qualifiedTypeName, char[] typeNam
 	// NOTE: the output folders are added at the beginning of the binaryLocations
 	NameEnvironmentAnswer suggestedAnswer = null;
 	for (int i = 0, l = this.binaryLocations.length; i < l; i++) {
-		NameEnvironmentAnswer answer = this.binaryLocations[i].findClass(binaryFileName, qPackageName, qBinaryFileName);
-		if (answer != null) {
-			if (!answer.ignoreIfBetter()) {
-				if (answer.isBetter(suggestedAnswer))
-					return answer;
-			} else if (answer.isBetter(suggestedAnswer))
-				// remember suggestion and keep looking
-				suggestedAnswer = answer;
+		NameEnvironmentAnswer answer = null;
+		for (IModule iModule : modules) {
+			if (!this.binaryLocations[i].servesModule(iModule)) continue;
+			answer = this.binaryLocations[i].findClass(binaryFileName, qPackageName, qBinaryFileName, iModule);
+			if (answer != null) {
+				if (!answer.ignoreIfBetter()) {
+					if (answer.isBetter(suggestedAnswer))
+						return answer;
+				} else if (answer.isBetter(suggestedAnswer))
+					// remember suggestion and keep looking
+					suggestedAnswer = answer;
+			}
 		}
 	}
 	if (suggestedAnswer != null)
@@ -321,31 +338,45 @@ private NameEnvironmentAnswer findClass(String qualifiedTypeName, char[] typeNam
 	return null;
 }
 
-public NameEnvironmentAnswer findType(char[][] compoundName) {
+public NameEnvironmentAnswer findType(char[][] compoundName, IModule[] modules) {
 	if (compoundName != null)
 		return findClass(
 			new String(CharOperation.concatWith(compoundName, '/')),
-			compoundName[compoundName.length - 1]);
+			compoundName[compoundName.length - 1], modules);
 	return null;
 }
 
-public NameEnvironmentAnswer findType(char[] typeName, char[][] packageName) {
+public NameEnvironmentAnswer findType(char[] typeName, char[][] packageName, IModule[] modules) {
 	if (typeName != null)
 		return findClass(
 			new String(CharOperation.concatWith(packageName, typeName, '/')),
-			typeName);
+			typeName, modules);
 	return null;
 }
 
-public boolean isPackage(char[][] compoundName, char[] packageName) {
-	return isPackage(new String(CharOperation.concatWith(compoundName, packageName, '/')));
+public boolean isPackage(char[][] compoundName, char[] packageName, IModule[] modules) {
+	return isPackage(new String(CharOperation.concatWith(compoundName, packageName, '/')), modules);
 }
 
-public boolean isPackage(String qualifiedPackageName) {
-	// NOTE: the output folders are added at the beginning of the binaryLocations
-	for (int i = 0, l = this.binaryLocations.length; i < l; i++)
-		if (this.binaryLocations[i].isPackage(qualifiedPackageName))
-			return true;
+public boolean isPackage(String qualifiedPackageName, IModule[] modules) {
+	if (modules == null) {
+		for (int i = 0, l = this.binaryLocations.length; i < l; i++) {
+			// TODO: BETA_JAVA9 Should really check with the module context.
+			if (this.binaryLocations[i].isPackage(qualifiedPackageName))
+					return true;
+			}
+	} else {
+		// NOTE: the output folders are added at the beginning of the binaryLocations
+		for (int i = 0, l = this.binaryLocations.length; i < l; i++) {
+			for (IModule iModule : modules) {
+				if (this.binaryLocations[i].servesModule(iModule)) {
+					// TODO: BETA_JAVA9 Should really check with the module context.
+					if (this.binaryLocations[i].isPackage(qualifiedPackageName))
+						return true;
+				}
+			}
+		}
+	}
 	return false;
 }
 
@@ -375,4 +406,32 @@ void setNames(String[] typeNames, SourceFile[] additionalFiles) {
 	for (int i = 0, l = this.binaryLocations.length; i < l; i++)
 		this.binaryLocations[i].reset();
 }
+
+@Override
+public IModule getModule(char[] name) {
+	// 
+	if (name == null)
+		return null;
+	IModule module = null;
+	for (int i = 0, l = this.sourceLocations.length; i < l; i++) {
+		if ((module = this.sourceLocations[i].getModule(name)) != null)
+			break;
+	}
+	if (module == null) {
+		for (int i = 0, l = this.binaryLocations.length; i < l; i++) {
+			if ((module = this.binaryLocations[i].getModule(name)) != null)
+				break;
+		}
+	}
+	return module;
+}
+
+//@Override
+//public void acceptModule(IModule mod) {
+//	this.ms.acceptModule(mod);
+//}
+//@Override
+//public ModuleSystem getModuleSystem() {
+//	return this.ms;
+//}
 }

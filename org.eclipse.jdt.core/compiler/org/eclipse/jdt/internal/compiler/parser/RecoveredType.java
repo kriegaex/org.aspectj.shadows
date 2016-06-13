@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -467,7 +467,7 @@ public Statement updatedStatement(int depth, Set knownTypes){
 	}
 	return updatedType;
 }
-public TypeDeclaration updatedTypeDeclaration(int depth, Set knownTypes){
+public TypeDeclaration updatedTypeDeclaration(int depth, Set<TypeDeclaration> knownTypes){
 	if (depth >= MAX_TYPE_DEPTH) return null;
 
 	if(knownTypes.contains(this.typeDeclaration)) return null;
@@ -579,12 +579,20 @@ public TypeDeclaration updatedTypeDeclaration(int depth, Set knownTypes){
 			this.methods[this.methodCount - 1].methodDeclaration.declarationSourceEnd = bodyEndValue;
 			this.methods[this.methodCount - 1].methodDeclaration.bodyEnd = bodyEndValue;
 		}
+		int totalMethods = existingCount;
+		next:
 		for (int i = 0; i < this.methodCount; i++){
+			for (int j = 0; j < existingCount; j++) {
+				if (methodDeclarations[j] == this.methods[i].methodDeclaration)
+					continue next;
+			}
 			AbstractMethodDeclaration updatedMethod = this.methods[i].updatedMethodDeclaration(depth, knownTypes);
 			if (updatedMethod.isConstructor()) hasRecoveredConstructor = true;
 			if (updatedMethod.isAbstract()) hasAbstractMethods = true;
-			methodDeclarations[existingCount + i] = updatedMethod;
+			methodDeclarations[totalMethods ++] = updatedMethod;
 		}
+		if (totalMethods != methodDeclarations.length)
+			System.arraycopy(methodDeclarations, 0, methodDeclarations = new AbstractMethodDeclaration[totalMethods], 0, totalMethods);
 		this.typeDeclaration.methods = methodDeclarations;
 		if(methodDeclarations[methodDeclarations.length - 1].declarationSourceEnd > lastEnd) {
 			lastEnd = methodDeclarations[methodDeclarations.length - 1].declarationSourceEnd;

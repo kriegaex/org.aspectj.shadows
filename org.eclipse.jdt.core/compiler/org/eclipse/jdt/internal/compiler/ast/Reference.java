@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -15,6 +15,7 @@
  *								bug 392384 - [1.8][compiler][null] Restore nullness info from type annotations in class files
  *								Bug 392099 - [1.8][compiler][null] Apply null annotation on types for null analysis 
  *								Bug 411964 - [1.8][null] leverage null type annotation in foreach statement
+ *								Bug 407414 - [compiler][null] Incorrect warning on a primitive type being null
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.ast;
 
@@ -46,22 +47,30 @@ public FlowInfo analyseCode(BlockScope currentScope, FlowContext flowContext, Fl
 	return flowInfo;
 }
 
-public boolean checkNPE(BlockScope scope, FlowContext flowContext, FlowInfo flowInfo) {
+public boolean checkNPE(BlockScope scope, FlowContext flowContext, FlowInfo flowInfo, int ttlForFieldCheck) {
 	if (flowContext.isNullcheckedFieldAccess(this)) {
 		return true; // enough seen
 	}
-	return super.checkNPE(scope, flowContext, flowInfo);
+	return super.checkNPE(scope, flowContext, flowInfo, ttlForFieldCheck);
 }
 
-protected boolean checkNullableFieldDereference(Scope scope, FieldBinding field, long sourcePosition) {
-	// preference to type annotations if we have any
-	if ((field.type.tagBits & TagBits.AnnotationNullable) != 0) {
-		scope.problemReporter().dereferencingNullableExpression(sourcePosition, scope.environment());
-		return true;
-	}
-	if ((field.tagBits & TagBits.AnnotationNullable) != 0) {
-		scope.problemReporter().nullableFieldDereference(field, sourcePosition);
-		return true;
+protected boolean checkNullableFieldDereference(Scope scope, FieldBinding field, long sourcePosition, FlowContext flowContext, int ttlForFieldCheck) {
+	if (field != null) {
+		if (ttlForFieldCheck > 0 && scope.compilerOptions().enableSyntacticNullAnalysisForFields)
+			flowContext.recordNullCheckedFieldReference(this, ttlForFieldCheck);
+		// preference to type annotations if we have any
+		if ((field.type.tagBits & TagBits.AnnotationNullable) != 0) {
+			scope.problemReporter().dereferencingNullableExpression(sourcePosition, scope.environment());
+			return true;
+		} 
+		if (field.type.isFreeTypeVariable()) {
+			scope.problemReporter().fieldFreeTypeVariableReference(field, sourcePosition);
+			return true;
+		}
+		if ((field.tagBits & TagBits.AnnotationNullable) != 0) {
+			scope.problemReporter().nullableFieldDereference(field, sourcePosition);
+			return true;
+		}
 	}
 	return false;
 }
@@ -136,12 +145,16 @@ public FieldBinding lastFieldBinding() {
 }
 
 public int nullStatus(FlowInfo flowInfo, FlowContext flowContext) {
+	if ((this.implicitConversion & TypeIds.BOXING) != 0)
+		return FlowInfo.NON_NULL;
 	FieldBinding fieldBinding = lastFieldBinding();
 	if (fieldBinding != null) {
 		if (fieldBinding.isNonNull() || flowContext.isNullcheckedFieldAccess(this)) {
 			return FlowInfo.NON_NULL;
 		} else if (fieldBinding.isNullable()) {
 			return FlowInfo.POTENTIALLY_NULL;
+		} else if (fieldBinding.type.isFreeTypeVariable()) {
+			return FlowInfo.FREE_TYPEVARIABLE;
 		}
 	}
 	if (this.resolvedType != null) {
@@ -167,7 +180,6 @@ void reportOnlyUselesslyReadPrivateField(BlockScope currentScope, FieldBinding f
 			{
 				// compoundAssignment/postIncrement is the only usage of this field
 				currentScope.problemReporter().unusedPrivateField(fieldBinding.sourceField());
-//				fieldBinding.modifiers |= ExtraCompilerModifiers.AccLocallyUsed; // don't report again
 			}
 		}
 	}
@@ -215,6 +227,5 @@ static void reportOnlyUselesslyReadLocal(BlockScope currentScope, LocalVariableB
 		// report the case of a local variable that is unread except for a special operator
 		currentScope.problemReporter().unusedLocalVariable(localBinding.declaration);
 	}
-//	localBinding.useFlag = LocalVariableBinding.USED; // don't report again
 }
 }

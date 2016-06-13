@@ -1,3 +1,4 @@
+// ASPECTJ
 /*******************************************************************************
  * Copyright (c) 2000, 2014 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
@@ -9,6 +10,8 @@
  *		IBM Corporation - initial API and implementation
  *		Stephan Herrmann - Contribution for
  *								bug 400710 - [1.8][compiler] synthetic access to default method generates wrong code
+ *								Bug 459967 - [null] compiler should know about nullness of special methods like MyEnum.valueOf()
+ *								Bug 470467 - [null] Nullness of special Enum methods not detected from .class file
  *      Andy Clement (GoPivotal, Inc) aclement@gopivotal.com - Contributions for
  *                          	Bug 405104 - [1.8][compiler][codegen] Implement support for serializeable lambdas
  *******************************************************************************/
@@ -18,6 +21,7 @@ import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.LambdaExpression;
+import org.eclipse.jdt.internal.compiler.ast.ReferenceExpression;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
 
 public class SyntheticMethodBinding extends MethodBinding {
@@ -27,7 +31,11 @@ public class SyntheticMethodBinding extends MethodBinding {
 	public MethodBinding targetMethod;			// method or constructor
 	public TypeBinding targetEnumType; 			// enum type
 	public LambdaExpression lambda;
-	
+	/**
+	 * Method reference expression whose target FI is Serializable. Should be set when
+	 * purpose is {@link #SerializableMethodReference}
+	 */
+	public ReferenceExpression serializableMethodRef;
 	public int purpose;
 
 	// fields used to generate enum constants when too many
@@ -51,6 +59,11 @@ public class SyntheticMethodBinding extends MethodBinding {
 	public static final int ArrayClone = 15; // X[]::clone
     public static final int FactoryMethod = 16; // for indy call to private constructor.
     public static final int DeserializeLambda = 17; // For supporting lambda deserialization.
+    /**
+     * Serves as a placeholder for a method reference whose target FI is Serializable.
+     * Is never directly materialized in bytecode
+     */
+    public static final int SerializableMethodReference = 18;
     
 	public int sourceStart = 0; // start position of the matching declaration
 	public int index; // used for sorting access methods in the class file
@@ -347,6 +360,14 @@ public class SyntheticMethodBinding extends MethodBinding {
 	    this.modifiers = ClassFileConstants.AccSynthetic | ClassFileConstants.AccPrivate | ClassFileConstants.AccStatic;
 		this.tagBits |= (TagBits.AnnotationResolved | TagBits.DeprecatedAnnotationResolved);
 	    this.returnType = arrayType;
+	    LookupEnvironment environment = declaringClass.environment;
+		if (environment.globalOptions.isAnnotationBasedNullAnalysisEnabled) {
+			// mark X[]::new and X[]::clone as returning 'X @NonNull' (don't wait (cf. markNonNull()), because we're called as late as codeGen):
+	    	if (environment.usesNullTypeAnnotations())
+	    		this.returnType = environment.createAnnotatedType(this.returnType, new AnnotationBinding[]{ environment.getNonNullAnnotation() });
+	    	else
+	    		this.tagBits |= TagBits.AnnotationNonNull;
+	    }
 	    this.parameters = new TypeBinding[] { purpose == SyntheticMethodBinding.ArrayConstructor ? TypeBinding.INT : (TypeBinding) arrayType};
 	    this.thrownExceptions = Binding.NO_EXCEPTIONS;
 	    this.purpose = purpose;
@@ -365,6 +386,21 @@ public class SyntheticMethodBinding extends MethodBinding {
 	    this.parameters = lambda.binding.parameters;
 	    this.thrownExceptions = lambda.binding.thrownExceptions;
 	    this.purpose = SyntheticMethodBinding.LambdaMethod;
+		SyntheticMethodBinding[] knownAccessMethods = declaringClass.syntheticMethods();
+		int methodId = knownAccessMethods == null ? 0 : knownAccessMethods.length;
+		this.index = methodId;
+	}
+
+	public SyntheticMethodBinding(ReferenceExpression ref, SourceTypeBinding declaringClass) {
+		this.serializableMethodRef = ref;
+	    this.declaringClass = declaringClass;
+	    this.selector = ref.binding.selector;
+	    this.modifiers = ref.binding.modifiers;
+		this.tagBits |= (TagBits.AnnotationResolved | TagBits.DeprecatedAnnotationResolved) | (ref.binding.tagBits & TagBits.HasParameterAnnotations);
+	    this.returnType = ref.binding.returnType;
+	    this.parameters = ref.binding.parameters;
+	    this.thrownExceptions = ref.binding.thrownExceptions;
+	    this.purpose = SyntheticMethodBinding.SerializableMethodReference;
 		SyntheticMethodBinding[] knownAccessMethods = declaringClass.syntheticMethods();
 		int methodId = knownAccessMethods == null ? 0 : knownAccessMethods.length;
 		this.index = methodId;
@@ -549,6 +585,34 @@ public class SyntheticMethodBinding extends MethodBinding {
 	
 	public LambdaExpression sourceLambda() {
 		return this.lambda;
+	}
+
+
+	public void markNonNull(LookupEnvironment environment) {
+		markNonNull(this, this.purpose, environment);
+	}
+
+	static void markNonNull(MethodBinding method, int purpose, LookupEnvironment environment) {
+		// deferred update of the return type
+	    switch (purpose) {
+			case EnumValues:
+				if (environment.usesNullTypeAnnotations()) {
+					TypeBinding elementType = ((ArrayBinding)method.returnType).leafComponentType();
+					AnnotationBinding nonNullAnnotation = environment.getNonNullAnnotation();
+					elementType = environment.createAnnotatedType(elementType, new AnnotationBinding[]{ environment.getNonNullAnnotation() });
+					method.returnType = environment.createArrayType(elementType, 1, new AnnotationBinding[]{ nonNullAnnotation, null });
+				} else {
+					method.tagBits |= TagBits.AnnotationNonNull;
+				}
+				return;
+			case EnumValueOf:
+				if (environment.usesNullTypeAnnotations()) {
+					method.returnType = environment.createAnnotatedType(method.returnType, new AnnotationBinding[]{ environment.getNonNullAnnotation() });
+				} else {
+					method.tagBits |= TagBits.AnnotationNonNull;
+				}
+				return;
+		}
 	}
 	
 	// AspectJ Extension

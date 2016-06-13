@@ -1,10 +1,15 @@
+// ASPECTJ
 /*******************************************************************************
- * Copyright (c) 2000, 2015 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ * 
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *     Jesper S Moller - Contributions for
@@ -21,8 +26,11 @@
  *                          Bug 415470 - [1.8][compiler] Type annotations on class declaration go vanishing
  *                          Bug 405104 - [1.8][compiler][codegen] Implement support for serializeable lambdas
  *                          Bug 434556 - Broken class file generated for incorrect annotation usage
+ *                          Bug 442416 - $deserializeLambda$ missing cases for nested lambdas
  *     Stephan Herrmann - Contribution for
  *							Bug 438458 - [1.8][null] clean up handling of null type annotations wrt type variables
+ *     Olivier Tardieu tardieu@us.ibm.com - Contributions for
+ *							Bug 442416 - $deserializeLambda$ missing cases for nested lambdas
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler;
 
@@ -47,6 +55,7 @@ import org.eclipse.jdt.internal.compiler.ast.AnnotationMethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.Argument;
 import org.eclipse.jdt.internal.compiler.ast.ArrayInitializer;
 import org.eclipse.jdt.internal.compiler.ast.ClassLiteralAccess;
+import org.eclipse.jdt.internal.compiler.ast.ExportReference;
 import org.eclipse.jdt.internal.compiler.ast.Expression;
 import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.FunctionalExpression;
@@ -54,9 +63,12 @@ import org.eclipse.jdt.internal.compiler.ast.LambdaExpression;
 import org.eclipse.jdt.internal.compiler.ast.LocalDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.MemberValuePair;
 import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.ModuleReference;
 import org.eclipse.jdt.internal.compiler.ast.NormalAnnotation;
 import org.eclipse.jdt.internal.compiler.ast.QualifiedNameReference;
 import org.eclipse.jdt.internal.compiler.ast.Receiver;
+import org.eclipse.jdt.internal.compiler.ast.ReferenceExpression;
 import org.eclipse.jdt.internal.compiler.ast.SingleMemberAnnotation;
 import org.eclipse.jdt.internal.compiler.ast.SingleNameReference;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
@@ -95,6 +107,8 @@ import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
 import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.compiler.lookup.TypeIds;
 import org.eclipse.jdt.internal.compiler.lookup.TypeVariableBinding;
+import org.eclipse.jdt.internal.compiler.problem.AbortMethod;
+import org.eclipse.jdt.internal.compiler.problem.AbortType;
 import org.eclipse.jdt.internal.compiler.problem.ProblemSeverities;
 import org.eclipse.jdt.internal.compiler.problem.ShouldNotImplement;
 import org.eclipse.jdt.internal.compiler.util.Messages;
@@ -151,7 +165,7 @@ public class ClassFile implements TypeConstants, TypeIds {
 	public boolean isNestedType;
 	public long targetJDK;
 
-	public List missingTypes = null;
+	public List<TypeBinding> missingTypes = null;
 
 	public Set visitedTypes;
 
@@ -343,6 +357,9 @@ public class ClassFile implements TypeConstants, TypeIds {
 			// check that there is enough space to write all the bytes for the field info corresponding
 			// to the @fieldBinding
 			attributesNumber += generateDeprecatedAttribute();
+		}
+		if (this.referenceBinding.isModule()) {
+			attributesNumber += generateModuleAttribute();
 		}
 		// add signature attribute
 		char[] genericSignature = this.referenceBinding.genericSignature();
@@ -970,13 +987,36 @@ public class ClassFile implements TypeConstants, TypeIds {
 						case SyntheticMethodBinding.DeserializeLambda:
 							deserializeLambdaMethod = syntheticMethod; // delay processing
 							break;
+						case SyntheticMethodBinding.SerializableMethodReference:
+							// Nothing to be done
+							break;
 					}
 				}
 				emittedSyntheticsCount = currentSyntheticsCount;
 			}
 		}
 		if (deserializeLambdaMethod != null) {
+			int problemResetPC = 0;
+			this.codeStream.wideMode = false;
+			boolean restart = false;
+			do {
+				try {
+					problemResetPC = this.contentsOffset;
 			addSyntheticDeserializeLambda(deserializeLambdaMethod,this.referenceBinding.syntheticMethods()); 
+					restart = false;
+				} catch (AbortMethod e) {
+					// Restart code generation if possible ...
+					if (e.compilationResult == CodeStream.RESTART_IN_WIDE_MODE) {
+						// a branch target required a goto_w, restart code generation in wide mode.
+						this.contentsOffset = problemResetPC;
+						this.methodCount--;
+						this.codeStream.resetInWideMode(); // request wide mode
+						restart = true;
+					} else {
+						throw new AbortType(this.referenceBinding.scope.referenceContext.compilationResult, e.problem);
+		}
+	}
+			} while (restart);
 		}
 	}
 
@@ -2295,7 +2335,7 @@ public class ClassFile implements TypeConstants, TypeIds {
 				LocalVariableBinding localVariable = annotationContext.variableBinding;
 				int actualSize = 0;
 				int initializationCount = localVariable.initializationCount;
-				actualSize += 6 * initializationCount;
+				actualSize += 2 /* for number of entries */ + (6 * initializationCount);
 				// reserve enough space
 				if (this.contentsOffset + actualSize >= this.contents.length) {
 					resizeContents(actualSize);
@@ -2337,7 +2377,11 @@ public class ClassFile implements TypeConstants, TypeIds {
 	 * @return char[]
 	 */
 	public char[] fileName() {
-		return this.constantPool.UTF8Cache.returnKeyFor(2);
+		// TODO Is there a better way of doing this?
+		char[] name = this.constantPool.UTF8Cache.returnKeyFor(2);
+		if (CharOperation.endsWith(name, TypeConstants.MODULE_INFO_NAME))
+			return TypeConstants.MODULE_INFO_NAME;
+		return name;
 	}
 
 	private void generateAnnotation(Annotation annotation, int currentOffset) {
@@ -2359,13 +2403,14 @@ public class ClassFile implements TypeConstants, TypeIds {
 		if (annotation instanceof NormalAnnotation) {
 			NormalAnnotation normalAnnotation = (NormalAnnotation) annotation;
 			MemberValuePair[] memberValuePairs = normalAnnotation.memberValuePairs;
+			int memberValuePairOffset = this.contentsOffset;
 			if (memberValuePairs != null) {
 				int memberValuePairsCount = 0;
 				int memberValuePairsLengthPosition = this.contentsOffset;
 				this.contentsOffset+=2; // leave space to fill in the pair count later
 				int resetPosition = this.contentsOffset;
 				final int memberValuePairsLength = memberValuePairs.length;
-				for (int i = 0; i < memberValuePairsLength; i++) {
+				loop: for (int i = 0; i < memberValuePairsLength; i++) {
 					MemberValuePair memberValuePair = memberValuePairs[i];
 					if (this.contentsOffset + 2 >= this.contents.length) {
 						resizeContents(2);
@@ -2378,7 +2423,13 @@ public class ClassFile implements TypeConstants, TypeIds {
 						this.contentsOffset = resetPosition;
 					} else {
 						try {
-							generateElementValue(memberValuePair.value, methodBinding.returnType, startingContentsOffset);
+							generateElementValue(memberValuePair.value, methodBinding.returnType, memberValuePairOffset);
+							if (this.contentsOffset == memberValuePairOffset) {
+								// ignore all annotation values
+								this.contents[this.contentsOffset++] = 0;
+								this.contents[this.contentsOffset++] = 0;
+								break loop;
+							}
 							memberValuePairsCount++;
 							resetPosition = this.contentsOffset;
 						} catch(ClassCastException e) {
@@ -2413,9 +2464,8 @@ public class ClassFile implements TypeConstants, TypeIds {
 				try {
 					generateElementValue(singleMemberAnnotation.memberValue, methodBinding.returnType, memberValuePairOffset);
 					if (this.contentsOffset == memberValuePairOffset) {
-						// ignore annotation value
-						this.contents[this.contentsOffset++] = 0;
-						this.contents[this.contentsOffset++] = 0;
+						// completely remove the annotation as its value is invalid
+						this.contentsOffset = startingContentsOffset;
 					}
 				} catch(ClassCastException e) {
 					this.contentsOffset = startingContentsOffset;
@@ -2566,6 +2616,127 @@ public class ClassFile implements TypeConstants, TypeIds {
 		this.contents[localContentsOffset++] = 0;
 		this.contents[localContentsOffset++] = 0;
 		this.contents[localContentsOffset++] = 0;
+		this.contentsOffset = localContentsOffset;
+		return 1;
+	}
+	private int generateModuleAttribute() {
+		ModuleDeclaration module = (ModuleDeclaration)this.referenceBinding.scope.referenceContext;
+		int localContentsOffset = this.contentsOffset;
+		if (localContentsOffset + 18 >= this.contents.length) {
+			resizeContents(18);
+		}
+		int moduleAttributeNameIndex =
+			this.constantPool.literalIndex(AttributeNamesConstants.ModuleName);
+		this.contents[localContentsOffset++] = (byte) (moduleAttributeNameIndex >> 8);
+		this.contents[localContentsOffset++] = (byte) moduleAttributeNameIndex;
+		int attrLengthOffset = localContentsOffset;
+		int attrLength = 0;
+		localContentsOffset += 4;
+		// ================= requires section =================
+		/** u2 requires_count;
+	    	{   u2 requires_index;
+	        	u2 requires_flags;
+	    	} requires[requires_count];
+	    **/
+		int requiresCountOffset = localContentsOffset;
+		localContentsOffset += 2;
+		boolean javabaseSeen = false;
+		for(int i = 0; i < module.requiresCount; i++) {
+			ModuleReference ref = module.requires[i];
+			if (CharOperation.equals(ref.moduleName, TypeConstants.JAVA_BASE)) {
+				javabaseSeen = true;
+			}
+			int nameIndex = this.constantPool.literalIndex(ref.moduleName);
+			this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
+			this.contents[localContentsOffset++] = (byte) (nameIndex);
+			int flags = ref.isPublic() ? ClassFileConstants.ACC_PUBLIC : ClassFileConstants.AccDefault;
+			this.contents[localContentsOffset++] = (byte) (flags >> 8);
+			this.contents[localContentsOffset++] = (byte) (flags);
+		}
+		if (!javabaseSeen) {
+			int javabase_index = this.constantPool.literalIndex(TypeConstants.JAVA_BASE);
+			this.contents[localContentsOffset++] = (byte) (javabase_index >> 8);
+			this.contents[localContentsOffset++] = (byte) (javabase_index);
+			int flags = ClassFileConstants.AccMandated;
+			this.contents[localContentsOffset++] = (byte) (flags >> 8);
+			this.contents[localContentsOffset++] = (byte) flags;
+		}
+		int requiresCount = javabaseSeen ? module.requiresCount : module.requiresCount + 1;
+		this.contents[requiresCountOffset++] = (byte) (requiresCount >> 8);
+		this.contents[requiresCountOffset++] = (byte) requiresCount;
+		attrLength += 2 + 4 * requiresCount;
+		// ================= end requires section =================
+
+		// ================= exports section =================
+		/**
+		 * u2 exports_count;
+		 * {   u2 exports_index;
+		 *     u2 exports_to_count;
+		 *     u2 exports_to_index[exports_to_count];
+		 * } exports[exports_count];
+		 */
+		this.contents[localContentsOffset++] = (byte) (module.exportsCount >> 8);
+		this.contents[localContentsOffset++] = (byte) module.exportsCount;
+		for (int i = 0; i < module.exportsCount; i++) {
+			ExportReference ref = module.exports[i];
+			int nameIndex = this.constantPool.literalIndex(ref.pkgName);
+			this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
+			this.contents[localContentsOffset++] = (byte) (nameIndex);
+			
+			int exportsToCount = ref.isTargeted() ? ref.targets.length : 0; 
+			this.contents[localContentsOffset++] = (byte) (exportsToCount >> 8);
+			this.contents[localContentsOffset++] = (byte) (exportsToCount);
+			if (exportsToCount > 0) {
+				for(int j = 0; j < exportsToCount; j++) {
+					nameIndex = this.constantPool.literalIndex(ref.targets[j].moduleName);
+					this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
+					this.contents[localContentsOffset++] = (byte) (nameIndex);
+				}
+				attrLength += 2 * exportsToCount;
+			}
+		}
+		attrLength += 2 + 4 * module.exportsCount;
+		// ================= end exports section =================
+
+		// ================= uses section =================
+		/**
+		 * u2 uses_count;
+		 * u2 uses_index[uses_count];
+		 */
+		this.contents[localContentsOffset++] = (byte) (module.usesCount >> 8);
+		this.contents[localContentsOffset++] = (byte) module.usesCount;
+		for(int i = 0; i < module.usesCount; i++) {
+			int nameIndex = this.constantPool.literalIndex(module.uses[i].resolvedType);
+			this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
+			this.contents[localContentsOffset++] = (byte) (nameIndex);
+		}
+		attrLength += 2 + 2 * module.usesCount;
+		// ================= end uses section =================
+
+		// ================= provides section =================
+		/**
+		 * u2 provides_count;
+		 * {   u2 provides_index;
+		 *     u2 with_index;
+		 * } provides[provides_count];
+		 */
+		this.contents[localContentsOffset++] = (byte) (module.servicesCount >> 8);
+		this.contents[localContentsOffset++] = (byte) module.servicesCount;
+		for(int i = 0; i < module.servicesCount; i++) {
+			int nameIndex = this.constantPool.literalIndex(module.interfaces[i].resolvedType);
+			this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
+			this.contents[localContentsOffset++] = (byte) (nameIndex);
+			nameIndex = this.constantPool.literalIndex(module.implementations[i].resolvedType);
+			this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
+			this.contents[localContentsOffset++] = (byte) (nameIndex);
+		}
+		attrLength += 2 + 4 * module.servicesCount;
+		// ================= end provides section =================
+
+		this.contents[attrLengthOffset++] = (byte)(attrLength >> 24);
+		this.contents[attrLengthOffset++] = (byte)(attrLength >> 16);
+		this.contents[attrLengthOffset++] = (byte)(attrLength >> 8);
+		this.contents[attrLengthOffset++] = (byte)attrLength;
 		this.contentsOffset = localContentsOffset;
 		return 1;
 	}
@@ -2940,12 +3111,9 @@ public class ClassFile implements TypeConstants, TypeIds {
 			FunctionalExpression functional = (FunctionalExpression) functionalExpressionList.get(i);
 			MethodBinding [] bridges = functional.getRequiredBridges();
 			TypeBinding[] markerInterfaces = null;
-			if (functional instanceof LambdaExpression && 
-				   (((markerInterfaces=((LambdaExpression)functional).getMarkerInterfaces()) != null) ||
-				   	((LambdaExpression)functional).isSerializable) ||
-				   	bridges != null) {
-				
-				LambdaExpression lambdaEx = (LambdaExpression)functional;
+			if ((functional instanceof LambdaExpression
+					&& (((markerInterfaces = ((LambdaExpression) functional).getMarkerInterfaces()) != null))
+					|| bridges != null) || functional.isSerializable) {
 				// may need even more space
 				int extraSpace = 2; // at least 2 more than when the normal metafactory is used, for the bitflags entry
 				if (markerInterfaces != null) {
@@ -2987,7 +3155,7 @@ public class ClassFile implements TypeConstants, TypeIds {
 				this.contents[localContentsOffset++] = (byte) methodTypeIndex;
 
 				int bitflags = 0;
-				if (lambdaEx.isSerializable) {
+				if (functional.isSerializable) {
 					bitflags |= ClassFileConstants.FLAG_SERIALIZABLE;
 				}
 				if (markerInterfaces!=null) {
@@ -3487,6 +3655,11 @@ public class ClassFile implements TypeConstants, TypeIds {
 		generateCodeAttributeHeader();
 		this.codeStream.init(this);
 		this.codeStream.generateSyntheticBodyForDeserializeLambda(methodBinding, syntheticMethodBindings);
+		int code_length = this.codeStream.position;
+		if (code_length > 65535) {
+			this.referenceBinding.scope.problemReporter().bytecodeExceeds64KLimit(
+				methodBinding, this.referenceBinding.sourceStart(), this.referenceBinding.sourceEnd());
+		}
 		completeCodeAttributeForSyntheticMethod(
 			methodBinding,
 			codeAttributeOffset,
@@ -3580,7 +3753,7 @@ public class ClassFile implements TypeConstants, TypeIds {
 		}
 		int previousIndex = 0;
 		next: for (int i = 0; i < initialSize; i++) {
-			int missingTypeIndex = this.constantPool.literalIndexForType((TypeBinding) this.missingTypes.get(i));
+			int missingTypeIndex = this.constantPool.literalIndexForType(this.missingTypes.get(i));
 			if (previousIndex == missingTypeIndex) {
 				continue next;
 			}
@@ -3613,6 +3786,14 @@ public class ClassFile implements TypeConstants, TypeIds {
 		}
 	}
 
+	private boolean jdk16packageInfoAnnotation(final long annotationMask, final long targetMask) {
+		if (this.targetJDK <= ClassFileConstants.JDK1_6 &&
+				targetMask == TagBits.AnnotationForPackage && annotationMask != 0 &&
+				(annotationMask & TagBits.AnnotationForPackage) == 0) {
+			return true;
+		}
+		return false;
+	}
 	/**
 	 * @param annotations
 	 * @param targetMask allowed targets
@@ -4027,7 +4208,8 @@ public class ClassFile implements TypeConstants, TypeIds {
 			if (isConstructor) { // insert String name,int ordinal
 				length = writeArgumentName(ConstantPool.EnumName, ClassFileConstants.AccSynthetic, length);
 				length = writeArgumentName(ConstantPool.EnumOrdinal, ClassFileConstants.AccSynthetic, length);
-			} else if (CharOperation.equals(ConstantPool.ValueOf, binding.selector)) { // insert String name
+			} else if (binding instanceof SyntheticMethodBinding
+					&& CharOperation.equals(ConstantPool.ValueOf, binding.selector)) { // insert String name
 				length = writeArgumentName(ConstantPool.Name, ClassFileConstants.AccMandated, length);
 				targetParameters =  Binding.NO_PARAMETERS; // Override "unknown" synthetics below
 			}
@@ -4957,7 +5139,7 @@ public class ClassFile implements TypeConstants, TypeIds {
 					| ClassFileConstants.AccNative);
 
 		// set the AccSuper flag (has to be done after clearing AccSynchronized - since same value)
-		if (!aType.isInterface()) { // class or enum
+		if (!aType.isInterface() && !aType.isModule()) { // class or enum
 			accessFlags |= ClassFileConstants.AccSuper;
 		}
 		if (aType.isAnonymousType()) {
@@ -5245,11 +5427,11 @@ public class ClassFile implements TypeConstants, TypeIds {
 			this.innerClassesBindings = new HashMap(INNER_CLASSES_SIZE);
 		}
 		ReferenceBinding innerClass = (ReferenceBinding) binding;
-		this.innerClassesBindings.put(innerClass.erasure().unannotated(false), onBottomForBug445231);  // should not emit yet another inner class for Outer.@Inner Inner.
+		this.innerClassesBindings.put(innerClass.erasure().unannotated(), onBottomForBug445231);  // should not emit yet another inner class for Outer.@Inner Inner.
 		ReferenceBinding enclosingType = innerClass.enclosingType();
 		while (enclosingType != null
 				&& enclosingType.isNestedType()) {
-			this.innerClassesBindings.put(enclosingType.erasure().unannotated(false), onBottomForBug445231);
+			this.innerClassesBindings.put(enclosingType.erasure().unannotated(), onBottomForBug445231);
 			enclosingType = enclosingType.enclosingType();
 		}
 	}
@@ -5258,10 +5440,17 @@ public class ClassFile implements TypeConstants, TypeIds {
 		if (this.bootstrapMethods == null) {
 			this.bootstrapMethods = new ArrayList();
 		}
+		if (expression instanceof ReferenceExpression) {
+			for (int i = 0; i < this.bootstrapMethods.size(); i++) {
+				FunctionalExpression fexp = (FunctionalExpression) this.bootstrapMethods.get(i);
+				if (fexp.binding == expression.binding
+						&& TypeBinding.equalsEquals(fexp.expectedType(), expression.expectedType()))
+					return expression.bootstrapMethodNumber = i;
+			}
+		}
 		this.bootstrapMethods.add(expression);
 		// Record which bootstrap method was assigned to the expression
-		expression.bootstrapMethodNumber = this.bootstrapMethods.size() - 1;
-		return this.bootstrapMethods.size() - 1;
+		return expression.bootstrapMethodNumber = this.bootstrapMethods.size() - 1;
 	}
 
 	public void reset(SourceTypeBinding typeBinding) {
@@ -5368,7 +5557,7 @@ public class ClassFile implements TypeConstants, TypeIds {
 	private List filterFakeFrames(Set realJumpTargets, Map frames, int codeLength) {
 		// no more frame to generate
 		// filter out "fake" frames
-		realJumpTargets.remove(new Integer(codeLength));
+		realJumpTargets.remove(Integer.valueOf(codeLength));
 		List result = new ArrayList();
 		for (Iterator iterator = realJumpTargets.iterator(); iterator.hasNext(); ) {
 			Integer jumpTarget = (Integer) iterator.next();
@@ -6663,11 +6852,9 @@ public class ClassFile implements TypeConstants, TypeIds {
 					int dimensions = u1At(bytecodes, 3, pc); // dimensions
 					frame.numberOfStackItems -= dimensions;
 					classNameLength = className.length;
-					constantPoolName = new char[classNameLength + dimensions];
-					for (int i = 0; i < dimensions; i++) {
-						constantPoolName[i] = '[';
-					}
-					System.arraycopy(className, 0, constantPoolName, dimensions, classNameLength);
+					// class name is already the name of the right array type with all dimensions
+					constantPoolName = new char[classNameLength];
+					System.arraycopy(className, 0, constantPoolName, 0, classNameLength);
 					frame.addStackItem(new VerificationTypeInfo(0, constantPoolName));
 					pc += 4;
 					break;
@@ -6688,8 +6875,8 @@ public class ClassFile implements TypeConstants, TypeIds {
 								Messages.bind(
 										Messages.abort_invalidOpcode,
 										new Object[] {
-												new Byte(opcode),
-												new Integer(pc),
+												Byte.valueOf(opcode),
+												Integer.valueOf(pc),
 												new String(methodBinding.shortReadableName()),
 										}),
 										this.codeStream.methodDeclaration);
@@ -6698,8 +6885,8 @@ public class ClassFile implements TypeConstants, TypeIds {
 								Messages.bind(
 										Messages.abort_invalidOpcode,
 										new Object[] {
-												new Byte(opcode),
-												new Integer(pc),
+												Byte.valueOf(opcode),
+												Integer.valueOf(pc),
 												new String(methodBinding.shortReadableName()),
 										}),
 										this.codeStream.lambdaExpression);
@@ -6714,10 +6901,10 @@ public class ClassFile implements TypeConstants, TypeIds {
 	}
 
 	private void addRealJumpTarget(Set realJumpTarget, int pc) {
-		realJumpTarget.add(new Integer(pc));
+		realJumpTarget.add(Integer.valueOf(pc));
 	}
 	private void add(Map frames, StackMapFrame frame) {
-		frames.put(new Integer(frame.pc), frame);
+		frames.put(Integer.valueOf(frame.pc), frame);
 	}
 	private final int u1At(byte[] reference, int relativeOffset,
 			int structOffset) {

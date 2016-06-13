@@ -1,5 +1,6 @@
+// ASPECTJ
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -67,7 +68,7 @@ public class SwitchStatement extends Statement {
 			if ((this.expression.implicitConversion & TypeIds.UNBOXING) != 0
 					|| (this.expression.resolvedType != null
 							&& (this.expression.resolvedType.id == T_JavaLangString || this.expression.resolvedType.isEnum()))) {
-				this.expression.checkNPE(currentScope, flowContext, flowInfo);
+				this.expression.checkNPE(currentScope, flowContext, flowInfo, 1);
 			}
 			SwitchFlowContext switchContext =
 				new SwitchFlowContext(flowContext, this, (this.breakLabel = new BranchLabel()), true);
@@ -111,6 +112,7 @@ public class SwitchStatement extends Statement {
 						if (caseInits == FlowInfo.DEAD_END) {
 							fallThroughState = ESCAPING;
 						}
+						switchContext.expireNullCheckedFieldInfo();
 					}
 				}
 			}
@@ -301,10 +303,7 @@ public class SwitchStatement extends Statement {
 				defaultBranchLabel.place();
 			}
 			codeStream.recordPositionsFrom(pc, this.sourceStart);
-//		} catch (Throwable e) {
-//			e.printStackTrace();
-		}
-		finally {
+		} finally {
 			if (this.scope != null) this.scope.enclosingCase = null; // no longer inside switch case block
 		}
 	}
@@ -638,5 +637,27 @@ public class SwitchStatement extends Statement {
 		if (this.breakLabel.forwardReferenceCount() > 0) {
 			label.becomeDelegateFor(this.breakLabel);
 		}
+	}
+
+	@Override
+	public boolean doesNotCompleteNormally() {
+		if (this.statements == null || this.statements.length == 0)
+			return false;
+		for (int i = 0, length = this.statements.length; i < length; i++) {
+			if (this.statements[i].breaksOut(null))
+				return false;
+		}
+		return this.statements[this.statements.length - 1].doesNotCompleteNormally();
+	}
+	
+	@Override
+	public boolean completesByContinue() {
+		if (this.statements == null || this.statements.length == 0)
+			return false;
+		for (int i = 0, length = this.statements.length; i < length; i++) {
+			if (this.statements[i].completesByContinue())
+				return true;
+		}
+		return false;
 	}
 }

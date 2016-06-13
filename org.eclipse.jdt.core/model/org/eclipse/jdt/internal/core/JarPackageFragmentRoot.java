@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2015 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -14,12 +14,9 @@
  *******************************************************************************/
 package org.eclipse.jdt.internal.core;
 
-import java.io.IOException;
 import java.net.URL;
-import java.nio.file.FileVisitResult;
-import java.nio.file.Path;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
 import java.util.zip.ZipFile;
@@ -47,7 +44,7 @@ import org.eclipse.jdt.internal.core.util.Util;
 @SuppressWarnings({"rawtypes", "unchecked"})
 public class JarPackageFragmentRoot extends PackageFragmentRoot {
 
-	private final static ArrayList EMPTY_LIST = new ArrayList();
+	protected final static ArrayList EMPTY_LIST = new ArrayList();
 
 	/**
 	 * The path to the jar file
@@ -57,12 +54,6 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 	protected final IPath jarPath;
 
 	/**
-	 * Whether this represents a JIMAGE format.
-	 * TODO: Might make sense to introduce a new type of PackageFragmentRoot
-	 */
-	protected final boolean isJimage;
-
-	/**
 	 * Constructs a package fragment root which is the root of the Java package directory hierarchy
 	 * based on a JAR file that is not contained in a <code>IJavaProject</code> and
 	 * does not have an associated <code>IResource</code>.
@@ -70,7 +61,6 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 	protected JarPackageFragmentRoot(IPath externalJarPath, JavaProject project) {
 		super(null, project);
 		this.jarPath = externalJarPath;
-		this.isJimage = JavaModelManager.isJimage(externalJarPath);
 	}
 	/**
 	 * Constructs a package fragment root which is the root of the Java package directory hierarchy
@@ -79,7 +69,6 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 	protected JarPackageFragmentRoot(IResource resource, JavaProject project) {
 		super(resource, project);
 		this.jarPath = resource.getFullPath();
-		this.isJimage = JavaModelManager.isJimage(this.jarPath);
 	}
 
 	/**
@@ -99,31 +88,10 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 			// always create the default package
 			rawPackageInfo.put(CharOperation.NO_STRINGS, new ArrayList[] { EMPTY_LIST, EMPTY_LIST });
 
-			if (this.isJimage) {
-				try {
-					org.eclipse.jdt.internal.compiler.util.Util.walkModuleImage(getPath().toFile(),
-									new org.eclipse.jdt.internal.compiler.util.Util.JimageVisitor<Path>() {
-						@Override
-						public FileVisitResult visitPackage(Path dir, BasicFileAttributes attrs) throws IOException {
-							initRawPackageInfo(rawPackageInfo, dir.toString(), true, compliance);
-							return FileVisitResult.CONTINUE;
-						}
-
-						@Override
-						public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) throws IOException {
-							initRawPackageInfo(rawPackageInfo, path.toString(), false, compliance);
-							return FileVisitResult.CONTINUE;
-						}
-					});
-				} catch (IOException e) {
-					// We are not reading any specific Jimage file, so, move on for now
-				}
-			} else {
-				jar = getJar();
-				for (Enumeration e= jar.entries(); e.hasMoreElements();) {
-					ZipEntry member= (ZipEntry) e.nextElement();
-					initRawPackageInfo(rawPackageInfo, member.getName(), member.isDirectory(), compliance);
-				}
+			jar = getJar();
+			for (Enumeration e= jar.entries(); e.hasMoreElements();) {
+				ZipEntry member= (ZipEntry) e.nextElement();
+				initRawPackageInfo(rawPackageInfo, member.getName(), member.isDirectory(), compliance);
 			}
 			// loop through all of referenced packages, creating package fragments if necessary
 			// and cache the entry names in the rawPackageInfo table
@@ -151,6 +119,19 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 		info.setChildren(children);
 		((JarPackageFragmentRootInfo) info).rawPackageInfo = rawPackageInfo;
 		return true;
+	}
+	protected IJavaElement[] createChildren(final HashtableOfArrayToObject rawPackageInfo) {
+		IJavaElement[] children;
+		// loop through all of referenced packages, creating package fragments if necessary
+		// and cache the entry names in the rawPackageInfo table
+		children = new IJavaElement[rawPackageInfo.size()];
+		int index = 0;
+		for (int i = 0, length = rawPackageInfo.keyTable.length; i < length; i++) {
+			String[] pkgName = (String[]) rawPackageInfo.keyTable[i];
+			if (pkgName == null) continue;
+			children[index++] = getPackageFragment(pkgName);
+		}
+		return children;
 	}
 	/**
 	 * Returns a new element info for this element.
@@ -218,6 +199,9 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 	}
 	public PackageFragment getPackageFragment(String[] pkgName) {
 		return new JarPackageFragment(this, pkgName);
+	}
+	public PackageFragment getPackageFragment(String[] pkgName, String mod) {
+		return new JarPackageFragment(this, pkgName); // Overridden in JImageModuleFragmentBridge
 	}
 	public IPath internalPath() {
 		if (isExternal()) {
@@ -312,14 +296,6 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 	public boolean isReadOnly() {
 		return true;
 	}
-	/**
-	 * return true if jimage
-	 */
-	public boolean isJimage() {
-		return this.isJimage;
-	}
-
-
 	/**
 	 * Returns whether the corresponding resource or associated file exists
 	 */

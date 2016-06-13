@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2013 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -14,6 +14,7 @@
  *								bug 265744 - Enum switch should warn about missing default
  *								bug 374605 - Unreasonable warning for enum-based switch statements
  *								bug 381443 - [compiler][null] Allow parameter widening from @NonNull to unannotated
+ *								Bug 441208 - [1.8][null]SuppressWarnings("null") does not suppress / marked Unnecessary
  *******************************************************************************/
 
 package org.eclipse.jdt.internal.compiler.impl;
@@ -70,6 +71,7 @@ public class IrritantSet {
 	public static final IrritantSet JAVADOC = new IrritantSet(CompilerOptions.InvalidJavadoc);
 	public static final IrritantSet COMPILER_DEFAULT_ERRORS = new IrritantSet(0); // no optional error by default	
 	public static final IrritantSet COMPILER_DEFAULT_WARNINGS = new IrritantSet(0); // see static initializer below
+	public static final IrritantSet COMPILER_DEFAULT_INFOS = new IrritantSet(0); // As of now, no default values
 	static {
 		COMPILER_DEFAULT_WARNINGS
 			// group-0 warnings enabled by default
@@ -113,7 +115,9 @@ public class IrritantSet {
 				|CompilerOptions.UnclosedCloseable
 				|CompilerOptions.NullUncheckedConversion
 				|CompilerOptions.RedundantNullAnnotation
-				|CompilerOptions.NonnullParameterAnnotationDropped);
+				|CompilerOptions.NonnullParameterAnnotationDropped
+				|CompilerOptions.PessimisticNullAnalysisForFreeTypeVariables
+				|CompilerOptions.NonNullTypeVariableFromLegacyInvocation);
 		// default errors IF AnnotationBasedNullAnalysis is enabled:
 		COMPILER_DEFAULT_ERRORS.set(
 				CompilerOptions.NullSpecViolation
@@ -131,12 +135,16 @@ public class IrritantSet {
 			.set(CompilerOptions.NullAnnotationInferenceConflict)
 			.set(CompilerOptions.NullUncheckedConversion)
 			.set(CompilerOptions.RedundantNullAnnotation)
-			.set(CompilerOptions.NonnullParameterAnnotationDropped);
+			.set(CompilerOptions.NonnullParameterAnnotationDropped)
+			.set(CompilerOptions.MissingNonNullByDefaultAnnotation)
+			.set(CompilerOptions.PessimisticNullAnalysisForFreeTypeVariables)
+			.set(CompilerOptions.NonNullTypeVariableFromLegacyInvocation);
 
 		RESTRICTION.set(CompilerOptions.DiscouragedReference);
 		STATIC_ACCESS.set(CompilerOptions.NonStaticAccessToStatic);
 		UNUSED
 			.set(CompilerOptions.UnusedArgument)
+			.set(CompilerOptions.UnusedExceptionParameter)
 			.set(CompilerOptions.UnusedPrivateMember)
 			.set(CompilerOptions.UnusedDeclaredThrownException)
 			.set(CompilerOptions.UnusedLabel)

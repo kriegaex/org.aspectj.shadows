@@ -1,5 +1,6 @@
+// ASPECTJ
 /*******************************************************************************
- * Copyright (c) 2000, 2012 IBM Corporation and others.
+ * Copyright (c) 2000, 2014 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -436,34 +437,7 @@ public class DiagnoseParser implements ParserBasicInformation, TerminalTokens, C
 		for (int i = start; i < end; i++) {
 			char c = tokenSource[i];
 
-			switch (c) {
-                case '\r' :
-                    tokenSourceBuffer.append("\\r"); //$NON-NLS-1$
-                    break;
-                case '\n' :
-                    tokenSourceBuffer.append("\\n"); //$NON-NLS-1$
-                    break;
-                case '\b' :
-                    tokenSourceBuffer.append("\\b"); //$NON-NLS-1$
-                    break;
-                case '\t' :
-                    tokenSourceBuffer.append("\t"); //$NON-NLS-1$
-                    break;
-                case '\f' :
-                    tokenSourceBuffer.append("\\f"); //$NON-NLS-1$
-                    break;
-                case '\"' :
-                    tokenSourceBuffer.append("\\\""); //$NON-NLS-1$
-                    break;
-                case '\'' :
-                    tokenSourceBuffer.append("\\'"); //$NON-NLS-1$
-                    break;
-                case '\\' :
-                    tokenSourceBuffer.append("\\\\"); //$NON-NLS-1$
-                    break;
-                default :
-                    tokenSourceBuffer.append(c);
-            }
+			Util.appendEscapedChar(tokenSourceBuffer, c, true);
 		}
 		for (int i = end; i < tokenSource.length; i++) {
 			tokenSourceBuffer.append(tokenSource[i]);
@@ -2588,5 +2562,11 @@ public class DiagnoseParser implements ParserBasicInformation, TerminalTokens, C
 		   error. See that this is not a problem for the regular/normal parser.
 		*/ 
 		return (token == TokenNameLPAREN || token == TokenNameAT || (token == TokenNameLESS && !this.lexStream.awaitingColonColon()));
+	}
+
+	@Override
+	public boolean isParsingModuleDeclaration() {
+		//
+		return this.parser.isParsingModuleDeclaration();
 	}
 }

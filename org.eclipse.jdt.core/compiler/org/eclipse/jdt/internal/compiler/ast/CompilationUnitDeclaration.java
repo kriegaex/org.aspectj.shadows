@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -30,6 +34,7 @@ import org.eclipse.jdt.internal.compiler.lookup.CompilationUnitScope;
 import org.eclipse.jdt.internal.compiler.lookup.ImportBinding;
 import org.eclipse.jdt.internal.compiler.lookup.LocalTypeBinding;
 import org.eclipse.jdt.internal.compiler.lookup.MethodScope;
+import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
 import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.compiler.lookup.TypeIds;
 import org.eclipse.jdt.internal.compiler.parser.NLSTag;
@@ -55,6 +60,7 @@ public class CompilationUnitDeclaration extends ASTNode implements ProblemSeveri
 	public ImportReference currentPackage;
 	public ImportReference[] imports;
 	public TypeDeclaration[] types;
+	public ModuleDeclaration moduleDeclaration;
 	public int[][] comments;
 
 	public boolean ignoreFurtherInvestigation = false; // once pointless to investigate due to errors
@@ -83,6 +89,12 @@ public class CompilationUnitDeclaration extends ASTNode implements ProblemSeveri
 	int suppressWarningsCount;
 	public int functionalExpressionsCount;
 	public FunctionalExpression[] functionalExpressions;
+	/*
+	 * Name of the module this compilation unit belongs to. Not to be confused with 
+	 * moduleDeclaration, which represents the module this compilation unit may
+	 * define, i.e. if this unit represents module-info.java.
+	 */
+	public char[] module;
 
 public CompilationUnitDeclaration(ProblemReporter problemReporter, CompilationResult compilationResult, int sourceLength) {
 	this.problemReporter = problemReporter;
@@ -90,6 +102,13 @@ public CompilationUnitDeclaration(ProblemReporter problemReporter, CompilationRe
 	//by definition of a compilation unit....
 	this.sourceStart = 0;
 	this.sourceEnd = sourceLength - 1;
+	 if (compilationResult != null) {
+		 if (this.isModuleInfo()) {
+			 this.module = this.moduleDeclaration != null ? this.moduleDeclaration.moduleName : ModuleEnvironment.UNNAMED;
+		 } else if (compilationResult.compilationUnit != null) {
+			 this.module = compilationResult.compilationUnit.module();
+		 }
+	 }
 }
 
 /*
@@ -158,6 +177,9 @@ public void cleanUp() {
 	}
 
 	this.suppressWarningAnnotations = null;
+
+	if (this.scope != null)
+		this.scope.cleanUpInferenceContexts();
 }
 
 private void cleanUp(TypeDeclaration type) {
@@ -194,6 +216,14 @@ public void createPackageInfoType() {
 	TypeDeclaration declaration = new TypeDeclaration(this.compilationResult);
 	declaration.name = TypeConstants.PACKAGE_INFO_NAME;
 	declaration.modifiers = ClassFileConstants.AccDefault | ClassFileConstants.AccInterface;
+	declaration.javadoc = this.javadoc;
+	this.types[0] = declaration; // Assumes the first slot is meant for this type
+}
+
+public void createModuleInfoType(ModuleDeclaration declaration) {
+	//TypeDeclaration declaration = new TypeDeclaration(this.compilationResult);
+	declaration.name = TypeConstants.MODULE_INFO_NAME;
+	declaration.modifiers = ClassFileConstants.AccModule;
 	declaration.javadoc = this.javadoc;
 	this.types[0] = declaration; // Assumes the first slot is meant for this type
 }
@@ -406,6 +436,10 @@ public boolean isPackageInfo() {
 	return CharOperation.equals(getMainTypeName(), TypeConstants.PACKAGE_INFO_NAME);
 }
 
+public boolean isModuleInfo() {
+	return CharOperation.equals(getMainTypeName(), TypeConstants.MODULE_INFO_NAME);
+}
+
 public boolean isSuppressed(CategorizedProblem problem) {
 	if (this.suppressWarningsCount == 0) return false;
 	int irritant = ProblemReporter.getIrritant(problem.getID());
@@ -500,7 +534,10 @@ public void recordStringLiteral(StringLiteral literal, boolean fromRecovery) {
 	this.stringLiterals[this.stringLiteralsPtr++] = literal;
 }
 
-public void recordSuppressWarnings(IrritantSet irritants, Annotation annotation, int scopeStart, int scopeEnd) {
+public void recordSuppressWarnings(IrritantSet irritants, Annotation annotation, int scopeStart, int scopeEnd, ReferenceContext context) {
+	if (context instanceof LambdaExpression && context != ((LambdaExpression) context).original())
+		return; // Do not record from copies. See https://bugs.eclipse.org/bugs/show_bug.cgi?id=441929
+		
 	if (this.suppressWarningIrritants == null) {
 		this.suppressWarningIrritants = new IrritantSet[3];
 		this.suppressWarningAnnotations = new Annotation[3];
@@ -539,7 +576,7 @@ public void record(LocalTypeBinding localType) {
 
 /*
  * Keep track of all lambda/method reference expressions, so as to be able to look it up later without 
- * having to traverse AST. Return the 1 based "ordinal" in the CUD.
+ * having to traverse AST. Return the "ordinal" returned by the enclosing type.
  */
 public int record(FunctionalExpression expression) {
 	if (this.functionalExpressionsCount == 0) {
@@ -547,8 +584,8 @@ public int record(FunctionalExpression expression) {
 	} else if (this.functionalExpressionsCount == this.functionalExpressions.length) {
 		System.arraycopy(this.functionalExpressions, 0, (this.functionalExpressions = new FunctionalExpression[this.functionalExpressionsCount * 2]), 0, this.functionalExpressionsCount);
 	}
-	this.functionalExpressions[this.functionalExpressionsCount] = expression;
-	return ++this.functionalExpressionsCount;
+	this.functionalExpressions[this.functionalExpressionsCount++] = expression;
+	return expression.enclosingScope.classScope().referenceContext.record(expression);
 }
 
 public void resolve() {

@@ -42,6 +42,7 @@ public FlowInfo analyseCode(BlockScope currentScope, FlowContext flowContext, Fl
 	}
 
 	targetContext.recordAbruptExit();
+	targetContext.expireNullCheckedFieldInfo();
 
 	this.initStateIndex =
 		currentScope.methodScope().recordInitializationStates(flowInfo);
@@ -94,5 +95,9 @@ public StringBuffer printStatement(int tab, StringBuffer output) {
 public void traverse(ASTVisitor visitor, BlockScope blockscope) {
 	visitor.visit(this, blockscope);
 	visitor.endVisit(this, blockscope);
+}
+@Override
+public boolean doesNotCompleteNormally() {
+	return true;
 }
 }
