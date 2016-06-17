@@ -219,7 +219,7 @@ public class TheOriginalJDTParserClass implements TerminalTokens, ParserBasicInf
 
 	public static final int RoundBracket = 0;
 
-    public static byte scope_la[] = null;
+    public static char scope_la[] = null;
     public static char scope_lhs[] = null;
 
 	public static char scope_prefix[] = null;
@@ -234,7 +234,7 @@ public class TheOriginalJDTParserClass implements TerminalTokens, ParserBasicInf
 	protected final static int StackIncrement = 255;
 
 	public static char term_action[] = null;
-	public static byte term_check[] = null;
+	public static char term_check[] = null; // Promoted to char as > 128 terminals
 
 	public static char terminal_index[] = null;
 
@@ -642,8 +642,8 @@ public class TheOriginalJDTParserClass implements TerminalTokens, ParserBasicInf
 		buildFileOfIntFor(prefix + (++i) + ".rsc", "in_symb", tokens); //$NON-NLS-2$ //$NON-NLS-1$
 	
 		byte[] newRhs = buildFileOfByteFor(prefix + (++i) + ".rsc", "rhs", tokens); //$NON-NLS-2$ //$NON-NLS-1$
-		buildFileOfByteFor(prefix + (++i) + ".rsc", "term_check", tokens); //$NON-NLS-2$ //$NON-NLS-1$
-		buildFileOfByteFor(prefix + (++i) + ".rsc", "scope_la", tokens); //$NON-NLS-2$ //$NON-NLS-1$
+		buildFileOfIntFor(prefix + (++i) + ".rsc", "term_check", tokens); //$NON-NLS-2$ //$NON-NLS-1$
+		buildFileOfIntFor(prefix + (++i) + ".rsc", "scope_la", tokens); //$NON-NLS-2$ //$NON-NLS-1$
 	
 		String[] newName = buildFileForName(prefix + (++i) + ".rsc", new String(contents)); //$NON-NLS-1$
 	
@@ -744,8 +744,8 @@ public class TheOriginalJDTParserClass implements TerminalTokens, ParserBasicInf
 		in_symb = readTable(parserClass,prefix + (++i) + ".rsc"); //$NON-NLS-1$
 	
 		rhs = readByteTable(parserClass,prefix + (++i) + ".rsc"); //$NON-NLS-1$
-		term_check = readByteTable(parserClass,prefix + (++i) + ".rsc"); //$NON-NLS-1$
-		scope_la = readByteTable(parserClass,prefix + (++i) + ".rsc"); //$NON-NLS-1$
+		term_check = readTable(parserClass,prefix + (++i) + ".rsc"); //$NON-NLS-1$
+		scope_la = readTable(parserClass,prefix + (++i) + ".rsc"); //$NON-NLS-1$
 	
 		name = readNameTable(parserClass,prefix + (++i) + ".rsc"); //$NON-NLS-1$
 	

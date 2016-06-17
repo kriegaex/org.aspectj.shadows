@@ -2181,7 +2181,8 @@ public void evaluateNullAnnotations() {
 	
 	if (!isPrototype()) throw new IllegalStateException();
 	
-	if (this.nullnessDefaultInitialized > 0 || !this.scope.compilerOptions().isAnnotationBasedNullAnalysisEnabled)
+	// AspectJ added guard for null scope (happens for aspects in the 'BcelWorld.hasUnsatisfiedDependency' chain call
+	if (this.nullnessDefaultInitialized > 0 || this.scope == null || !this.scope.compilerOptions().isAnnotationBasedNullAnalysisEnabled)
 		return;
 
 	if ((this.tagBits & TagBits.AnnotationNullMASK) != 0) {

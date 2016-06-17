@@ -93,7 +93,8 @@ public class BinaryTypeBinding extends SourceTypeBinding {
 	private BinaryTypeBinding prototype;
 
 	// For the link with the principle structure
-	protected LookupEnvironment environment;
+	// AspectJ don't shadow SourceTypeBinding.environment
+//	protected LookupEnvironment environment;
 
 	protected SimpleLookupTable storedAnnotations = null; // keys are this ReferenceBinding & its fields and methods, value is an AnnotationHolder
 

@@ -315,8 +315,9 @@ public class CompilerOptions {
 	public static final int NonNullTypeVariableFromLegacyInvocation = IrritantSet.GROUP2 | ASTNode.Bit21;
 
 	// AspectJ Extension
+	// Not sure we need this anymore...
 	public static final String OPTION_ReportSwallowedExceptionInCatchBlock = "org.eclipse.jdt.core.compiler.problem.swallowedExceptionInCatchBlock"; //$NON-NLS-1$
-	public static final int SwallowedExceptionInCatchBlock = IrritantSet.GROUP2 | ASTNode.Bit19;
+	public static final int SwallowedExceptionInCatchBlock = IrritantSet.GROUP2 | ASTNode.Bit22;
 	// when picking up a later version of this class, if new constants have been added to 
 	// the above list, then AjCompilerOptions will need updating also.
 	// End AspectJ Extension
