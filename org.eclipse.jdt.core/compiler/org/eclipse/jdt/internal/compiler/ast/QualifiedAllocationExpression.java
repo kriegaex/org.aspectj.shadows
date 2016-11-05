@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -167,6 +167,7 @@ public class QualifiedAllocationExpression extends AllocationExpression {
 	}
 
 	public void generateCode(BlockScope currentScope, CodeStream codeStream, boolean valueRequired) {
+		cleanUpInferenceContexts();
 		if (!valueRequired)
 			currentScope.problemReporter().unusedObjectAllocation(this);
 		int pc = codeStream.position;
@@ -256,7 +257,7 @@ public class QualifiedAllocationExpression extends AllocationExpression {
 
 		// perform some extra emulation work in case there is some and we are inside a local type only
 		if (allocatedTypeErasure.isNestedType()
-			&& (currentScope.enclosingSourceType().isLocalType() || currentScope.isLambdaScope())) {
+			&& (currentScope.enclosingSourceType().isLocalType() || currentScope.isLambdaSubscope())) {
 
 			if (allocatedTypeErasure.isLocalType()) {
 				((LocalTypeBinding) allocatedTypeErasure).addInnerEmulationDependent(currentScope, this.enclosingInstance != null);
@@ -295,9 +296,13 @@ public class QualifiedAllocationExpression extends AllocationExpression {
 					if (this.binding instanceof ParameterizedGenericMethodBinding && this.typeArguments != null) {
 						TypeVariableBinding[] typeVariables = this.binding.original().typeVariables();
 						for (int i = 0; i < this.typeArguments.length; i++)
-							this.typeArguments[i].checkNullConstraints(scope, typeVariables, i);
+							this.typeArguments[i].checkNullConstraints(scope, (ParameterizedGenericMethodBinding) this.binding, typeVariables, i);
 					}
 				}
+			}
+			if (compilerOptions.sourceLevel >= ClassFileConstants.JDK1_8 &&
+					this.binding.getTypeAnnotations() != Binding.NO_ANNOTATIONS) {
+				this.resolvedType = scope.environment().createAnnotatedType(this.resolvedType, this.binding.getTypeAnnotations());
 			}
 		}
 		return result;

@@ -2001,8 +2001,11 @@ PrimaryNoNewArray -> FieldAccess
 --1.1 feature
 PrimaryNoNewArray ::= Name '.' 'this'
 /.$putCase consumePrimaryNoNewArrayNameThis(); $break ./
-PrimaryNoNewArray ::= Name '.' 'super'
-/.$putCase consumePrimaryNoNewArrayNameSuper(); $break ./
+-- PrimaryNoNewArray ::= Name '.' 'super'
+-- /.$putCase consumePrimaryNoNewArrayNameSuper(); $break ./
+
+QualifiedSuperReceiver ::= Name '.' 'super'
+/.$putCase consumeQualifiedSuperReceiver(); $break ./
 
 --1.1 feature
 --PrimaryNoNewArray ::= Type '.' 'class'
@@ -2061,6 +2064,10 @@ ReferenceExpression ::= Name BeginTypeArguments ReferenceExpressionTypeArguments
 ReferenceExpression ::= Primary '::' NonWildTypeArgumentsopt Identifier
 /.$putCase consumeReferenceExpressionPrimaryForm(); $break ./
 /:$compliance 1.8:/
+ReferenceExpression ::= QualifiedSuperReceiver '::' NonWildTypeArgumentsopt Identifier
+/.$putCase consumeReferenceExpressionPrimaryForm(); $break ./
+/:$compliance 1.8:/
+
 ReferenceExpression ::= 'super' '::' NonWildTypeArgumentsopt Identifier
 /.$putCase consumeReferenceExpressionSuperForm(); $break ./
 /:$readableName ReferenceExpression:/
@@ -2253,6 +2260,10 @@ FieldAccess ::= 'super' '.' JavaIdentifier -- AJ JavaIdentifier was 'Identifier'
 /.$putCase consumeFieldAccess(true); $break ./
 /:$readableName FieldAccess:/
 
+FieldAccess ::= QualifiedSuperReceiver '.' 'Identifier'
+/.$putCase consumeFieldAccess(false); $break ./
+/:$readableName FieldAccess:/
+
 MethodInvocation ::= NameOrAj '(' ArgumentListopt ')' -- AspectJ Extension, was Name
 /.$putCase consumeMethodInvocationName(); $break ./
 
@@ -2264,6 +2275,12 @@ MethodInvocation ::= Primary '.' OnlyTypeArguments JavaIdentifier '(' ArgumentLi
 
 MethodInvocation ::= Primary '.' JavaIdentifier '(' ArgumentListopt ')' -- AspectJ Extension, 'Identifier'
 /.$putCase consumeMethodInvocationPrimary(); $break ./
+
+MethodInvocation ::= QualifiedSuperReceiver '.' JavaIdentifier '(' ArgumentListopt ')' -- AJ JI was 'Identifier'
+/.$putCase consumeMethodInvocationPrimary(); $break ./
+
+MethodInvocation ::= QualifiedSuperReceiver '.' OnlyTypeArguments JavaIdentifier '(' ArgumentListopt ')' -- AJ JI was 'Identifier'
+/.$putCase consumeMethodInvocationPrimaryWithTypeArguments(); $break ./
 
 MethodInvocation ::= 'super' '.' OnlyTypeArguments JavaIdentifier '(' ArgumentListopt ')' -- AspectJ Extension, 'Identifier'
 /.$putCase consumeMethodInvocationSuperWithTypeArguments(); $break ./

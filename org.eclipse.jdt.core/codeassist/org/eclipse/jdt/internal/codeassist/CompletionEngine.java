@@ -1,18 +1,22 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2015 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
  *
  * Contributors:
+ *     Timo Kinnunen - Contributions for bug 377373 - [subwords] known limitations with JDT 3.8
+ *     							Bug 420953 - [subwords] Constructors that don't match prefix not found
  *     IBM Corporation - initial API and implementation
  *     Stephan Herrmann - Contribution for
  *								Bug 400874 - [1.8][compiler] Inference infrastructure should evolve to meet JLS8 18.x (Part G of JSR335 spec)
+ *     Gábor Kövesdán - Contribution for Bug 350000 - [content assist] Include non-prefix matches in auto-complete suggestions
  *******************************************************************************/
 package org.eclipse.jdt.internal.codeassist;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Locale;
 import java.util.Map;
 
@@ -36,41 +40,171 @@ import org.eclipse.jdt.core.compiler.CategorizedProblem;
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.core.search.IJavaSearchConstants;
-import org.eclipse.jdt.internal.codeassist.complete.*;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionNodeDetector;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionNodeFound;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnAnnotationOfType;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnArgumentName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnBranchStatementLabel;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnClassLiteralAccess;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnExplicitConstructorCall;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnFieldName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnFieldType;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnImportReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadoc;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocAllocationExpression;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocFieldReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocMessageSend;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocParamNameReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocQualifiedTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocSingleTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocTag;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocTypeParamReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnKeyword;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnKeyword3;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnLocalName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMarkerAnnotationName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMemberAccess;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMemberValueName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMessageSend;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMessageSendName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMethodName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMethodReturnType;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnPackageReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnParameterizedQualifiedTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnQualifiedAllocationExpression;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnQualifiedNameReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnQualifiedTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnReferenceExpressionName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnSingleNameReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnSingleTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnStringLiteral;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionParser;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionScanner;
+import org.eclipse.jdt.internal.codeassist.complete.InvalidCursorLocation;
 import org.eclipse.jdt.internal.codeassist.impl.AssistParser;
 import org.eclipse.jdt.internal.codeassist.impl.Engine;
 import org.eclipse.jdt.internal.codeassist.impl.Keywords;
 import org.eclipse.jdt.internal.compiler.CompilationResult;
 import org.eclipse.jdt.internal.compiler.DefaultErrorHandlingPolicies;
 import org.eclipse.jdt.internal.compiler.ExtraFlags;
-import org.eclipse.jdt.internal.compiler.ast.*;
+import org.eclipse.jdt.internal.compiler.ast.ASTNode;
+import org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.AbstractVariableDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.AllocationExpression;
+import org.eclipse.jdt.internal.compiler.ast.Annotation;
+import org.eclipse.jdt.internal.compiler.ast.Argument;
+import org.eclipse.jdt.internal.compiler.ast.ArrayInitializer;
+import org.eclipse.jdt.internal.compiler.ast.ArrayReference;
+import org.eclipse.jdt.internal.compiler.ast.AssertStatement;
+import org.eclipse.jdt.internal.compiler.ast.Assignment;
+import org.eclipse.jdt.internal.compiler.ast.BinaryExpression;
+import org.eclipse.jdt.internal.compiler.ast.CaseStatement;
+import org.eclipse.jdt.internal.compiler.ast.CastExpression;
+import org.eclipse.jdt.internal.compiler.ast.CompilationUnitDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.ConditionalExpression;
+import org.eclipse.jdt.internal.compiler.ast.ConstructorDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.Expression;
+import org.eclipse.jdt.internal.compiler.ast.ExpressionContext;
+import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.FieldReference;
+import org.eclipse.jdt.internal.compiler.ast.ForStatement;
+import org.eclipse.jdt.internal.compiler.ast.IfStatement;
+import org.eclipse.jdt.internal.compiler.ast.ImportReference;
+import org.eclipse.jdt.internal.compiler.ast.Initializer;
+import org.eclipse.jdt.internal.compiler.ast.InstanceOfExpression;
+import org.eclipse.jdt.internal.compiler.ast.Javadoc;
+import org.eclipse.jdt.internal.compiler.ast.JavadocImplicitTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.JavadocQualifiedTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.JavadocSingleTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.LambdaExpression;
+import org.eclipse.jdt.internal.compiler.ast.LocalDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.MemberValuePair;
+import org.eclipse.jdt.internal.compiler.ast.MessageSend;
+import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.NameReference;
+import org.eclipse.jdt.internal.compiler.ast.NormalAnnotation;
+import org.eclipse.jdt.internal.compiler.ast.OperatorExpression;
+import org.eclipse.jdt.internal.compiler.ast.OperatorIds;
+import org.eclipse.jdt.internal.compiler.ast.ParameterizedQualifiedTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.ParameterizedSingleTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.QualifiedNameReference;
+import org.eclipse.jdt.internal.compiler.ast.QualifiedTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.ReferenceExpression;
+import org.eclipse.jdt.internal.compiler.ast.ReturnStatement;
+import org.eclipse.jdt.internal.compiler.ast.SingleNameReference;
+import org.eclipse.jdt.internal.compiler.ast.SingleTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.SuperReference;
+import org.eclipse.jdt.internal.compiler.ast.SwitchStatement;
+import org.eclipse.jdt.internal.compiler.ast.ThisReference;
+import org.eclipse.jdt.internal.compiler.ast.TryStatement;
+import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.TypeParameter;
+import org.eclipse.jdt.internal.compiler.ast.TypeReference;
+import org.eclipse.jdt.internal.compiler.ast.UnaryExpression;
+import org.eclipse.jdt.internal.compiler.ast.UnionTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.WhileStatement;
+import org.eclipse.jdt.internal.compiler.ast.Wildcard;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
-import org.eclipse.jdt.internal.compiler.env.*;
+import org.eclipse.jdt.internal.compiler.env.AccessRestriction;
+import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
+import org.eclipse.jdt.internal.compiler.env.INameEnvironment;
+import org.eclipse.jdt.internal.compiler.env.ISourceType;
+import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
 import org.eclipse.jdt.internal.compiler.impl.ReferenceContext;
-import org.eclipse.jdt.internal.compiler.lookup.*;
+import org.eclipse.jdt.internal.compiler.lookup.ArrayBinding;
+import org.eclipse.jdt.internal.compiler.lookup.BaseTypeBinding;
+import org.eclipse.jdt.internal.compiler.lookup.Binding;
+import org.eclipse.jdt.internal.compiler.lookup.BlockScope;
+import org.eclipse.jdt.internal.compiler.lookup.ClassScope;
+import org.eclipse.jdt.internal.compiler.lookup.CompilationUnitScope;
+import org.eclipse.jdt.internal.compiler.lookup.ExtraCompilerModifiers;
+import org.eclipse.jdt.internal.compiler.lookup.FieldBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ImportBinding;
+import org.eclipse.jdt.internal.compiler.lookup.InferenceContext18;
+import org.eclipse.jdt.internal.compiler.lookup.InvocationSite;
+import org.eclipse.jdt.internal.compiler.lookup.LocalVariableBinding;
+import org.eclipse.jdt.internal.compiler.lookup.LookupEnvironment;
+import org.eclipse.jdt.internal.compiler.lookup.MethodBinding;
+import org.eclipse.jdt.internal.compiler.lookup.MethodScope;
+import org.eclipse.jdt.internal.compiler.lookup.PackageBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ParameterizedMethodBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ParameterizedTypeBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ProblemMethodBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ProblemReasons;
+import org.eclipse.jdt.internal.compiler.lookup.ProblemReferenceBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ReferenceBinding;
+import org.eclipse.jdt.internal.compiler.lookup.Scope;
+import org.eclipse.jdt.internal.compiler.lookup.SourceTypeBinding;
+import org.eclipse.jdt.internal.compiler.lookup.TagBits;
+import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
+import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
+import org.eclipse.jdt.internal.compiler.lookup.TypeIds;
+import org.eclipse.jdt.internal.compiler.lookup.TypeVariableBinding;
+import org.eclipse.jdt.internal.compiler.lookup.VariableBinding;
+import org.eclipse.jdt.internal.compiler.lookup.WildcardBinding;
+import org.eclipse.jdt.internal.compiler.parser.JavadocTagConstants;
 import org.eclipse.jdt.internal.compiler.parser.ScannerHelper;
 import org.eclipse.jdt.internal.compiler.parser.SourceTypeConverter;
-import org.eclipse.jdt.internal.compiler.parser.JavadocTagConstants;
 import org.eclipse.jdt.internal.compiler.parser.TerminalTokens;
 import org.eclipse.jdt.internal.compiler.problem.AbortCompilation;
 import org.eclipse.jdt.internal.compiler.problem.DefaultProblemFactory;
 import org.eclipse.jdt.internal.compiler.problem.ProblemReporter;
 import org.eclipse.jdt.internal.compiler.problem.ProblemSeverities;
-import org.eclipse.jdt.internal.compiler.util.SimpleSetOfCharArray;
-import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
 import org.eclipse.jdt.internal.compiler.util.HashtableOfObject;
 import org.eclipse.jdt.internal.compiler.util.ObjectVector;
+import org.eclipse.jdt.internal.compiler.util.SimpleSetOfCharArray;
+import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
 import org.eclipse.jdt.internal.core.BasicCompilationUnit;
+import org.eclipse.jdt.internal.core.BinaryTypeConverter;
 import org.eclipse.jdt.internal.core.INamingRequestor;
 import org.eclipse.jdt.internal.core.InternalNamingConventions;
 import org.eclipse.jdt.internal.core.JavaModelManager;
+import org.eclipse.jdt.internal.core.SearchableEnvironment;
 import org.eclipse.jdt.internal.core.SourceMethod;
 import org.eclipse.jdt.internal.core.SourceMethodElementInfo;
 import org.eclipse.jdt.internal.core.SourceType;
-import org.eclipse.jdt.internal.core.BinaryTypeConverter;
-import org.eclipse.jdt.internal.core.SearchableEnvironment;
 import org.eclipse.jdt.internal.core.SourceTypeElementInfo;
-import org.eclipse.jdt.internal.core.search.matching.JavaSearchNameEnvironment;
+import org.eclipse.jdt.internal.core.search.matching.IndexBasedJavaSearchEnvironment;
 import org.eclipse.jdt.internal.core.util.Messages;
 import org.eclipse.jdt.internal.core.util.Util;
 
@@ -541,7 +675,7 @@ public final class CompletionEngine
 	CompletionRequestor requestor;
 	CompletionProblemFactory problemFactory;
 	ProblemReporter problemReporter;
-	private JavaSearchNameEnvironment noCacheNameEnvironment;
+	private INameEnvironment noCacheNameEnvironment;
 	char[] source;
 	char[] completionToken;
 	char[] qualifiedCompletionToken;
@@ -1630,6 +1764,8 @@ public final class CompletionEngine
 			if (completionOnQualifiedTypeReference.isConstructorType){
 						context.setTokenLocation(CompletionContext.TL_CONSTRUCTOR_START);
 			}
+		} else if (astNode instanceof CompletionOnKeyword3 && ((CompletionOnKeyword3) astNode).afterTryOrCatch()) {
+				context.setTokenLocation(CompletionContext.TL_STATEMENT_START);
 		} else {
 			ReferenceContext referenceContext = scope.referenceContext();
 			if (referenceContext instanceof AbstractMethodDeclaration) {
@@ -2807,9 +2943,9 @@ public final class CompletionEngine
 			
 			TypeBinding receiverType = (TypeBinding) qualifiedBinding;
 			if (receiverType != null && receiverType instanceof ReferenceBinding) {
+				setSourceAndTokenRange(referenceExpression.nameSourceStart, referenceExpression.sourceEnd);
 				if (!(receiverType.isInterface() || this.requestor.isIgnored(CompletionProposal.KEYWORD))) {
 					this.assistNodeIsConstructor = true;
-					setSourceAndTokenRange(referenceExpression.nameSourceStart, referenceExpression.sourceEnd);
 					findKeywords(this.completionToken, new char[][] { Keywords.NEW }, false, false);
 				}
 				findMethods(
@@ -4098,24 +4234,17 @@ public final class CompletionEngine
 		return 0;
 	}
 	int computeRelevanceForCaseMatching(char[] token, char[] proposalName){
-		if (this.options.camelCaseMatch) {
-			if(CharOperation.equals(token, proposalName, true /* do not ignore case */)) {
-				return R_CASE + R_EXACT_NAME;
-			} else if (CharOperation.prefixEquals(token, proposalName, true /* do not ignore case */)) {
-				return R_CASE;
-			} else if (CharOperation.camelCaseMatch(token, proposalName)){
-				return R_CAMEL_CASE;
-			} else if(CharOperation.equals(token, proposalName, false /* ignore case */)) {
-				return R_EXACT_NAME;
-			}
-		} else if (CharOperation.prefixEquals(token, proposalName, true /* do not ignore case */)) {
-			if(CharOperation.equals(token, proposalName, true /* do not ignore case */)) {
-				return R_CASE + R_EXACT_NAME;
-			} else {
-				return R_CASE;
-			}
-		} else if(CharOperation.equals(token, proposalName, false /* ignore case */)) {
+		if(CharOperation.equals(token, proposalName, true)) {
+			return R_EXACT_NAME + R_CASE;
+		} else if(CharOperation.equals(token, proposalName, false)) {
 			return R_EXACT_NAME;
+		} else if (CharOperation.prefixEquals(token, proposalName, false)) {
+			if (CharOperation.prefixEquals(token, proposalName, true))
+				return R_CASE;
+		} else if (this.options.camelCaseMatch && CharOperation.camelCaseMatch(token, proposalName)){
+				return R_CAMEL_CASE;
+		} else if (this.options.substringMatch && CharOperation.substringMatch(token, proposalName)) {
+			return R_SUBSTRING;
 		}
 		return 0;
 	}
@@ -4842,8 +4971,7 @@ public final class CompletionEngine
 		nextAttribute: for (int i = 0; i < methods.length; i++) {
 			MethodBinding method = methods[i];
 
-			if(!CharOperation.prefixEquals(token, method.selector, false)
-					&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(token, method.selector))) continue nextAttribute;
+			if(isFailedMatch(token, method.selector)) continue nextAttribute;
 
 			int length = attributesFound == null ? 0 : attributesFound.length;
 			for (int j = 0; j < length; j++) {
@@ -5303,6 +5431,7 @@ public final class CompletionEngine
 								char[] typeName = currentType.qualifiedSourceName();
 								
 								InternalCompletionProposal proposal = createProposal(CompletionProposal.ANONYMOUS_CLASS_CONSTRUCTOR_INVOCATION, this.actualCompletionPosition);
+								proposal.setBinding(constructor);
 								proposal.setDeclarationSignature(getSignature(currentType));
 								proposal.setDeclarationKey(currentType.computeUniqueKey());
 								proposal.setSignature(getSignature(constructor));
@@ -5463,6 +5592,7 @@ public final class CompletionEngine
 								char[] typeName = currentType.qualifiedSourceName();
 								int constructorRelevance = relevance + computeRelevanceForConstructor();
 								InternalCompletionProposal proposal =  createProposal(CompletionProposal.CONSTRUCTOR_INVOCATION, this.actualCompletionPosition);
+								proposal.setBinding(constructor);
 								proposal.setDeclarationSignature(getSignature(currentType));
 								proposal.setSignature(getSignature(constructor));
 								MethodBinding original = constructor.original();
@@ -5506,6 +5636,7 @@ public final class CompletionEngine
 						} else {
 							if(!isIgnored(CompletionProposal.METHOD_REF, missingElements != null) && (this.assistNodeInJavadoc & CompletionOnJavadoc.ONLY_INLINE_TAG) == 0) {
 								InternalCompletionProposal proposal =  createProposal(CompletionProposal.METHOD_REF, this.actualCompletionPosition);
+								proposal.setBinding(constructor);
 								proposal.setDeclarationSignature(getSignature(currentType));
 								proposal.setSignature(getSignature(constructor));
 								MethodBinding original = constructor.original();
@@ -5547,6 +5678,7 @@ public final class CompletionEngine
 							if ((this.assistNodeInJavadoc & CompletionOnJavadoc.TEXT) != 0 && !this.requestor.isIgnored(CompletionProposal.JAVADOC_METHOD_REF)) {
 								char[] javadocCompletion = inlineTagCompletion(completion, JavadocTagConstants.TAG_LINK);
 								InternalCompletionProposal proposal =  createProposal(CompletionProposal.JAVADOC_METHOD_REF, this.actualCompletionPosition);
+								proposal.setBinding(constructor);
 								proposal.setDeclarationSignature(getSignature(currentType));
 								proposal.setSignature(getSignature(constructor));
 								MethodBinding original = constructor.original();
@@ -5766,8 +5898,7 @@ public final class CompletionEngine
 
 			if (enumConstantLength > field.name.length) continue next;
 
-			if (!CharOperation.prefixEquals(enumConstantName, field.name, false /* ignore case */)
-					&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(enumConstantName, field.name)))	continue next;
+			if (isFailedMatch(enumConstantName, field.name))	continue next;
 
 			char[] fieldName = field.name;
 
@@ -5790,6 +5921,7 @@ public final class CompletionEngine
 
 				if(!this.requestor.isIgnored(CompletionProposal.FIELD_REF)) {
 					InternalCompletionProposal proposal = createProposal(CompletionProposal.FIELD_REF, this.actualCompletionPosition);
+					proposal.setBinding(field);
 					proposal.setDeclarationSignature(getSignature(field.declaringClass));
 					proposal.setSignature(getSignature(field.type));
 					proposal.setDeclarationPackageName(field.declaringClass.qualifiedPackageName());
@@ -5843,6 +5975,7 @@ public final class CompletionEngine
 						ReferenceBinding fieldType = (ReferenceBinding)field.type;
 
 						InternalCompletionProposal proposal = createProposal(CompletionProposal.FIELD_REF, this.actualCompletionPosition);
+						proposal.setBinding(field);
 						proposal.setDeclarationSignature(getSignature(field.declaringClass));
 						proposal.setSignature(getSignature(field.type));
 						proposal.setDeclarationPackageName(field.declaringClass.qualifiedPackageName());
@@ -5953,8 +6086,7 @@ public final class CompletionEngine
 		if (typeName.length > exceptionType.sourceName.length)
 			return;
 
-		if (!CharOperation.prefixEquals(typeName, exceptionType.sourceName, false/* ignore case */)
-				&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(typeName, exceptionType.sourceName)))
+		if (isFailedMatch(typeName, exceptionType.sourceName))
 			return;
 
 		if (this.options.checkDeprecation &&
@@ -6184,6 +6316,7 @@ public final class CompletionEngine
 					this.noProposal = false;
 					if(!this.requestor.isIgnored(CompletionProposal.METHOD_REF)) {
 						InternalCompletionProposal proposal =  createProposal(CompletionProposal.METHOD_REF, this.actualCompletionPosition);
+						proposal.setBinding(constructor);
 						proposal.setDeclarationSignature(getSignature(currentType));
 						proposal.setSignature(getSignature(constructor));
 						MethodBinding original = constructor.original();
@@ -6274,13 +6407,15 @@ public final class CompletionEngine
 			if (fieldBeingCompletedId >= 0 && field.id >= fieldBeingCompletedId) {
 				// Don't propose field which is being declared currently
 				// Don't propose fields declared after the current field declaration statement
-				// Though, if field is static, then it can be still be proposed
-				if (!field.isStatic()) { 
-					continue next;
-				} else if (isFieldBeingCompletedStatic) {
-					// static fields can't be proposed before they are actually declared if the 
-					// field currently being declared is also static
-					continue next;
+				// Though, if field is static or completion happens in Javadoc, then it can be still be proposed
+				if (this.assistNodeInJavadoc == 0) {
+					if (!field.isStatic()) {
+						continue next;
+					} else if (isFieldBeingCompletedStatic) {
+						// static fields can't be proposed before they are actually declared if the
+						// field currently being declared is also static
+						continue next;
+					}
 				}
 			}
 			
@@ -6290,8 +6425,7 @@ public final class CompletionEngine
 
 			if (fieldLength > field.name.length) continue next;
 
-			if (!CharOperation.prefixEquals(fieldName, field.name, false /* ignore case */)
-					&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(fieldName, field.name)))	continue next;
+			if (isFailedMatch(fieldName, field.name))	continue next;
 
 			if (this.options.checkDeprecation &&
 					field.isViewedAsDeprecated() &&
@@ -6417,6 +6551,7 @@ public final class CompletionEngine
 				// Standard proposal
 				if (!this.isIgnored(CompletionProposal.FIELD_REF, missingElements != null) && (this.assistNodeInJavadoc & CompletionOnJavadoc.ONLY_INLINE_TAG) == 0) {
 					InternalCompletionProposal proposal =  createProposal(CompletionProposal.FIELD_REF, this.actualCompletionPosition);
+					proposal.setBinding(field);
 					proposal.setDeclarationSignature(getSignature(field.declaringClass));
 					proposal.setSignature(getSignature(field.type));
 					proposal.setDeclarationPackageName(field.declaringClass.qualifiedPackageName());
@@ -6451,6 +6586,7 @@ public final class CompletionEngine
 				if ((this.assistNodeInJavadoc & CompletionOnJavadoc.TEXT) != 0 && !this.requestor.isIgnored(CompletionProposal.JAVADOC_FIELD_REF)) {
 					char[] javadocCompletion = inlineTagCompletion(completion, JavadocTagConstants.TAG_LINK);
 					InternalCompletionProposal proposal =  createProposal(CompletionProposal.JAVADOC_FIELD_REF, this.actualCompletionPosition);
+					proposal.setBinding(field);
 					proposal.setDeclarationSignature(getSignature(field.declaringClass));
 					proposal.setSignature(getSignature(field.type));
 					proposal.setDeclarationPackageName(field.declaringClass.qualifiedPackageName());
@@ -6493,6 +6629,7 @@ public final class CompletionEngine
 			} else {
 				if(!this.isIgnored(CompletionProposal.FIELD_REF_WITH_CASTED_RECEIVER, missingElements != null)) {
 					InternalCompletionProposal proposal = createProposal(CompletionProposal.FIELD_REF_WITH_CASTED_RECEIVER, this.actualCompletionPosition);
+					proposal.setBinding(field);
 					proposal.setDeclarationSignature(getSignature(field.declaringClass));
 					proposal.setSignature(getSignature(field.type));
 					proposal.setReceiverSignature(getSignature(receiverType));
@@ -7488,7 +7625,7 @@ public final class CompletionEngine
 							if(proposeMethod && !insideAnnotationAttribute) {
 								MethodBinding methodBinding = (MethodBinding)binding;
 								if ((exactMatch && CharOperation.equals(token, methodBinding.selector)) ||
-										!exactMatch && CharOperation.prefixEquals(token, methodBinding.selector) ||
+										!exactMatch && CharOperation.prefixEquals(token, methodBinding.selector, false) ||
 										(this.options.camelCaseMatch && CharOperation.camelCaseMatch(token, methodBinding.selector))) {
 									findLocalMethodsFromStaticImports(
 											token,
@@ -7530,8 +7667,7 @@ public final class CompletionEngine
 
 			if (fieldLength > field.name.length) continue next;
 
-			if (!CharOperation.prefixEquals(fieldName, field.name, false /* ignore case */)
-					&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(fieldName, field.name)))	continue next;
+			if (isFailedMatch(fieldName, field.name))	continue next;
 
 			if (this.options.checkDeprecation &&
 					field.isViewedAsDeprecated() &&
@@ -7571,6 +7707,7 @@ public final class CompletionEngine
 					char[] completion = CharOperation.concat(receiverType.sourceName, field.name, '.');
 
 					InternalCompletionProposal proposal =  createProposal(CompletionProposal.FIELD_REF, this.actualCompletionPosition);
+					proposal.setBinding(field);
 					proposal.setDeclarationSignature(getSignature(field.declaringClass));
 					proposal.setSignature(getSignature(field.type));
 					proposal.setDeclarationPackageName(field.declaringClass.qualifiedPackageName());
@@ -7613,6 +7750,7 @@ public final class CompletionEngine
 					char[] completion = field.name;
 
 					InternalCompletionProposal proposal =  createProposal(CompletionProposal.FIELD_REF, this.actualCompletionPosition);
+					proposal.setBinding(field);
 					proposal.setDeclarationSignature(getSignature(field.declaringClass));
 					proposal.setSignature(getSignature(field.type));
 					proposal.setDeclarationPackageName(field.declaringClass.qualifiedPackageName());
@@ -7769,8 +7907,7 @@ public final class CompletionEngine
 			if (typeLength > memberType.sourceName.length)
 				continue next;
 
-			if (!CharOperation.prefixEquals(typeName, memberType.sourceName, false/* ignore case */)
-					&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(typeName, memberType.sourceName)))
+			if (isFailedMatch(typeName, memberType.sourceName))
 				continue next;
 
 			if (this.options.checkDeprecation && memberType.isViewedAsDeprecated()) continue next;
@@ -7826,8 +7963,7 @@ public final class CompletionEngine
 			if (!field.isStatic())
 				continue next;
 
-			if (!CharOperation.prefixEquals(fieldName, field.name, false/* ignore case */)
-				&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(fieldName, field.name)))
+			if (isFailedMatch(fieldName, field.name))
 				continue next;
 
 			if (this.options.checkDeprecation && field.isViewedAsDeprecated()) continue next;
@@ -7847,6 +7983,7 @@ public final class CompletionEngine
 			this.noProposal = false;
 			if(!this.requestor.isIgnored(CompletionProposal.FIELD_REF)) {
 				InternalCompletionProposal proposal =  createProposal(CompletionProposal.FIELD_REF, this.actualCompletionPosition);
+				proposal.setBinding(field);
 				proposal.setDeclarationSignature(getSignature(field.declaringClass));
 				proposal.setSignature(getSignature(field.type));
 				proposal.setDeclarationPackageName(field.declaringClass.qualifiedPackageName());
@@ -7890,8 +8027,7 @@ public final class CompletionEngine
 			if (methodLength > method.selector.length)
 				continue next;
 
-			if (!CharOperation.prefixEquals(methodName, method.selector, false/* ignore case */)
-					&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(methodName, method.selector)))
+			if (isFailedMatch(methodName, method.selector))
 				continue next;
 
 			int length = method.parameters.length;
@@ -8174,9 +8310,8 @@ public final class CompletionEngine
 		if(choices == null || choices.length == 0) return;
 		int length = keyword.length;
 		for (int i = 0; i < choices.length; i++)
-			if (length <= choices[i].length
-			&& CharOperation.prefixEquals(keyword, choices[i], false /* ignore case */
-					)){
+			if (length <= choices[i].length && (CharOperation.prefixEquals(keyword, choices[i], false /* ignore case */)
+					|| (this.options.substringMatch && CharOperation.substringMatch(keyword, choices[i])))) {
 				if (ignorePackageKeyword && CharOperation.equals(choices[i], Keywords.PACKAGE))
 					continue;
 				int relevance = computeBaseRelevance();
@@ -8387,8 +8522,7 @@ public final class CompletionEngine
 				if (methodLength > method.selector.length)
 					continue next;
 
-				if (!CharOperation.prefixEquals(methodName, method.selector, false/* ignore case */)
-						&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(methodName, method.selector)))
+				if (isFailedMatch(methodName, method.selector))
 					continue next;
 			}
 
@@ -8445,6 +8579,7 @@ public final class CompletionEngine
 			this.noProposal = false;
 			if(!this.requestor.isIgnored(CompletionProposal.METHOD_DECLARATION)) {
 				InternalCompletionProposal proposal =  createProposal(CompletionProposal.METHOD_DECLARATION, this.actualCompletionPosition);
+				proposal.setBinding(method);
 				proposal.setDeclarationSignature(getSignature(method.declaringClass));
 				proposal.setDeclarationKey(method.declaringClass.computeUniqueKey());
 				proposal.setSignature(getSignature(method));
@@ -8541,8 +8676,7 @@ public final class CompletionEngine
 				}
 			} else {
 				if (methodLength > method.selector.length) continue next;
-				if (!CharOperation.prefixEquals(methodName, method.selector, false /* ignore case */)
-						&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(methodName, method.selector))) {
+				if (isFailedMatch(methodName, method.selector)) {
 					continue next;
 				}
 			}
@@ -8724,6 +8858,7 @@ public final class CompletionEngine
 				// Standard proposal
 				if(!this.isIgnored(CompletionProposal.METHOD_REF, missingElements != null) && (this.assistNodeInJavadoc & CompletionOnJavadoc.ONLY_INLINE_TAG) == 0) {
 					InternalCompletionProposal proposal =  createProposal(completionOnReferenceExpressionName ? CompletionProposal.METHOD_NAME_REFERENCE : CompletionProposal.METHOD_REF, this.actualCompletionPosition);
+					proposal.setBinding(method);
 					proposal.setDeclarationSignature(getSignature(method.declaringClass));
 					proposal.setSignature(getSignature(method));
 					MethodBinding original = method.original();
@@ -8765,6 +8900,7 @@ public final class CompletionEngine
 				if ((this.assistNodeInJavadoc & CompletionOnJavadoc.TEXT) != 0 && !this.requestor.isIgnored(CompletionProposal.JAVADOC_METHOD_REF)) {
 					char[] javadocCompletion = inlineTagCompletion(completion, JavadocTagConstants.TAG_LINK);
 					InternalCompletionProposal proposal =  createProposal(CompletionProposal.JAVADOC_METHOD_REF, this.actualCompletionPosition);
+					proposal.setBinding(method);
 					proposal.setDeclarationSignature(getSignature(method.declaringClass));
 					proposal.setSignature(getSignature(method));
 					MethodBinding original = method.original();
@@ -8793,6 +8929,7 @@ public final class CompletionEngine
 			} else {
 				if(!this.isIgnored(CompletionProposal.METHOD_REF_WITH_CASTED_RECEIVER, missingElements != null)) {
 					InternalCompletionProposal proposal =  createProposal(CompletionProposal.METHOD_REF_WITH_CASTED_RECEIVER, this.actualCompletionPosition);
+					proposal.setBinding(method);
 					proposal.setDeclarationSignature(getSignature(method.declaringClass));
 					proposal.setSignature(getSignature(method));
 					MethodBinding original = method.original();
@@ -8873,8 +9010,7 @@ public final class CompletionEngine
 
 				if (methodLength > method.selector.length) continue next;
 
-				if (!CharOperation.prefixEquals(methodName, method.selector, false /* ignore case */)
-						&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(methodName, method.selector))) {
+				if (isFailedMatch(methodName, method.selector)) {
 					continue next;
 				}
 
@@ -8983,6 +9119,7 @@ public final class CompletionEngine
 							completion = CharOperation.concat(receiverType.sourceName, completion, '.');
 
 							InternalCompletionProposal proposal =  createProposal(CompletionProposal.METHOD_REF, this.actualCompletionPosition);
+							proposal.setBinding(method);
 							proposal.setDeclarationSignature(getSignature(method.declaringClass));
 							proposal.setSignature(getSignature(method));
 							MethodBinding original = method.original();
@@ -9012,6 +9149,7 @@ public final class CompletionEngine
 						completion = CharOperation.concat(receiverType.sourceName, completion, '.');
 
 						InternalCompletionProposal proposal =  createProposal(CompletionProposal.METHOD_REF, this.actualCompletionPosition);
+						proposal.setBinding(method);
 						proposal.setDeclarationSignature(getSignature(method.declaringClass));
 						proposal.setSignature(getSignature(method));
 						MethodBinding original = method.original();
@@ -9059,6 +9197,7 @@ public final class CompletionEngine
 				} else {
 					if (!this.isIgnored(CompletionProposal.METHOD_REF, CompletionProposal.METHOD_IMPORT)) {
 						InternalCompletionProposal proposal =  createProposal(CompletionProposal.METHOD_REF, this.actualCompletionPosition);
+						proposal.setBinding(method);
 						proposal.setDeclarationSignature(getSignature(method.declaringClass));
 						proposal.setSignature(getSignature(method));
 						MethodBinding original = method.original();
@@ -9211,6 +9350,7 @@ public final class CompletionEngine
 			this.noProposal = false;
 			if(!this.requestor.isIgnored(CompletionProposal.METHOD_REF)) {
 				InternalCompletionProposal proposal =  createProposal(CompletionProposal.METHOD_REF, this.actualCompletionPosition);
+				proposal.setBinding(method);
 				proposal.setDeclarationSignature(getSignature(method.declaringClass));
 				proposal.setSignature(getSignature(method));
 				MethodBinding original = method.original();
@@ -9607,8 +9747,7 @@ public final class CompletionEngine
 			if (typeLength > memberType.sourceName.length)
 				continue next;
 
-			if (!CharOperation.prefixEquals(typeName, memberType.sourceName, false/* ignore case */)
-					&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(typeName, memberType.sourceName)))
+			if (isFailedMatch(typeName, memberType.sourceName))
 				continue next;
 
 			if (this.options.checkDeprecation &&
@@ -9856,6 +9995,7 @@ public final class CompletionEngine
 		}
 		
 		boolean hasPotentialDefaultAbstractMethods = true;
+		boolean java8Plus = this.compilerOptions.sourceLevel >= ClassFileConstants.JDK1_8;
 		while (currentType != null) {
 
 			MethodBinding[] methods = currentType.availableMethods();
@@ -9869,11 +10009,11 @@ public final class CompletionEngine
 					receiverType);
 			}
 
-			if (hasPotentialDefaultAbstractMethods &&
+			if (hasPotentialDefaultAbstractMethods && (java8Plus ||
 					(currentType.isAbstract() ||
 							currentType.isTypeVariable() ||
 							currentType.isIntersectionType() ||
-							currentType.isEnum())){
+							currentType.isEnum()))){
 
 				ReferenceBinding[] superInterfaces = currentType.superInterfaces();
 
@@ -10139,8 +10279,7 @@ public final class CompletionEngine
 
 								if (typeLength > localType.sourceName.length)
 									continue next;
-								if (!CharOperation.prefixEquals(typeName, localType.sourceName, false/* ignore case */)
-										&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(typeName, localType.sourceName)))
+								if (isFailedMatch(typeName, localType.sourceName))
 									continue next;
 
 								for (int j = typesFound.size; --j >= 0;) {
@@ -10233,7 +10372,7 @@ public final class CompletionEngine
 
 	private void findPackages(CompletionOnPackageReference packageStatement) {
 
-		this.completionToken = CharOperation.concatWith(packageStatement.tokens, '.');
+		this.completionToken = CharOperation.concatWithAll(packageStatement.tokens, '.');
 		if (this.completionToken.length == 0)
 			return;
 
@@ -10416,8 +10555,7 @@ public final class CompletionEngine
 
 					if (typeLength > typeParameter.name.length) continue;
 
-					if (!CharOperation.prefixEquals(token, typeParameter.name, false)
-							&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(token, typeParameter.name))) continue;
+					if (isFailedMatch(token, typeParameter.name)) continue;
 
 					int relevance = computeBaseRelevance();
 					relevance += computeRelevanceForResolution();
@@ -10517,8 +10655,7 @@ public final class CompletionEngine
 
 				if (typeLength > sourceType.sourceName.length) continue next;
 
-				if (!CharOperation.prefixEquals(token, sourceType.sourceName, false)
-						&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(token, sourceType.sourceName))) continue next;
+				if (isFailedMatch(token, sourceType.sourceName)) continue next;
 
 				if (this.assistNodeIsAnnotation && !hasPossibleAnnotationTarget(sourceType, scope)) {
 					continue next;
@@ -10896,8 +11033,7 @@ public final class CompletionEngine
 					if (typeLength > 0) {
 						if (typeLength > refBinding.sourceName.length) continue next;
 	
-						if (!CharOperation.prefixEquals(token, refBinding.sourceName, false)
-								&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(token, refBinding.sourceName))) continue next;
+						if (isFailedMatch(token, refBinding.sourceName)) continue next;
 					}
 
 
@@ -11063,8 +11199,7 @@ public final class CompletionEngine
 
 							if (typeLength > typeBinding.sourceName.length)	continue next;
 
-							if (!CharOperation.prefixEquals(token, typeBinding.sourceName, false)
-									&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(token, typeBinding.sourceName))) continue next;
+							if (isFailedMatch(token, typeBinding.sourceName)) continue next;
 							
 							int accessibility = IAccessRule.K_ACCESSIBLE;
 							if(typeBinding.hasRestrictedAccess()) {
@@ -11188,8 +11323,7 @@ public final class CompletionEngine
 
 							if (typeLength > typeBinding.sourceName.length)	continue;
 
-							if (!CharOperation.prefixEquals(token, typeBinding.sourceName, false)
-									&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(token, typeBinding.sourceName)))	continue;
+							if (isFailedMatch(token, typeBinding.sourceName))	continue;
 
 							if (typesFound.contains(typeBinding))  continue;
 
@@ -11713,8 +11847,7 @@ public final class CompletionEngine
 							if (tokenLength > local.name.length)
 								continue next;
 
-							if (!CharOperation.prefixEquals(token, local.name, false /* ignore case */)
-									&& !(this.options.camelCaseMatch && CharOperation.camelCaseMatch(token, local.name)))
+							if (isFailedMatch(token, local.name))
 								continue next;
 
 							if (local.isSecret())
@@ -12054,7 +12187,7 @@ public final class CompletionEngine
 	private INameEnvironment getNoCacheNameEnvironment() {
 		if (this.noCacheNameEnvironment == null) {
 			JavaModelManager.getJavaModelManager().cacheZipFiles(this);
-			this.noCacheNameEnvironment = new JavaSearchNameEnvironment(this.javaProject, this.owner == null ? null : JavaModelManager.getJavaModelManager().getWorkingCopies(this.owner, true/*add primary WCs*/));
+			this.noCacheNameEnvironment = IndexBasedJavaSearchEnvironment.create(Collections.singletonList(this.javaProject), this.owner == null ? null : JavaModelManager.getJavaModelManager().getWorkingCopies(this.owner, true/*add primary WCs*/));
 		}
 		return this.noCacheNameEnvironment;
 	}
@@ -12128,6 +12261,26 @@ public final class CompletionEngine
 	}
 	private boolean isAllowingLongComputationProposals() {
 		return this.monitor != null;
+	}
+	
+	/**
+	 * Checks whether name matches the token according to the current
+	 * code completion settings (substring match, camel case match etc.)
+	 * and sets whether the current match is a suffix proposal.
+	 * 
+	 * @param token the token that is tested
+	 * @param name the name to match
+	 * @return <code>true</code> if the token does not match,
+	 * <code>false</code> otherwise
+	 */
+	private boolean isFailedMatch(char[] token, char[] name) {
+		if ((this.options.substringMatch && CharOperation.substringMatch(token, name))
+				|| (this.options.camelCaseMatch && CharOperation.camelCaseMatch(token, name))
+				|| CharOperation.prefixEquals(token, name, false)) {
+			return false;
+		}
+
+		return true;
 	}
 	private boolean isForbidden(ReferenceBinding binding) {
 		for (int i = 0; i <= this.forbbidenBindingsPtr; i++) {

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2015 GK Software AG.
+ * Copyright (c) 2015, 2016 GK Software AG.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -32,6 +32,7 @@ import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.IPackageFragmentRoot;
 import org.eclipse.jdt.core.IType;
 import org.eclipse.jdt.core.JavaCore;
+import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.core.dom.IMethodBinding;
 import org.eclipse.jdt.core.dom.ITypeBinding;
 import org.eclipse.jdt.internal.compiler.classfmt.ExternalAnnotationProvider;
@@ -184,7 +185,7 @@ public final class ExternalAnnotationUtil {
 				return null;
 		}
 		
-		annotationPath = annotationPath.append(binaryTypeName).addFileExtension(ExternalAnnotationProvider.ANNOTION_FILE_EXTENSION);
+		annotationPath = annotationPath.append(binaryTypeName).addFileExtension(ExternalAnnotationProvider.ANNOTATION_FILE_EXTENSION);
 		return workspaceRoot.getFile(annotationPath);
 	}
 
@@ -293,7 +294,7 @@ public final class ExternalAnnotationUtil {
 						newContent.append('\n');
 						continue;
 					}
-					if (!Character.isJavaIdentifierStart(line.charAt(0))) {
+					if (!Character.isJavaIdentifierStart(line.charAt(0)) && line.charAt(0) != '<') {
 						newContent.append(line).append('\n');
 						continue;
 					}
@@ -368,19 +369,18 @@ public final class ExternalAnnotationUtil {
 				signatureToReplace = originalSignature;
 				break;
 			case POSITION_RETURN_TYPE:
-				assert originalSignature.charAt(0) == '(' : "signature must start with '('"; //$NON-NLS-1$
+				assert originalSignature.charAt(0) == '(' || originalSignature.charAt(0) == '<': "signature must start with '(' or '<'"; //$NON-NLS-1$
 				int close = originalSignature.indexOf(')');
 				buf.append(originalSignature, 0, close+1);
 				signatureToReplace = originalSignature.substring(close+1);
 				break;
 			default: // parameter
 				SignatureWrapper wrapper = new SignatureWrapper(originalSignature.toCharArray(), true, true); // may already contain annotations
-				wrapper.start = 1;
+				wrapper.start = CharOperation.indexOf('(', wrapper.signature) + 1; // possibly skipping type parameters
 				for (int i = 0; i < updatePosition; i++)
-					wrapper.start = wrapper.computeEnd() + 1;
+					wrapper.start = wrapper.skipAngleContents(wrapper.computeEnd()) + 1;
 				int start = wrapper.start;
-				int end = wrapper.computeEnd();
-				end = wrapper.skipAngleContents(end);
+				int end = wrapper.skipAngleContents(wrapper.computeEnd());
 				buf.append(originalSignature, 0, start);
 				signatureToReplace = originalSignature.substring(start, end+1);
 				postfix = originalSignature.substring(end+1, originalSignature.length());
@@ -643,7 +643,7 @@ public final class ExternalAnnotationUtil {
 	{
 		String[] result = new String[4]; // prefix, orig, replacement, postfix
 		StringBuffer buf;
-		assert originalSignature.charAt(0) == '(' : "signature must start with '('"; //$NON-NLS-1$
+		assert originalSignature.charAt(0) == '(' || originalSignature.charAt(0) == '<': "signature must start with '(' or '<'"; //$NON-NLS-1$
 		int close = originalSignature.indexOf(')');
 		result[0] = originalSignature.substring(0, close+1);
 		buf = new StringBuffer();
@@ -675,12 +675,11 @@ public final class ExternalAnnotationUtil {
 		String[] result = new String[4]; // prefix, orig, replacement, postfix
 		StringBuffer buf;
 		SignatureWrapper wrapper = new SignatureWrapper(originalSignature.toCharArray(), true, true); // may already contain annotations
-		wrapper.start = 1;
+		wrapper.start = CharOperation.indexOf('(', wrapper.signature) + 1; // possibly skip type parameters
 		for (int i = 0; i < paramIdx; i++)
-			wrapper.start = wrapper.computeEnd() + 1;
+			wrapper.start = wrapper.skipAngleContents(wrapper.computeEnd()) + 1;
 		int start = wrapper.start;
-		int end = wrapper.computeEnd();
-		end = wrapper.skipAngleContents(end);
+		int end = wrapper.skipAngleContents(wrapper.computeEnd());
 		result[0] = originalSignature.substring(0, start);				
 		buf = new StringBuffer();
 		result[1] = originalSignature.substring(start, end+1);

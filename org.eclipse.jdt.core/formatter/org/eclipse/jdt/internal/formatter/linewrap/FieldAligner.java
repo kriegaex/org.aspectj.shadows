@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2014, 2015 Mateusz Matela and others.
+ * Copyright (c) 2014, 2016 Mateusz Matela and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -7,6 +7,8 @@
  *
  * Contributors:
  *     Mateusz Matela <mateusz.matela@gmail.com> - [formatter] Formatter does not format Java code correctly, especially when max line width is set - https://bugs.eclipse.org/303519
+ *     Lars Vogel <Lars.Vogel@vogella.com> - Contributions for
+ *     						Bug 473178
  *******************************************************************************/
 package org.eclipse.jdt.internal.formatter.linewrap;
 
@@ -21,7 +23,6 @@ import java.util.List;
 import org.eclipse.jdt.core.dom.BodyDeclaration;
 import org.eclipse.jdt.core.dom.FieldDeclaration;
 import org.eclipse.jdt.core.dom.SimpleName;
-import org.eclipse.jdt.core.dom.TypeDeclaration;
 import org.eclipse.jdt.core.dom.VariableDeclarationFragment;
 import org.eclipse.jdt.internal.formatter.DefaultCodeFormatterOptions;
 import org.eclipse.jdt.internal.formatter.Token;
@@ -62,54 +63,49 @@ public class FieldAligner {
 		}
 	}
 
-	private final List<List<FieldDeclaration>> fieldAlignGroups = new ArrayList<List<FieldDeclaration>>();
-
-	final TokenManager tm;
+	private final List<List<FieldDeclaration>> fieldAlignGroups = new ArrayList<>();
 
 	private final DefaultCodeFormatterOptions options;
+
+	final TokenManager tm;
 
 	public FieldAligner(TokenManager tokenManager, DefaultCodeFormatterOptions options) {
 		this.tm = tokenManager;
 		this.options = options;
 	}
 
-	public void prepareAlign(TypeDeclaration node) {
-		List<FieldDeclaration> bodyDeclarations = node.bodyDeclarations();
-		ArrayList<FieldDeclaration> alignGroup = new ArrayList<FieldDeclaration>();
+	public void handleAlign(List<FieldDeclaration> bodyDeclarations) {
+		if (!this.options.align_type_members_on_columns)
+			return;
+		ArrayList<FieldDeclaration> alignGroup = new ArrayList<>();
 		BodyDeclaration previous = null;
 		for (BodyDeclaration declaration : bodyDeclarations) {
-			if (!alignGroup.isEmpty()) {
-				if ((declaration instanceof FieldDeclaration) && !areSeparated(previous, declaration)) {
-					alignGroup.add((FieldDeclaration) declaration);
-				} else {
+			if (declaration instanceof FieldDeclaration) {
+				if (isNewGroup(declaration, previous)) {
 					alignFields(alignGroup);
-					alignGroup = new ArrayList<FieldDeclaration>();
+					alignGroup = new ArrayList<>();
 				}
-			}
-			if (alignGroup.isEmpty()) {
-				if (declaration instanceof FieldDeclaration)
-					alignGroup.add((FieldDeclaration) declaration);
+				alignGroup.add((FieldDeclaration) declaration);
 			}
 			previous = declaration;
 		}
 		alignFields(alignGroup);
 	}
 
-	private boolean areSeparated(BodyDeclaration declaration1, BodyDeclaration declaration2) {
-		// check if there are more empty lines between fields than normal
-		if (this.options.number_of_empty_lines_to_preserve <= this.options.blank_lines_before_field)
-			return false;
-		int maxLineBreaks = 0;
-		int from = this.tm.lastIndexIn(declaration1, -1);
-		int to = this.tm.firstIndexIn(declaration2, -1);
-
+	private boolean isNewGroup(BodyDeclaration declaration, BodyDeclaration previousDeclaration) {
+		if (!(previousDeclaration instanceof FieldDeclaration))
+			return true;
+		int lineBreaks = 0;
+		int from = this.tm.lastIndexIn(previousDeclaration, -1);
+		int to = this.tm.firstIndexIn(declaration, -1);
 		Token previous = this.tm.get(from);
 		for (int i = from + 1; i <= to; i++) {
 			Token token = this.tm.get(i);
-			maxLineBreaks = Math.max(maxLineBreaks, this.tm.countLineBreaksBetween(previous, token));
+			lineBreaks += Math.min(this.tm.countLineBreaksBetween(previous, token),
+					this.options.number_of_empty_lines_to_preserve + 1);
 			previous = token;
 		}
-		return maxLineBreaks - 1 > this.options.blank_lines_before_field;
+		return lineBreaks > this.options.align_fields_grouping_blank_lines;
 	}
 
 	private void alignFields(ArrayList<FieldDeclaration> alignGroup) {
@@ -125,7 +121,7 @@ public class FieldAligner {
 			int positionInLine = this.tm.getPositionInLine(nameIndex);
 			maxNameAlign = Math.max(maxNameAlign, positionInLine);
 		}
-		maxNameAlign = this.tm.toIndent(maxNameAlign, true);
+		maxNameAlign = this.tm.toIndent(maxNameAlign, false);
 
 		int maxAssignAlign = 0;
 		for (FieldDeclaration declaration : alignGroup) {
@@ -142,7 +138,7 @@ public class FieldAligner {
 				maxAssignAlign = Math.max(maxAssignAlign, positionInLine);
 			}
 		}
-		maxAssignAlign = this.tm.toIndent(maxAssignAlign, true);
+		maxAssignAlign = this.tm.toIndent(maxAssignAlign, false);
 
 		for (FieldDeclaration declaration : alignGroup) {
 			List<VariableDeclarationFragment> fragments = declaration.fragments();
@@ -151,13 +147,6 @@ public class FieldAligner {
 				int assingIndex = this.tm.firstIndexAfter(fragment.getName(), TokenNameEQUAL);
 				Token assignToken = this.tm.get(assingIndex);
 				assignToken.setAlign(maxAssignAlign);
-
-				int baseIndent = this.tm.getPositionInLine(assingIndex + 1) - assignToken.getIndent();
-				int lastIndex = this.tm.lastIndexIn(declaration, -1);
-				for (int i = assingIndex + 1; i <= lastIndex; i++) {
-					Token token = this.tm.get(i);
-					token.setIndent(baseIndent + token.getIndent());
-				}
 			}
 		}
 	}
@@ -176,7 +165,7 @@ public class FieldAligner {
 				maxCommentAlign = Math.max(maxCommentAlign,
 						positionCounter.findMaxPosition(firstIndexInLine, lastIndex));
 			}
-			maxCommentAlign = this.tm.toIndent(maxCommentAlign, true);
+			maxCommentAlign = this.tm.toIndent(maxCommentAlign, false);
 
 			for (FieldDeclaration declaration : alignGroup) {
 				int typeIndex = this.tm.firstIndexIn(declaration.getType(), -1);

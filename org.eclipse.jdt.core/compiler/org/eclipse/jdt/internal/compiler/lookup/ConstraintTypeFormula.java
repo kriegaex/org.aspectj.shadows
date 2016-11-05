@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2013, 2015 GK Software AG.
+ * Copyright (c) 2013, 2016 GK Software AG.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -7,6 +7,8 @@
  *
  * Contributors:
  *     Stephan Herrmann - initial API and implementation
+ *     Lars Vogel <Lars.Vogel@vogella.com> - Contributions for
+ *     						Bug 473178
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.lookup;
 
@@ -64,14 +66,10 @@ class ConstraintTypeFormula extends ConstraintFormula {
 				return this.left.isCompatibleWith(this.right, inferenceContext.scope) || this.left.isBoxingCompatibleWith(this.right, inferenceContext.scope) ? TRUE : FALSE;
 			}
 			if (this.left.isPrimitiveType()) {
-				if (inferenceContext.inferenceKind == InferenceContext18.CHECK_STRICT)
-					inferenceContext.inferenceKind = InferenceContext18.CHECK_LOOSE;
 				TypeBinding sPrime = inferenceContext.environment.computeBoxingType(this.left);
 				return ConstraintTypeFormula.create(sPrime, this.right, COMPATIBLE, this.isSoft);
 			}
 			if (this.right.isPrimitiveType()) {
-				if (inferenceContext.inferenceKind == InferenceContext18.CHECK_STRICT)
-					inferenceContext.inferenceKind = InferenceContext18.CHECK_LOOSE;
 				TypeBinding tPrime = inferenceContext.environment.computeBoxingType(this.right);
 				return ConstraintTypeFormula.create(this.left, tPrime, SAME, this.isSoft);
 			}
@@ -110,6 +108,9 @@ class ConstraintTypeFormula extends ConstraintFormula {
 				if (this.left.kind() != Binding.WILDCARD_TYPE) {
 					return ConstraintTypeFormula.create(this.left, this.right, SAME, this.isSoft);						
 				} else {
+					// TODO: speculative addition:
+					if (this.right instanceof InferenceVariable)
+						return new TypeBound((InferenceVariable) this.right, this.left, SAME, this.isSoft);
 					return FALSE;
 				}
 			} else {
@@ -186,10 +187,13 @@ class ConstraintTypeFormula extends ConstraintFormula {
 						return TRUE;
 					return FALSE;
 				}
-				if (this.left instanceof InferenceVariable) {
+				if (this.left.id == TypeIds.T_null || this.right.id== TypeIds.T_null) {
+					return FALSE;
+				}
+				if (this.left instanceof InferenceVariable && !this.right.isPrimitiveType()) {
 					return new TypeBound((InferenceVariable) this.left, this.right, SAME, this.isSoft);
 				}
-				if (this.right instanceof InferenceVariable) {
+				if (this.right instanceof InferenceVariable && !this.left.isPrimitiveType()) {
 					return new TypeBound((InferenceVariable) this.right, this.left, SAME, this.isSoft);
 				}
 				if ((this.left.isClass() || this.left.isInterface()) 
@@ -244,7 +248,7 @@ class ConstraintTypeFormula extends ConstraintFormula {
 				}
 			case Binding.PARAMETERIZED_TYPE:
 				{
-					List<ConstraintFormula> constraints = new ArrayList<ConstraintFormula>();
+					List<ConstraintFormula> constraints = new ArrayList<>();
 					while (superCandidate != null && superCandidate.kind() == Binding.PARAMETERIZED_TYPE && subCandidate != null)  {
 						if (!addConstraintsFromTypeParameters(subCandidate, (ParameterizedTypeBinding) superCandidate, constraints))
 							return FALSE;

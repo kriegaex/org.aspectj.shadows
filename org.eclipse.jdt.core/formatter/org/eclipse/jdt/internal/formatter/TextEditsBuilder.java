@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2014, 2015 Mateusz Matela and others.
+ * Copyright (c) 2014, 2016 Mateusz Matela and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -22,6 +22,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import org.eclipse.jdt.internal.compiler.parser.ScannerHelper;
+import org.eclipse.jdt.internal.formatter.Token.WrapMode;
 import org.eclipse.jdt.internal.formatter.Token.WrapPolicy;
 import org.eclipse.jface.text.IRegion;
 import org.eclipse.jface.text.Region;
@@ -152,8 +153,16 @@ public class TextEditsBuilder extends TokenTraverser {
 			this.stringLiteralsInLine.clear();
 			if (getLineBreaksBefore() > 1) {
 				Token indentToken = null;
-				if (this.options.indent_empty_lines && token.tokenType != TokenNameNotAToken)
-					indentToken = token.getIndent() > getPrevious().getIndent() ? token : getPrevious();
+				if (this.options.indent_empty_lines && token.tokenType != TokenNameNotAToken) {
+					if (index == 0) {
+						indentToken = token;
+					} else {
+						boolean isBlockIndent = token.getWrapPolicy() != null
+								&& token.getWrapPolicy().wrapMode == WrapMode.BLOCK_INDENT;
+						Token previous = this.tm.get(this.tm.findFirstTokenInLine(index - 1, true, !isBlockIndent));
+						indentToken = (token.getIndent() > previous.getIndent()) ? token : previous;
+					}
+				}
 				for (int i = 1; i < getLineBreaksBefore(); i++) {
 					bufferLineSeparator(token, true);
 					if (indentToken != null)
@@ -180,9 +189,8 @@ public class TextEditsBuilder extends TokenTraverser {
 
 		this.parent.counter = this.counter;
 		this.parent.bufferLineSeparator(null, false);
+		this.parent.bufferIndent(this.parent.tm.get(this.parentTokenIndex), this.parentTokenIndex);
 		this.counter = this.parent.counter;
-
-		bufferIndent(this.parent.tm.get(this.parentTokenIndex), -1);
 
 		if (token != null && token.tokenType == TokenNameNotAToken)
 			return; // this is an unformatted block comment, don't force asterisk
@@ -215,27 +223,28 @@ public class TextEditsBuilder extends TokenTraverser {
 
 	private void bufferIndent(Token token, int index) {
 		int indent = token.getIndent();
-		int additionalSpaces = 0;
-		if (this.options.use_tabs_only_for_leading_indentations) {
-			// use indentation of wrap-line start token and add spaces to match current token
+		if (getCurrent() != null && getCurrent() != token)
+			indent += getCurrent().getEmptyLineIndentAdjustment();
+		int spaces = 0;
+		if (this.options.use_tabs_only_for_leading_indentations
+				&& this.options.tab_char != DefaultCodeFormatterOptions.SPACE) {
 			WrapPolicy wrapPolicy = token.getWrapPolicy();
-			int wrapRootIndent = indent;
-			if (index == -1) { // this means we print a line separator in a multi-line comment
-				TokenManager tm2 = this.parent.tm;
-				wrapRootIndent = tm2.get(tm2.findFirstTokenInLine(this.parentTokenIndex, true)).getIndent();
-			} else if (wrapPolicy != null) {
-				wrapRootIndent = this.tm.get(this.tm.findFirstTokenInLine(index, true)).getIndent();
+			boolean isWrappedBlockComment = this.childBuilder != null && this.childBuilder.parentTokenIndex == index;
+			if (isWrappedBlockComment) {
+				Token lineStart = this.tm.get(this.tm.findFirstTokenInLine(index));
+				spaces = token.getIndent() - lineStart.getIndent();
+				token = lineStart;
+				wrapPolicy = token.getWrapPolicy();
 			}
-			additionalSpaces = indent - wrapRootIndent;
-			indent = wrapRootIndent;
-
-			if (wrapPolicy != null && wrapPolicy.isForced) {
-				int extraIndent = wrapPolicy.extraIndent;
-				additionalSpaces -= extraIndent;
-				indent += extraIndent;
+			while (wrapPolicy != null) {
+				Token parentLineStart = this.tm.get(this.tm.findFirstTokenInLine(wrapPolicy.wrapParentIndex));
+				if (wrapPolicy.wrapMode != WrapMode.BLOCK_INDENT)
+					spaces += token.getIndent() - parentLineStart.getIndent();
+				token = parentLineStart;
+				wrapPolicy = token.getWrapPolicy();
 			}
 		}
-		appendIndentationString(this.buffer, this.options.tab_char, this.options.tab_size, indent, additionalSpaces);
+		appendIndentationString(this.buffer, this.options.tab_char, this.options.tab_size, indent - spaces, spaces);
 	}
 
 	public static void appendIndentationString(StringBuilder target, int tabChar, int tabSize, int indent,
@@ -284,6 +293,8 @@ public class TextEditsBuilder extends TokenTraverser {
 			currentPositionInLine = this.tm.getPositionInLine(index - 1);
 			currentPositionInLine += this.tm.getLength(this.tm.get(index - 1), currentPositionInLine);
 		}
+		if (isSpaceBefore())
+			align = Math.max(align, currentPositionInLine + 1);
 
 		final int tabSize = this.options.tab_size;
 		switch (this.alignChar) {
@@ -316,29 +327,43 @@ public class TextEditsBuilder extends TokenTraverser {
 		String buffered = this.buffer.toString();
 		boolean sourceMatch = this.source.startsWith(buffered, this.counter)
 				&& this.counter + buffered.length() == currentPosition;
-		if (!sourceMatch && checkRegions(this.counter, currentPosition)) {
-			TextEdit edit = getReplaceEdit(this.counter, currentPosition, buffered);
-			this.edits.add(edit);
+		while (!sourceMatch && this.currentRegion < this.regions.size()) {
+			IRegion region = this.regions.get(this.currentRegion);
+			if (currentPosition < region.getOffset())
+				break;
+			int regionEnd = region.getOffset() + region.getLength();
+			if (this.counter >= regionEnd) {
+				this.currentRegion++;
+				continue;
+			}
+			if (this.currentRegion == this.regions.size() - 1
+					|| this.regions.get(this.currentRegion + 1).getOffset() > currentPosition) {
+				this.edits.add(getReplaceEdit(this.counter, currentPosition, buffered, region));
+				break;
+			}
+
+			// this edit will span more than one region, split it
+			IRegion nextRegion = this.regions.get(this.currentRegion + 1);
+			int bestSplit = 0;
+			int bestSplitScore = Integer.MAX_VALUE;
+			for (int i = 0; i < buffered.length(); i++) {
+				ReplaceEdit edit1 = getReplaceEdit(this.counter, regionEnd, buffered.substring(0, i), region);
+				ReplaceEdit edit2 = getReplaceEdit(regionEnd, currentPosition, buffered.substring(i), nextRegion);
+				int score = edit1.getLength() + edit1.getText().length() + edit2.getLength() + edit2.getText().length();
+				if (score < bestSplitScore) {
+					bestSplit = i;
+					bestSplitScore = score;
+				}
+			}
+			this.edits.add(getReplaceEdit(this.counter, regionEnd, buffered.substring(0, bestSplit), region));
+			buffered = buffered.substring(bestSplit);
+			this.counter = regionEnd;
 		}
 		this.buffer.setLength(0);
 		this.counter = currentPosition;
 	}
 
-	private boolean checkRegions(int editStart, int editEnd) {
-		while (true) {
-			if (this.currentRegion >= this.regions.size())
-				return false;
-			IRegion region = this.regions.get(this.currentRegion);
-			if (editEnd < region.getOffset())
-				return false;
-			if (editStart < region.getOffset() + region.getLength())
-				return true;
-			this.currentRegion++;
-		}
-	}
-
-	private TextEdit getReplaceEdit(int editStart, int editEnd, String text) {
-		IRegion region = this.regions.get(this.currentRegion);
+	private ReplaceEdit getReplaceEdit(int editStart, int editEnd, String text, IRegion region) {
 		int regionEnd = region.getOffset() + region.getLength();
 		if (editStart < region.getOffset() && regionEnd < editEnd) {
 			int breaksInReplacement = this.tm.countLineBreaksBetween(text, 0, text.length());
@@ -407,8 +432,8 @@ public class TextEditsBuilder extends TokenTraverser {
 			} else if (c1 == '\t' && c2 == ' ') {
 				for (i = 0; i < this.options.tab_size; i++) {
 					sourcePos += direction;
-					if (i < this.options.tab_size - 1
-							&& (sourcePos < 0 || sourcePos >= this.source.length() || this.source.charAt(sourcePos) != ' '))
+					if (i < this.options.tab_size - 1 && (sourcePos < 0 || sourcePos >= this.source.length()
+							|| this.source.charAt(sourcePos) != ' '))
 						continue theLoop;
 				}
 				textPos -= direction;

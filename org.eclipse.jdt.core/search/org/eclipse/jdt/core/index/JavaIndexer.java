@@ -26,7 +26,7 @@ import org.eclipse.jdt.internal.core.search.indexing.DefaultJavaIndexer;
  *
  * @since 3.8
  */
-public final class JavaIndexer {
+public final class JavaIndexer { 
 
 	/**
 	 * Generates the index file for the specified jar.

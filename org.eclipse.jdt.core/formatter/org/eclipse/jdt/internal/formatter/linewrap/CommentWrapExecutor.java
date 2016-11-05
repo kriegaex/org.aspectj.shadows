@@ -7,6 +7,8 @@
  *
  * Contributors:
  *     Mateusz Matela <mateusz.matela@gmail.com> - [formatter] Formatter does not format Java code correctly, especially when max line width is set - https://bugs.eclipse.org/303519
+ *     Lars Vogel <Lars.Vogel@vogella.com> - Contributions for
+ *     						Bug 473178
  *******************************************************************************/
 package org.eclipse.jdt.internal.formatter.linewrap;
 
@@ -23,6 +25,7 @@ import org.eclipse.jdt.internal.formatter.DefaultCodeFormatterOptions;
 import org.eclipse.jdt.internal.formatter.Token;
 import org.eclipse.jdt.internal.formatter.TokenManager;
 import org.eclipse.jdt.internal.formatter.TokenTraverser;
+import org.eclipse.jdt.internal.formatter.Token.WrapMode;
 import org.eclipse.jdt.internal.formatter.Token.WrapPolicy;
 
 public class CommentWrapExecutor extends TokenTraverser {
@@ -30,7 +33,7 @@ public class CommentWrapExecutor extends TokenTraverser {
 	private final TokenManager tm;
 	private final DefaultCodeFormatterOptions options;
 
-	private final ArrayList<Token> nlsTags = new ArrayList<Token>();
+	private final ArrayList<Token> nlsTags = new ArrayList<>();
 
 	private int lineStartPosition;
 	private List<Token> blockStructure;
@@ -164,6 +167,11 @@ public class CommentWrapExecutor extends TokenTraverser {
 		int lineLenght = this.options.comment_line_length;
 		if (this.wrapDisabled || this.counter <= lineLenght)
 			return false;
+		if (getLineBreaksAfter() == 0 && getNext() != null && getNext().getWrapPolicy() == WrapPolicy.DISABLE_WRAP) {
+			// The next token cannot be wrapped, so there's no need to wrap now.
+			// Let's wait and decide when there's more information available.
+			return false;
+		}
 		if (this.potentialWrapToken != null && this.potentialWrapTokenSubstitute != null
 				&& this.counterIfWrapped > lineLenght && this.counterIfWrappedSubstitute < this.counterIfWrapped) {
 			// there is a normal token to wrap, but the line would overflow anyway - better use substitute
@@ -225,16 +233,18 @@ public class CommentWrapExecutor extends TokenTraverser {
 		if (prefix.tokenType == TokenNameWHITESPACE) {
 			whitespace = new Token(prefix);
 			whitespace.breakBefore();
-			whitespace.setWrapPolicy(new WrapPolicy(0, commentIndex, false));
+			whitespace.setIndent(indent);
+			whitespace.setWrapPolicy(new WrapPolicy(WrapMode.WHERE_NECESSARY, commentIndex, 0));
 			prefix = structure.get(1);
+			assert prefix.tokenType == TokenNameCOMMENT_LINE;
 		}
 		int prefixEnd = commentToken.originalStart + 1;
-		if (prefix.tokenType == TokenNameCOMMENT_LINE)
-			prefixEnd = Math.max(prefixEnd, prefix.originalEnd);
+		if (!prefix.hasNLSTag())
+			prefixEnd = Math.max(prefixEnd, prefix.originalEnd); // comments can start with more than 2 slashes
 		prefix = new Token(commentToken.originalStart, prefixEnd, TokenNameCOMMENT_LINE);
 		if (whitespace == null) {
 			prefix.breakBefore();
-			prefix.setWrapPolicy(new WrapPolicy(0, commentIndex, false));
+			prefix.setWrapPolicy(new WrapPolicy(WrapMode.WHERE_NECESSARY, commentIndex, 0));
 		}
 
 		int lineStartIndex = whitespace == null ? 0 : 1;

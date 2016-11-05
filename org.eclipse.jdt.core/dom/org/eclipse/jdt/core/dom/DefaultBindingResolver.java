@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2015 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -533,7 +533,7 @@ class DefaultBindingResolver extends BindingResolver {
 		return null;
 	}
 
-	class AnnotationIdentityBinding {
+	static class AnnotationIdentityBinding {
 		org.eclipse.jdt.internal.compiler.lookup.AnnotationBinding internalInstance;
 		AnnotationIdentityBinding(org.eclipse.jdt.internal.compiler.lookup.AnnotationBinding internalInstance) {
 			this.internalInstance = internalInstance;
@@ -557,13 +557,9 @@ class DefaultBindingResolver extends BindingResolver {
 			}
 		}
 		Object key =  new AnnotationIdentityBinding(internalInstance);
-		IAnnotationBinding domInstance =
-			(IAnnotationBinding) this.bindingTables.compilerAnnotationBindingsToASTBindings.get(key);
-		if (domInstance != null)
-			return domInstance;
-		domInstance = new AnnotationBinding(internalInstance, this);
-		this.bindingTables.compilerAnnotationBindingsToASTBindings.put(key, domInstance);
-		return domInstance;
+		IAnnotationBinding newDomInstance = new AnnotationBinding(internalInstance, this);
+		IAnnotationBinding domInstance = (IAnnotationBinding) ((ConcurrentHashMap)this.bindingTables.compilerAnnotationBindingsToASTBindings).putIfAbsent(key, newDomInstance);
+		return domInstance != null ? domInstance : newDomInstance;
 	}
 
 	boolean isResolvedTypeInferredFromExpectedType(MethodInvocation methodInvocation) {
@@ -649,14 +645,14 @@ class DefaultBindingResolver extends BindingResolver {
 			Constant constant = compilerExpression.constant;
 			if (constant != null && constant != Constant.NotAConstant) {
 				switch (constant.typeID()) {
-					case TypeIds.T_int : return new Integer(constant.intValue());
-					case TypeIds.T_byte : return new Byte(constant.byteValue());
-					case TypeIds.T_short : return new Short(constant.shortValue());
-					case TypeIds.T_char : return new Character(constant.charValue());
+					case TypeIds.T_int : return Integer.valueOf(constant.intValue());
+					case TypeIds.T_byte : return Byte.valueOf(constant.byteValue());
+					case TypeIds.T_short : return Short.valueOf(constant.shortValue());
+					case TypeIds.T_char : return Character.valueOf(constant.charValue());
 					case TypeIds.T_float : return new Float(constant.floatValue());
 					case TypeIds.T_double : return new Double(constant.doubleValue());
 					case TypeIds.T_boolean : return constant.booleanValue() ? Boolean.TRUE : Boolean.FALSE;
-					case TypeIds.T_long : return new Long(constant.longValue());
+					case TypeIds.T_long : return Long.valueOf(constant.longValue());
 					case TypeIds.T_JavaLangString : return constant.stringValue();
 				}
 				return null;
