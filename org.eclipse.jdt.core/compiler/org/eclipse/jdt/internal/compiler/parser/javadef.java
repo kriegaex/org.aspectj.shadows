@@ -1,5 +1,0 @@
-interface javadef
-{
- open java
-};
-
