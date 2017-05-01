@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2012, 2016 IBM Corporation and others.
+ * Copyright (c) 2012, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -118,7 +118,6 @@ public class LambdaExpression extends FunctionalExpression implements IPolyExpre
 	private boolean assistNode = false;
 	private boolean hasIgnoredMandatoryErrors = false;
 	private ReferenceBinding classType;
-	public int ordinal;
 	private Set thrownExceptions;
 	public char[] text;  // source representation of the lambda.
 	private static final SyntheticArgumentBinding [] NO_SYNTHETIC_ARGUMENTS = new SyntheticArgumentBinding[0];
@@ -322,7 +321,7 @@ public class LambdaExpression extends FunctionalExpression implements IPolyExpre
 			else if (this.expectedType instanceof ReferenceBinding)
 				expectedSAMType = (ReferenceBinding) this.expectedType;
 			if (expectedSAMType != null)
-				groundType = findGroundTargetType(blockScope, expectedSAMType, argumentsTypeElided);
+				groundType = findGroundTargetType(blockScope, this.expectedType, expectedSAMType, argumentsTypeElided);
 			
 			if (groundType != null) {
 				this.descriptor = groundType.getSingleAbstractMethod(blockScope, true);
@@ -442,13 +441,13 @@ public class LambdaExpression extends FunctionalExpression implements IPolyExpre
 		return argumentsHaveErrors ? this.resolvedType = null : this.resolvedType;
 	}
 
-	private ReferenceBinding findGroundTargetType(BlockScope blockScope, TypeBinding targetType, boolean argumentTypesElided) {
+	private ReferenceBinding findGroundTargetType(BlockScope blockScope, TypeBinding targetType, TypeBinding expectedSAMType, boolean argumentTypesElided) {
 		
-		if (targetType instanceof IntersectionTypeBinding18)
-			targetType = ((IntersectionTypeBinding18) targetType).getSAMType(blockScope); 
+		if (expectedSAMType instanceof IntersectionTypeBinding18)
+			expectedSAMType = ((IntersectionTypeBinding18) expectedSAMType).getSAMType(blockScope); 
 		
-		if (targetType instanceof ReferenceBinding && targetType.isValidBinding()) {
-			ParameterizedTypeBinding withWildCards = InferenceContext18.parameterizedWithWildcard(targetType);
+		if (expectedSAMType instanceof ReferenceBinding && expectedSAMType.isValidBinding()) {
+			ParameterizedTypeBinding withWildCards = InferenceContext18.parameterizedWithWildcard(expectedSAMType);
 			if (withWildCards != null) {
 				if (!argumentTypesElided) {
 					InferenceContext18 freshInferenceContext = new InferenceContext18(blockScope);
@@ -461,7 +460,8 @@ public class LambdaExpression extends FunctionalExpression implements IPolyExpre
 					return findGroundTargetTypeForElidedLambda(blockScope, withWildCards);
 				}
 			}
-			return (ReferenceBinding) targetType;
+			if (targetType instanceof ReferenceBinding)
+				return (ReferenceBinding) targetType;
 		}
 		return null;
 	}
@@ -811,7 +811,7 @@ public class LambdaExpression extends FunctionalExpression implements IPolyExpre
 			return false;
 		
 		// copy here is potentially compatible with the target type and has its shape fully computed: i.e value/void compatibility is determined and result expressions have been gathered.
-		targetType = findGroundTargetType(this.enclosingScope, targetType, argumentsTypeElided());
+		targetType = findGroundTargetType(this.enclosingScope, targetType, targetType, argumentsTypeElided());
 		MethodBinding sam = targetType.getSingleAbstractMethod(this.enclosingScope, true);
 		if (sam == null || sam.problemId() == ProblemReasons.NoSuchSingleAbstractMethod) {
 			return false;
@@ -833,7 +833,8 @@ public class LambdaExpression extends FunctionalExpression implements IPolyExpre
 
 		Expression [] returnExpressions = copy.resultExpressions;
 		for (int i = 0, length = returnExpressions.length; i < length; i++) {
-			if (this.enclosingScope.parameterCompatibilityLevel(returnExpressions[i].resolvedType, sam.returnType) == Scope.NOT_COMPATIBLE) {
+			if (sam.returnType.isProperType(true) // inference variables can reach here during nested inference
+					&& this.enclosingScope.parameterCompatibilityLevel(returnExpressions[i].resolvedType, sam.returnType) == Scope.NOT_COMPATIBLE) {
 				if (!returnExpressions[i].isConstantValueOfTypeAssignableToType(returnExpressions[i].resolvedType, sam.returnType))
 					if (sam.returnType.id != TypeIds.T_void || this.body instanceof Block)
 						return false;
@@ -848,7 +849,7 @@ public class LambdaExpression extends FunctionalExpression implements IPolyExpre
 
 	private LambdaExpression cachedResolvedCopy(TypeBinding targetType, boolean anyTargetOk, boolean requireExceptionAnalysis, InferenceContext18 context) {
 
-		targetType = findGroundTargetType(this.enclosingScope, targetType, argumentsTypeElided());
+		targetType = findGroundTargetType(this.enclosingScope, targetType, targetType, argumentsTypeElided());
 		if (targetType == null)
 			return null;
 		

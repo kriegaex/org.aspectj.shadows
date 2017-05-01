@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -20,9 +20,14 @@
 package org.eclipse.jdt.internal.codeassist;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Stream;
 
+import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.jdt.core.CompletionContext;
@@ -31,8 +36,10 @@ import org.eclipse.jdt.core.CompletionProposal;
 import org.eclipse.jdt.core.CompletionRequestor;
 import org.eclipse.jdt.core.Flags;
 import org.eclipse.jdt.core.IAccessRule;
+import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.IMethod;
+import org.eclipse.jdt.core.IModuleDescription;
 import org.eclipse.jdt.core.IType;
 import org.eclipse.jdt.core.ITypeRoot;
 import org.eclipse.jdt.core.JavaCore;
@@ -43,41 +50,199 @@ import org.eclipse.jdt.core.compiler.CategorizedProblem;
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.core.search.IJavaSearchConstants;
-import org.eclipse.jdt.internal.codeassist.complete.*;
+import org.eclipse.jdt.core.search.IJavaSearchScope;
+import org.eclipse.jdt.core.search.SearchEngine;
+import org.eclipse.jdt.core.search.SearchMatch;
+import org.eclipse.jdt.core.search.SearchParticipant;
+import org.eclipse.jdt.core.search.SearchPattern;
+import org.eclipse.jdt.core.search.SearchRequestor;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionNodeDetector;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionNodeFound;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnAnnotationOfType;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnArgumentName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnBranchStatementLabel;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnClassLiteralAccess;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnExplicitConstructorCall;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnFieldName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnFieldType;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnImportReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadoc;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocAllocationExpression;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocFieldReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocMessageSend;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocParamNameReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocQualifiedTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocSingleTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocTag;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnJavadocTypeParamReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnKeyword;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnKeyword3;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnKeywordModuleDeclaration;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnKeywordModuleInfo;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnLocalName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMarkerAnnotationName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMemberAccess;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMemberValueName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMessageSend;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMessageSendName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMethodName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnMethodReturnType;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnModuleDeclaration;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnModuleReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnPackageReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnPackageVisibilityReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnParameterizedQualifiedTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnProvidesImplementationsQualifiedTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnProvidesImplementationsSingleTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnProvidesInterfacesQualifiedTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnProvidesInterfacesSingleTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnQualifiedAllocationExpression;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnQualifiedNameReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnQualifiedTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnReferenceExpressionName;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnSingleNameReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnSingleTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnStringLiteral;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnUsesQualifiedTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionOnUsesSingleTypeReference;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionParser;
+import org.eclipse.jdt.internal.codeassist.complete.CompletionScanner;
+import org.eclipse.jdt.internal.codeassist.complete.InvalidCursorLocation;
 import org.eclipse.jdt.internal.codeassist.impl.AssistParser;
 import org.eclipse.jdt.internal.codeassist.impl.Engine;
 import org.eclipse.jdt.internal.codeassist.impl.Keywords;
 import org.eclipse.jdt.internal.compiler.CompilationResult;
 import org.eclipse.jdt.internal.compiler.DefaultErrorHandlingPolicies;
 import org.eclipse.jdt.internal.compiler.ExtraFlags;
-import org.eclipse.jdt.internal.compiler.ast.*;
+import org.eclipse.jdt.internal.compiler.ast.ASTNode;
+import org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.AbstractVariableDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.AllocationExpression;
+import org.eclipse.jdt.internal.compiler.ast.Annotation;
+import org.eclipse.jdt.internal.compiler.ast.Argument;
+import org.eclipse.jdt.internal.compiler.ast.ArrayInitializer;
+import org.eclipse.jdt.internal.compiler.ast.ArrayReference;
+import org.eclipse.jdt.internal.compiler.ast.AssertStatement;
+import org.eclipse.jdt.internal.compiler.ast.Assignment;
+import org.eclipse.jdt.internal.compiler.ast.BinaryExpression;
+import org.eclipse.jdt.internal.compiler.ast.CaseStatement;
+import org.eclipse.jdt.internal.compiler.ast.CastExpression;
+import org.eclipse.jdt.internal.compiler.ast.CompilationUnitDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.ConditionalExpression;
+import org.eclipse.jdt.internal.compiler.ast.ConstructorDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.Expression;
+import org.eclipse.jdt.internal.compiler.ast.ExpressionContext;
+import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.FieldReference;
+import org.eclipse.jdt.internal.compiler.ast.ForStatement;
+import org.eclipse.jdt.internal.compiler.ast.IfStatement;
+import org.eclipse.jdt.internal.compiler.ast.ImportReference;
+import org.eclipse.jdt.internal.compiler.ast.Initializer;
+import org.eclipse.jdt.internal.compiler.ast.InstanceOfExpression;
+import org.eclipse.jdt.internal.compiler.ast.Javadoc;
+import org.eclipse.jdt.internal.compiler.ast.JavadocImplicitTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.JavadocQualifiedTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.JavadocSingleTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.LambdaExpression;
+import org.eclipse.jdt.internal.compiler.ast.LocalDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.MemberValuePair;
+import org.eclipse.jdt.internal.compiler.ast.MessageSend;
+import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.ModuleReference;
+import org.eclipse.jdt.internal.compiler.ast.NameReference;
+import org.eclipse.jdt.internal.compiler.ast.NormalAnnotation;
+import org.eclipse.jdt.internal.compiler.ast.OperatorExpression;
+import org.eclipse.jdt.internal.compiler.ast.OperatorIds;
+import org.eclipse.jdt.internal.compiler.ast.PackageVisibilityStatement;
+import org.eclipse.jdt.internal.compiler.ast.ParameterizedQualifiedTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.ParameterizedSingleTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.QualifiedNameReference;
+import org.eclipse.jdt.internal.compiler.ast.QualifiedTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.ReferenceExpression;
+import org.eclipse.jdt.internal.compiler.ast.RequiresStatement;
+import org.eclipse.jdt.internal.compiler.ast.ReturnStatement;
+import org.eclipse.jdt.internal.compiler.ast.ProvidesStatement;
+import org.eclipse.jdt.internal.compiler.ast.SingleNameReference;
+import org.eclipse.jdt.internal.compiler.ast.SingleTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.SuperReference;
+import org.eclipse.jdt.internal.compiler.ast.SwitchStatement;
+import org.eclipse.jdt.internal.compiler.ast.ThisReference;
+import org.eclipse.jdt.internal.compiler.ast.TryStatement;
+import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.TypeParameter;
+import org.eclipse.jdt.internal.compiler.ast.TypeReference;
+import org.eclipse.jdt.internal.compiler.ast.UnaryExpression;
+import org.eclipse.jdt.internal.compiler.ast.UnionTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.UsesStatement;
+import org.eclipse.jdt.internal.compiler.ast.WhileStatement;
+import org.eclipse.jdt.internal.compiler.ast.Wildcard;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
-import org.eclipse.jdt.internal.compiler.env.*;
+import org.eclipse.jdt.internal.compiler.env.AccessRestriction;
+import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
+import org.eclipse.jdt.internal.compiler.env.IModuleContext;
+import org.eclipse.jdt.internal.compiler.env.INameEnvironment;
+import org.eclipse.jdt.internal.compiler.env.ISourceType;
+import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
 import org.eclipse.jdt.internal.compiler.impl.ReferenceContext;
-import org.eclipse.jdt.internal.compiler.lookup.*;
+import org.eclipse.jdt.internal.compiler.lookup.ArrayBinding;
+import org.eclipse.jdt.internal.compiler.lookup.BaseTypeBinding;
+import org.eclipse.jdt.internal.compiler.lookup.Binding;
+import org.eclipse.jdt.internal.compiler.lookup.BlockScope;
+import org.eclipse.jdt.internal.compiler.lookup.ClassScope;
+import org.eclipse.jdt.internal.compiler.lookup.CompilationUnitScope;
+import org.eclipse.jdt.internal.compiler.lookup.ExtraCompilerModifiers;
+import org.eclipse.jdt.internal.compiler.lookup.FieldBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ImportBinding;
+import org.eclipse.jdt.internal.compiler.lookup.InferenceContext18;
+import org.eclipse.jdt.internal.compiler.lookup.InvocationSite;
+import org.eclipse.jdt.internal.compiler.lookup.LocalVariableBinding;
+import org.eclipse.jdt.internal.compiler.lookup.LookupEnvironment;
+import org.eclipse.jdt.internal.compiler.lookup.MethodBinding;
+import org.eclipse.jdt.internal.compiler.lookup.MethodScope;
+import org.eclipse.jdt.internal.compiler.lookup.PackageBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ParameterizedMethodBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ParameterizedTypeBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ProblemMethodBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ProblemReasons;
+import org.eclipse.jdt.internal.compiler.lookup.ProblemReferenceBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ReferenceBinding;
+import org.eclipse.jdt.internal.compiler.lookup.Scope;
+import org.eclipse.jdt.internal.compiler.lookup.SourceTypeBinding;
+import org.eclipse.jdt.internal.compiler.lookup.TagBits;
+import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
+import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
+import org.eclipse.jdt.internal.compiler.lookup.TypeIds;
+import org.eclipse.jdt.internal.compiler.lookup.TypeVariableBinding;
+import org.eclipse.jdt.internal.compiler.lookup.VariableBinding;
+import org.eclipse.jdt.internal.compiler.lookup.WildcardBinding;
+import org.eclipse.jdt.internal.compiler.parser.JavadocTagConstants;
 import org.eclipse.jdt.internal.compiler.parser.ScannerHelper;
 import org.eclipse.jdt.internal.compiler.parser.SourceTypeConverter;
-import org.eclipse.jdt.internal.compiler.parser.JavadocTagConstants;
 import org.eclipse.jdt.internal.compiler.parser.TerminalTokens;
 import org.eclipse.jdt.internal.compiler.problem.AbortCompilation;
 import org.eclipse.jdt.internal.compiler.problem.DefaultProblemFactory;
 import org.eclipse.jdt.internal.compiler.problem.ProblemReporter;
 import org.eclipse.jdt.internal.compiler.problem.ProblemSeverities;
-import org.eclipse.jdt.internal.compiler.util.SimpleSetOfCharArray;
-import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
 import org.eclipse.jdt.internal.compiler.util.HashtableOfObject;
 import org.eclipse.jdt.internal.compiler.util.ObjectVector;
+import org.eclipse.jdt.internal.compiler.util.SimpleSetOfCharArray;
+import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
 import org.eclipse.jdt.internal.core.BasicCompilationUnit;
+import org.eclipse.jdt.internal.core.BinaryTypeConverter;
 import org.eclipse.jdt.internal.core.INamingRequestor;
 import org.eclipse.jdt.internal.core.InternalNamingConventions;
+import org.eclipse.jdt.internal.core.JavaElementRequestor;
 import org.eclipse.jdt.internal.core.JavaModelManager;
+import org.eclipse.jdt.internal.core.JavaProject;
+import org.eclipse.jdt.internal.core.ModuleSourcePathManager;
 import org.eclipse.jdt.internal.core.SourceMethod;
 import org.eclipse.jdt.internal.core.SourceMethodElementInfo;
 import org.eclipse.jdt.internal.core.SourceType;
-import org.eclipse.jdt.internal.core.BinaryTypeConverter;
 import org.eclipse.jdt.internal.core.SearchableEnvironment;
 import org.eclipse.jdt.internal.core.SourceTypeElementInfo;
-import org.eclipse.jdt.internal.core.search.matching.JavaSearchNameEnvironment;
+import org.eclipse.jdt.internal.core.search.BasicSearchEngine;
+import org.eclipse.jdt.internal.core.search.matching.IndexBasedJavaSearchEnvironment;
 import org.eclipse.jdt.internal.core.util.Messages;
 import org.eclipse.jdt.internal.core.util.Util;
 
@@ -548,9 +713,14 @@ public final class CompletionEngine
 	CompletionRequestor requestor;
 	CompletionProblemFactory problemFactory;
 	ProblemReporter problemReporter;
-	private JavaSearchNameEnvironment noCacheNameEnvironment;
+	private INameEnvironment noCacheNameEnvironment;
 	char[] source;
+	ModuleDeclaration moduleDeclaration;
 	char[] completionToken;
+	IModuleContext moduleContext = () -> {
+		return Stream.of((JavaProject)this.javaProject);
+	};
+
 	char[] qualifiedCompletionToken;
 	boolean resolvingImports = false;
 	boolean resolvingStaticImports = false;
@@ -565,6 +735,7 @@ public final class CompletionEngine
 	String complianceLevel;
 	SimpleSetOfCharArray validPackageNames = new SimpleSetOfCharArray(10);
 	SimpleSetOfCharArray invalidPackageNames = new SimpleSetOfCharArray(1);
+	HashtableOfObject knownModules = new HashtableOfObject(10);
 	HashtableOfObject knownPkgs = new HashtableOfObject(10);
 	HashtableOfObject knownTypes = new HashtableOfObject(10);
 	
@@ -1116,6 +1287,42 @@ public final class CompletionEngine
 		} finally {
 			this.acceptedTypes = null; // reset
 		}
+	}
+	
+	/**
+	 * One result of the search consists of a new module.
+	 *
+	 * NOTE - All module names are presented in their readable form:
+	 *    Module names are in the form "a.b.c".
+	 *    The default module is represented by an empty array.
+	 */
+	public void acceptModule(char[] moduleName) {
+		if (this.knownModules.containsKey(moduleName)) return;
+		if (CharOperation.equals(moduleName, this.moduleDeclaration.moduleName)) return;
+		if (CharOperation.equals(moduleName, CharOperation.NO_CHAR)) return;
+		this.knownModules.put(moduleName, this);
+		char[] completion = moduleName;
+		int relevance = computeBaseRelevance();
+		relevance += computeRelevanceForResolution();
+		relevance += computeRelevanceForInterestingProposal();
+		relevance += computeRelevanceForCaseMatching(this.qualifiedCompletionToken == null ? this.completionToken : this.qualifiedCompletionToken, moduleName);
+		relevance += computeRelevanceForQualification(true);
+		relevance += computeRelevanceForRestrictions(IAccessRule.K_ACCESSIBLE);
+		this.noProposal = false;
+		if(!this.requestor.isIgnored(CompletionProposal.MODULE_REF)) {
+			InternalCompletionProposal proposal = createProposal(CompletionProposal.MODULE_REF, this.actualCompletionPosition);
+			proposal.setModuleName(moduleName);
+			proposal.setDeclarationSignature(moduleName);
+			proposal.setCompletion(completion);
+			proposal.setReplaceRange(this.startPosition - this.offset, this.endPosition - this.offset);
+			proposal.setTokenRange(this.tokenStart - this.offset, this.tokenEnd - this.offset);
+			proposal.setRelevance(relevance);
+			this.requestor.accept(proposal);
+			if(DEBUG) {
+				this.printDebug(proposal);
+			}
+		}
+		
 	}
 
 	/**
@@ -1720,14 +1927,6 @@ public final class CompletionEngine
 			completionOnMethodReturnType(astNode, scope);
 		} else if (astNode instanceof CompletionOnSingleNameReference) {
 			completionOnSingleNameReference(astNode, astNodeParent, scope, insideTypeAnnotation);
-		} else if (astNode instanceof CompletionOnSingleTypeReference) {
-			completionOnSingleTypeReference(astNode, astNodeParent, qualifiedBinding, scope);
-		} else if (astNode instanceof CompletionOnQualifiedNameReference) {
-			completionOnQualifiedNameReference(astNode, enclosingNode, qualifiedBinding, scope, insideTypeAnnotation);
-		} else if (astNode instanceof CompletionOnUsesQualifiedTypeReference) {
-			completionOnUsesQualifiedTypeReference(astNode, astNodeParent, qualifiedBinding, scope);
-		} else if (astNode instanceof CompletionOnUsesSingleTypeReference) {
-			completionOnUsesSingleTypeReference(astNode, astNodeParent, qualifiedBinding, scope);
 		} else if (astNode instanceof CompletionOnProvidesInterfacesQualifiedTypeReference) {
 			completionOnProvidesInterfacesQualifiedTypeReference(astNode, astNodeParent, qualifiedBinding, scope);
 		} else if (astNode instanceof CompletionOnProvidesInterfacesSingleTypeReference) {
@@ -1736,6 +1935,10 @@ public final class CompletionEngine
 			completionOnProvidesImplementationsQualifiedTypeReference(astNode, astNodeParent, qualifiedBinding, scope);
 		} else if (astNode instanceof CompletionOnProvidesImplementationsSingleTypeReference) {
 			completionOnProvidesImplementationsSingleTypeReference(astNode, astNodeParent, qualifiedBinding, scope);
+		} else if (astNode instanceof CompletionOnSingleTypeReference) {
+			completionOnSingleTypeReference(astNode, astNodeParent, qualifiedBinding, scope);
+		} else if (astNode instanceof CompletionOnQualifiedNameReference) {
+			completionOnQualifiedNameReference(astNode, enclosingNode, qualifiedBinding, scope, insideTypeAnnotation);
 		} else if (astNode instanceof CompletionOnQualifiedTypeReference) {
 			completionOnQualifiedTypeReference(astNode, astNodeParent, qualifiedBinding, scope);
 		} else if (astNode instanceof CompletionOnMemberAccess) {
@@ -1840,72 +2043,92 @@ public final class CompletionEngine
 				}
 
 				if (parsedUnit.isModuleInfo()) {
-					ModuleDeclaration moduleDeclaration = parsedUnit.moduleDeclaration;
-					if (moduleDeclaration == null) return;
-					if (moduleDeclaration instanceof CompletionOnModuleDeclaration) {
+					this.moduleDeclaration = parsedUnit.moduleDeclaration;
+					if (this.moduleDeclaration == null) return;
+					if (this.moduleDeclaration instanceof CompletionOnModuleDeclaration) {
 						contextAccepted = true;
 						buildContext(parsedUnit.moduleDeclaration, null, parsedUnit, null, null);
-						this.requestor.setIgnored(CompletionProposal.MODULE_DECLARATION, false); //TODO: Hack until ui fixes this issue.
+						//this.requestor.setIgnored(CompletionProposal.MODULE_DECLARATION, false); //TODO: Hack until ui fixes this issue.
 						if(!this.requestor.isIgnored(CompletionProposal.MODULE_DECLARATION)) {
 							findModuleName(parsedUnit);
 						}
 						debugPrintf(); 
 						return;
 					}
-					if (moduleDeclaration instanceof CompletionOnKeywordModuleDeclaration) {
+					if (this.moduleDeclaration instanceof CompletionOnKeywordModuleDeclaration) {
 						contextAccepted = true;
-						processModuleKeywordCompletion(parsedUnit, moduleDeclaration, (CompletionOnKeyword) moduleDeclaration);
-						return;								
+						processModuleKeywordCompletion(parsedUnit, this.moduleDeclaration, (CompletionOnKeyword) this.moduleDeclaration);
+						return;
 					}
-					ExportReference[] exports = moduleDeclaration.exports;
-					if (exports != null) {
-						for (int i = 0, l = exports.length; i < l; ++i) {
-							ExportReference exportReference = exports[i];
-							if (exportReference instanceof CompletionOnExportReference) {
-								contextAccepted = true;
-								buildContext(exportReference, null, parsedUnit, null, null);
-								if(!this.requestor.isIgnored(CompletionProposal.PACKAGE_REF)) {
-									findPackages((CompletionOnExportReference) exportReference);
-								}
-								debugPrintf();
-								return;
-							}
-							if (exportReference instanceof CompletionOnKeywordModuleInfo) {
-								contextAccepted = true;
-								processModuleKeywordCompletion(parsedUnit, exportReference, (CompletionOnKeyword) exportReference);
-								return;								
-							} 
-							ModuleReference[] targets = exportReference.targets;
-							if (targets == null) continue;
-							for (int j = 0, lj = targets.length; j < lj; j++) {
-								ModuleReference target = targets[j];
-								if (target == null) break;
-								if (target instanceof CompletionOnModuleReference) {
-									if(!this.requestor.isIgnored(CompletionProposal.MODULE_REF)) {
-										contextAccepted = true;
-										findModules((CompletionOnModuleReference) target);//TODO: find Modules
-									}
-									debugPrintf();
-									return;
-								} else if (target instanceof CompletionOnKeyword) {
-									contextAccepted = true;
-									//TODO
-								}
-							}
-						}
+					if (this.moduleDeclaration.exports != null) {
+						contextAccepted = completeOnPackageVisibilityStatements(contextAccepted, parsedUnit, this.moduleDeclaration.exports);
+						if (contextAccepted) return;
 					}
-					ModuleReference[] moduleRefs = moduleDeclaration.requires;
+					if (this.moduleDeclaration.opens != null) {
+						contextAccepted = completeOnPackageVisibilityStatements(contextAccepted, parsedUnit, this.moduleDeclaration.opens);
+						if (contextAccepted) return;
+					}
+					RequiresStatement[] moduleRefs = this.moduleDeclaration.requires;
 					if (moduleRefs != null) {
 						for (int i = 0, l = moduleRefs.length; i < l; ++i) {
-							ModuleReference reference = moduleRefs[i];
+							ModuleReference reference = moduleRefs[i].module;
 							if (reference instanceof CompletionOnModuleReference) {
 								contextAccepted = true;
 								buildContext(reference, null, parsedUnit, null, null);
 								if(!this.requestor.isIgnored(CompletionProposal.MODULE_REF)) {
-									findModules((CompletionOnModuleReference) reference);
+									findModules((CompletionOnModuleReference) reference, false /* targetted */);
 								}
 								debugPrintf();
 								return;
+							}
+						}
+					}
+					UsesStatement[] uses = this.moduleDeclaration.uses;
+					if (uses != null) {
+						for (int i = 0, l = uses.length; i < l; ++i) {
+							TypeReference usesReference = uses[i].serviceInterface;
+							if (usesReference instanceof CompletionOnUsesSingleTypeReference ||
+									usesReference instanceof CompletionOnUsesQualifiedTypeReference) {
+								this.lookupEnvironment.buildTypeBindings(parsedUnit, null);
+								if ((this.unitScope = parsedUnit.scope) != null) {
+									contextAccepted = true;
+									buildContext(usesReference, null, parsedUnit, null, null);
+									findTypeReferences(usesReference, true);
+									debugPrintf();
+									return;
+								}
+							}
+						}
+					}
+					ProvidesStatement[] providesStmts = this.moduleDeclaration.services;
+					for (int i = 0, l = providesStmts != null ? providesStmts.length : 0; i < l; ++i) {
+						ProvidesStatement providesStmt = providesStmts[i];
+						TypeReference pInterface = providesStmt.serviceInterface;
+						if (pInterface instanceof CompletionOnProvidesInterfacesSingleTypeReference ||
+								pInterface instanceof CompletionOnProvidesInterfacesQualifiedTypeReference) {
+							this.lookupEnvironment.buildTypeBindings(parsedUnit, null);
+							if ((this.unitScope = parsedUnit.scope) != null) {
+								contextAccepted = true;
+								buildContext(pInterface, null, parsedUnit, null, null);
+								findTypeReferences(pInterface, true);
+								debugPrintf();
+								return;
+							}
+						}
+						TypeReference[] implementations = providesStmt.implementations;
+						for (int j = 0, k = implementations.length; j < k; ++j) {
+							TypeReference implementation = implementations[i];
+							
+							if (implementation instanceof CompletionOnProvidesImplementationsSingleTypeReference ||
+									implementation instanceof CompletionOnProvidesImplementationsQualifiedTypeReference) {
+								this.lookupEnvironment.buildTypeBindings(parsedUnit, null);
+								if ((this.unitScope = parsedUnit.scope) != null) {
+									contextAccepted = true;
+									buildContext(implementation, null, parsedUnit, null, null);
+									findImplementations(providesStmt, i/* stmtIndex */, j/* implIndex */);
+									debugPrintf();
+									return;
+								}
 							}
 						}
 					}
@@ -2084,6 +2307,50 @@ public final class CompletionEngine
 			if (this.monitor != null) this.monitor.done();
 			reset();
 		}
+	}
+
+	private boolean completeOnPackageVisibilityStatements(boolean contextAccepted,
+			CompilationUnitDeclaration parsedUnit, PackageVisibilityStatement[] pvsStmts) {
+		for (int i = 0, l = pvsStmts.length; i < l; ++i) {
+			PackageVisibilityStatement pvs = pvsStmts[i];
+			if (pvs instanceof CompletionOnKeywordModuleInfo) { // dummy pvs statement
+				contextAccepted = true;
+				processModuleKeywordCompletion(parsedUnit, pvs, (CompletionOnKeyword) pvs);
+				return contextAccepted;
+			}
+			if (pvs.pkgRef instanceof CompletionOnPackageVisibilityReference) {
+				contextAccepted = true;
+				buildContext(pvs, null, parsedUnit, null, null);
+				if(!this.requestor.isIgnored(CompletionProposal.PACKAGE_REF)) {
+					findPackages((CompletionOnPackageVisibilityReference) pvs.pkgRef);
+				}
+				debugPrintf();
+				return contextAccepted;
+			}
+			ModuleReference[] targets = pvs.targets;
+			if (targets == null) continue;
+			HashSet<String> skipSet = new HashSet<>();
+			for (int j = 0, lj = targets.length; j < lj; j++) {
+				ModuleReference target = targets[j];
+				if (target == null) break;
+				if (target instanceof CompletionOnModuleReference) {
+					buildContext(target, null, parsedUnit, null, null);
+					contextAccepted = true;
+					if(!this.requestor.isIgnored(CompletionProposal.MODULE_REF)) {
+						findTargettedModules((CompletionOnModuleReference) target, skipSet);
+					}
+					debugPrintf();
+					return contextAccepted;
+				} else if (target instanceof CompletionOnKeyword) {
+					contextAccepted = true;
+					processModuleKeywordCompletion(parsedUnit, target, (CompletionOnKeyword) target);
+				} else {
+					if (target.moduleName != null || target.moduleName.equals(CharOperation.NO_CHAR))
+						skipSet.add(new String(target.moduleName));
+				}
+			}
+		}
+		return contextAccepted;
 	}
 
 	private void debugPrintf() {
@@ -3350,11 +3617,6 @@ public final class CompletionEngine
 		}
 	}
 	
-	private void completionOnUsesQualifiedTypeReference(ASTNode astNode, ASTNode astNodeParent, Binding qualifiedBinding, Scope scope) {
-		// TODO: Filter the results wrt accessibility and add relevance to the results.
-		completionOnQualifiedTypeReference(astNode, astNodeParent, qualifiedBinding, scope);
-	}
-
 	private void completionOnProvidesInterfacesQualifiedTypeReference(ASTNode astNode, ASTNode astNodeParent, Binding qualifiedBinding, Scope scope) {
 		// TODO: Filter the results wrt accessibility and add relevance to the results.
 		completionOnQualifiedTypeReference(astNode, astNodeParent, qualifiedBinding, scope);
@@ -3379,6 +3641,15 @@ public final class CompletionEngine
 			}
 		} else if (this.expectedTypesPtr > -1 && this.expectedTypes[0].isAnnotationType()) {
 			findTypesAndPackages(this.completionToken, scope, false, false, new ObjectVector());
+			if (scope instanceof BlockScope && !this.requestor.isIgnored(CompletionProposal.LOCAL_VARIABLE_REF)) {
+				findVariablesAndMethods(
+					this.completionToken,
+					scope,
+					singleNameReference,
+					scope,
+					insideTypeAnnotation,
+					singleNameReference.isInsideAnnotationAttribute);
+			}
 		} else {
 			if (this.expectedTypesPtr > -1) {
 				this.assistNodeIsEnum = true;
@@ -3487,10 +3758,6 @@ public final class CompletionEngine
 				null,
 				false);
 		}
-	}
-	private void completionOnUsesSingleTypeReference(ASTNode astNode, ASTNode astNodeParent, Binding qualifiedBinding, Scope scope) {
-		// TODO : filter the results.
-		completionOnSingleTypeReference(astNode, astNodeParent, qualifiedBinding, scope);
 	}
 
 	private void completionOnProvidesInterfacesSingleTypeReference(ASTNode astNode, ASTNode astNodeParent, Binding qualifiedBinding, Scope scope) {
@@ -10067,7 +10334,7 @@ public final class CompletionEngine
 					sourceType = (ISourceType) type;
 				}
 			} else {
-				NameEnvironmentAnswer answer = this.nameEnvironment.findType(bindingType.compoundName, (char[]) null);
+				NameEnvironmentAnswer answer = this.nameEnvironment.findType(bindingType.compoundName);
 				if(answer != null && answer.isSourceType()) {
 					sourceType = answer.getSourceTypes()[0];
 					this.typeCache.put(compoundName, sourceType);
@@ -10358,8 +10625,6 @@ public final class CompletionEngine
 	}
 
 	private void findModuleName(CompilationUnitDeclaration parsedUnit) {
-
-		CompletionOnModuleDeclaration moduleDeclaration = (CompletionOnModuleDeclaration) parsedUnit.moduleDeclaration;
 		char[] fileName1 = parsedUnit.getFileName();
 		if (fileName1 == null || !CharOperation.endsWith(fileName1, MODULE_INFO_FILE_NAME)) return;
 		int lastFileSeparatorIndex = fileName1.length - (MODULE_INFO_FILE_NAME.length + 1);
@@ -10368,7 +10633,7 @@ public final class CompletionEngine
 		prevFileSeparatorIndex = prevFileSeparatorIndex < 0 ? 0 : prevFileSeparatorIndex + 1;
 		char[] moduleName = CharOperation.subarray(fileName1, prevFileSeparatorIndex, lastFileSeparatorIndex);
 		if (moduleName == null || moduleName.length == 0) return;
-		this.completionToken = CharOperation.concatWith(moduleDeclaration.tokens, '.');
+		this.completionToken = CharOperation.concatWith(this.moduleDeclaration.tokens, '.');
 		if (this.completionToken.length > 0 && !CharOperation.prefixEquals(this.completionToken, moduleName)) return;
 
 		InternalCompletionProposal proposal =  createProposal(CompletionProposal.MODULE_DECLARATION, this.actualCompletionPosition);
@@ -10382,36 +10647,56 @@ public final class CompletionEngine
 			this.printDebug(proposal);
 		}
 	}
-	private void findModules(CompletionOnModuleReference moduleReference) {
 
-		//TODO: Waiting for findModules lookup implementation.
-		return;
-//		this.completionToken = CharOperation.concatWith(moduleReference.tokens, '.');
-//		if (this.completionToken.length == 0)
-//			return;
-//
-//		setSourceRange(moduleReference.sourceStart, moduleReference.sourceEnd);
-//		long completionPosition = moduleReference.sourcePositions[moduleReference.sourcePositions.length - 1];
-//		setTokenRange((int) (completionPosition >>> 32), (int) completionPosition);
-//		this.nameEnvironment.findModules(CharOperation.toLowerCase(this.completionToken), this);
+	private void findTargettedModules(char[] prefix, HashSet<String> skipSet) {
+		ModuleSourcePathManager mManager = JavaModelManager.getModulePathManager();
+		JavaElementRequestor javaElementRequestor = new JavaElementRequestor();
+		try {
+			mManager.seekModule(this.completionToken, true, javaElementRequestor);
+			IModuleDescription[] modules = javaElementRequestor.getModules();
+			for (IModuleDescription module : modules) {
+				String name = module.getElementName();
+				if (name == null || name.equals("") || skipSet.contains(name)) //$NON-NLS-1$
+					continue;
+				this.acceptModule(name.toCharArray());
+			}
+		} catch (JavaModelException e) {
+			// TODO ignore for now
+		}
 	}
-	private void findPackages(CompletionOnExportReference exportStatement) {
+	private void findTargettedModules(CompletionOnModuleReference moduleReference, HashSet<String> skipSet) {
+		setCompletionToken(moduleReference.tokens, moduleReference.sourceStart, moduleReference.sourceEnd, moduleReference.sourcePositions);
+		findTargettedModules(CharOperation.toLowerCase(this.completionToken), skipSet);
+	}
 
-		this.completionToken = CharOperation.concatWithAll(exportStatement.tokens, '.');
+	private void setCompletionToken(char[][] tokens, int sourceStart, int sourceEnd, long[] sourcePositions, boolean without) {
+		this.completionToken = without ? CharOperation.concatWith(tokens, '.') : CharOperation.concatWithAll(tokens, '.');
 		if (this.completionToken.length == 0)
-			return;
-
-		setSourceRange(exportStatement.sourceStart, exportStatement.sourceEnd);
-		long completionPosition = exportStatement.sourcePositions[exportStatement.sourcePositions.length - 1];
+			this.completionToken = CharOperation.ALL_PREFIX;
+		setSourceRange(sourceStart, sourceEnd);
+		long completionPosition = sourcePositions[sourcePositions.length - 1];
 		setTokenRange((int) (completionPosition >>> 32), (int) completionPosition);
-		this.nameEnvironment.findPackages(CharOperation.toLowerCase(this.completionToken), this);
+	}
+	private void setCompletionToken(char[][] tokens, int sourceStart, int sourceEnd, long[] sourcePositions) {
+		setCompletionToken(tokens, sourceStart, sourceEnd, sourcePositions, true);
+	}
+	private void findModules(CompletionOnModuleReference moduleReference, boolean targetted) {
+		setCompletionToken(moduleReference.tokens, moduleReference.sourceStart, moduleReference.sourceEnd, moduleReference.sourcePositions);
+		findTargettedModules(moduleReference, new HashSet<>()); // empty skipSet passed
+		this.nameEnvironment.findModules(CharOperation.toLowerCase(this.completionToken), this, targetted ? this.javaProject : null);
+	}
+	private void findPackages(CompletionOnPackageVisibilityReference reference) {
+		setCompletionToken(reference.tokens, reference.sourceStart, reference.sourceEnd, reference.sourcePositions, false);
+		findPackagesInCurrentModule();
+	}
+
+	private void findPackagesInCurrentModule() {
+		this.nameEnvironment.findPackages(CharOperation.toLowerCase(this.completionToken), this, this.moduleContext);
 	}
 	private void findPackages(CompletionOnPackageReference packageStatement) {
-
 		this.completionToken = CharOperation.concatWithAll(packageStatement.tokens, '.');
 		if (this.completionToken.length == 0)
 			return;
-
 		setSourceRange(packageStatement.sourceStart, packageStatement.sourceEnd);
 		long completionPosition = packageStatement.sourcePositions[packageStatement.sourcePositions.length - 1];
 		setTokenRange((int) (completionPosition >>> 32), (int) completionPosition);
@@ -10749,16 +11034,17 @@ public final class CompletionEngine
 								hasMemberTypesInEnclosingScope(sourceType, scope)) ||
 								hasArrayTypeAsExpectedSuperTypes()) {
 					char[] typeName = sourceType.sourceName();
-					createTypeProposal(
-							sourceType,
-							typeName,
-							IAccessRule.K_ACCESSIBLE,
-							typeName,
-							relevance,
-							null,
-							null,
-							null,
-							false);
+					if (!sourceType.isModule())
+						createTypeProposal(
+								sourceType,
+								typeName,
+								IAccessRule.K_ACCESSIBLE,
+								typeName,
+								relevance,
+								null,
+								null,
+								null,
+								false);
 				}
 				
 				if (proposeConstructor) {
@@ -11326,6 +11612,7 @@ public final class CompletionEngine
 	
 	private void findTypesFromStaticImports(char[] token, Scope scope, boolean proposeAllMemberTypes, ObjectVector typesFound) {
 		ImportBinding[] importBindings = scope.compilationUnitScope().imports;
+		if (importBindings == null) return;
 		for (int i = 0; i < importBindings.length; i++) {
 			ImportBinding importBinding = importBindings[i];
 			if(importBinding.isValidBinding() && importBinding.isStatic()) {
@@ -11563,6 +11850,138 @@ public final class CompletionEngine
 		}
 
 		return null;
+	}
+
+	private void findTypeReferences(TypeReference reference, boolean findMembers) {
+		char[][] tokens = reference.getTypeName();
+
+		char[] typeName = CharOperation.concatWithAll(tokens, '.');
+
+		if (typeName.length == 0) {
+			this.completionToken = new char[] {'*'};
+		} else if (reference instanceof CompletionOnUsesQualifiedTypeReference ||
+				reference instanceof CompletionOnProvidesInterfacesQualifiedTypeReference) {
+			CompletionOnQualifiedTypeReference qReference = (CompletionOnQualifiedTypeReference) reference;
+			if (qReference.completionIdentifier != null) {
+				this.completionToken = CharOperation.concatAll(typeName, qReference.completionIdentifier, '.');
+			}
+		} else {
+			 char[] lastToken = tokens[tokens.length - 1];
+			 this.completionToken = lastToken != null && lastToken.length == 0 ?
+					 CharOperation.concat(typeName, new char[]{'.'}) :lastToken;
+		}
+		setSourceRange(reference.sourceStart, reference.sourceEnd);
+		findTypesAndPackages(this.completionToken, this.unitScope, true, true, new ObjectVector());
+	}
+
+	private void findImplementations(ProvidesStatement providesStmt, int stmtIndex, int implIndex) {
+		TypeReference reference = providesStmt.implementations[implIndex];
+		char[][] tokens = reference.getTypeName();
+		char[] typeName = CharOperation.concatWithAll(tokens, '.');
+
+		if (typeName.length == 0) {
+			this.completionToken = CharOperation.ALL_PREFIX;
+		} else if (reference instanceof CompletionOnProvidesImplementationsQualifiedTypeReference) {
+			CompletionOnQualifiedTypeReference qReference = (CompletionOnQualifiedTypeReference) reference;
+			if (qReference.completionIdentifier != null) {
+				this.completionToken = CharOperation.concatAll(typeName, qReference.completionIdentifier, '.');
+			}
+		} else {
+			 char[] lastToken = tokens[tokens.length - 1];
+			 this.completionToken = lastToken != null && lastToken.length == 0 ?
+					 CharOperation.concat(typeName, new char[]{'.'}) :lastToken;
+		}
+		setSourceRange(reference.sourceStart, reference.sourceEnd);
+		findImplementations(this.completionToken, this.unitScope, providesStmt, stmtIndex);
+	}
+
+	private void findImplementations(char[] token, Scope scope, ProvidesStatement providesStmt, int stmtIndex) {
+
+		TypeReference theInterface = providesStmt.serviceInterface;
+
+		if (token == null) return;
+		char[][] theInterfaceType = theInterface.getTypeName();
+		if (theInterfaceType == null) return;
+		SearchPattern pattern  = null;
+		NameEnvironmentAnswer answer =  this.nameEnvironment.findType(theInterfaceType);
+		if (answer != null ) {
+			if (answer.isSourceType()) {
+				IType typeHandle = ((SourceTypeElementInfo) answer.getSourceTypes()[0]).getHandle();
+				pattern = SearchPattern.createPattern(typeHandle, IJavaSearchConstants.IMPLEMENTORS, SearchPattern.R_EXACT_MATCH | SearchPattern.R_CASE_SENSITIVE);
+			} else if (answer.isBinaryType()) {
+				String typeName = new String(CharOperation.replaceOnCopy(answer.getBinaryType().getName(), '/', '.'));
+				pattern = SearchPattern.createPattern(typeName,
+						IJavaSearchConstants.CLASS_AND_INTERFACE,
+						IJavaSearchConstants.IMPLEMENTORS, SearchPattern.R_EXACT_MATCH | SearchPattern.R_CASE_SENSITIVE);
+			}
+		}
+		if (pattern == null) return;
+		IJavaSearchScope searchScope = BasicSearchEngine.createJavaSearchScope(new IJavaElement[] {this.javaProject});
+		class ImplSearchRequestor extends SearchRequestor {
+			String prefix;
+			List<String> filter;
+			public List<IType> types = new ArrayList<>();
+			public ImplSearchRequestor(char[] prefixToken, List<String> filter) {
+				this.prefix = (prefixToken == CharOperation.ALL_PREFIX) ? null : new String(prefixToken);
+				this.filter = filter;
+			}
+			@Override
+			public void acceptSearchMatch(SearchMatch match) throws CoreException {
+				checkCancel();
+				IJavaElement element = ((IJavaElement) match.getElement());
+				if (element.getElementType() == IJavaElement.TYPE) {
+					IType type = (IType) element;
+					if (this.prefix != null) {
+						String fullTypeName = type.getPackageFragment().getElementName();
+						if (fullTypeName != null) {
+							fullTypeName = fullTypeName.concat(".").concat(type.getElementName()); //$NON-NLS-1$
+						} else {
+							fullTypeName = type.getElementName();
+						}
+						if (!fullTypeName.startsWith(this.prefix) || this.filter.contains(fullTypeName)) return;
+					}
+					this.types.add(type);
+				}
+			}
+		}
+		try {
+			List<String> existingImpl = new ArrayList<>();
+			char[][] theInterfaceName = theInterface.getTypeName();
+			// filter out existing implementations of the same interfaces
+			for (int i = 0, l = this.moduleDeclaration.servicesCount; i < l; ++i) {
+				if (i == stmtIndex) continue;
+				ProvidesStatement prevProvides = this.moduleDeclaration.services[i];
+				if (!CharOperation.equals(theInterfaceName, prevProvides.serviceInterface.getTypeName())) continue;
+				TypeReference[] prevImpls = prevProvides.implementations;
+				for (TypeReference prevImpl : prevImpls) {
+					char[][] typeName = prevImpl.getTypeName();
+					if (typeName.equals(CharOperation.NO_CHAR_CHAR)) continue;
+					existingImpl.add(CharOperation.toString(typeName));
+				}
+			}
+			// use search infrastructure - faster than using model
+			ImplSearchRequestor searchRequestor = new ImplSearchRequestor(this.completionToken, existingImpl);
+			new SearchEngine(this.owner == null ? null : JavaModelManager.getJavaModelManager().getWorkingCopies(this.owner, true/*add primary WCs*/)).search(
+					pattern,
+					new SearchParticipant[] {SearchEngine.getDefaultSearchParticipant()},
+					searchScope,
+					searchRequestor,
+					null
+					);
+			for (IType type : searchRequestor.types) {
+				String pkg = type.getPackageFragment().getElementName();
+				String name = type.getElementName();
+				this.acceptType(pkg.toCharArray(), name.toCharArray(), CharOperation.NO_CHAR_CHAR, type.getFlags(), null);
+				acceptTypes(scope);
+			}
+		} catch (CoreException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		if(!this.requestor.isIgnored(CompletionProposal.PACKAGE_REF)) {
+			checkCancel();
+			findPackagesInCurrentModule();
+		}
 	}
 
 	private char[][] findVariableFromUnresolvedReference(LocalDeclaration variable, BlockScope scope, final char[][] discouragedNames) {
@@ -12223,7 +12642,7 @@ public final class CompletionEngine
 	private INameEnvironment getNoCacheNameEnvironment() {
 		if (this.noCacheNameEnvironment == null) {
 			JavaModelManager.getJavaModelManager().cacheZipFiles(this);
-			this.noCacheNameEnvironment = new JavaSearchNameEnvironment(this.javaProject, this.owner == null ? null : JavaModelManager.getJavaModelManager().getWorkingCopies(this.owner, true/*add primary WCs*/));
+			this.noCacheNameEnvironment = IndexBasedJavaSearchEnvironment.create(Collections.singletonList(this.javaProject), this.owner == null ? null : JavaModelManager.getJavaModelManager().getWorkingCopies(this.owner, true/*add primary WCs*/));
 		}
 		return this.noCacheNameEnvironment;
 	}
@@ -13059,6 +13478,7 @@ public final class CompletionEngine
 		super.reset(false);
 		this.validPackageNames = new SimpleSetOfCharArray(10);
 		this.invalidPackageNames = new SimpleSetOfCharArray(1);
+		this.knownModules = new HashtableOfObject(10);
 		this.knownPkgs = new HashtableOfObject(10);
 		this.knownTypes = new HashtableOfObject(10);
 		if (this.noCacheNameEnvironment != null) {

@@ -19,12 +19,18 @@ import java.nio.file.FileVisitResult;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
-
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IStatus;
+import org.eclipse.jdt.core.IClasspathEntry;
+import org.eclipse.jdt.core.IModuleDescription;
 import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jdt.core.compiler.CharOperation;
+import org.eclipse.jdt.internal.compiler.env.IModule;
+import org.eclipse.jdt.internal.compiler.env.IModuleEnvironment;
+import org.eclipse.jdt.internal.compiler.env.IModulePathEntry;
+import org.eclipse.jdt.internal.compiler.env.IPackageLookup;
+import org.eclipse.jdt.internal.compiler.env.ITypeLookup;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.util.JRTUtil;
 import org.eclipse.jdt.internal.core.util.HashtableOfArrayToObject;
@@ -36,7 +42,7 @@ import org.eclipse.jdt.internal.core.util.Util;
  * @see org.eclipse.jdt.core.IPackageFragmentRoot
  * @see org.eclipse.jdt.internal.core.JarPackageFragmentRootInfo
  */
-public class JrtPackageFragmentRoot extends JarPackageFragmentRoot {
+public class JrtPackageFragmentRoot extends JarPackageFragmentRoot implements IModulePathEntry, IModuleEnvironment {
 
 	String moduleName;
 	
@@ -87,6 +93,18 @@ public class JrtPackageFragmentRoot extends JarPackageFragmentRoot {
 		((JarPackageFragmentRootInfo) info).rawPackageInfo = rawPackageInfo;
 		return true;
 	}
+	SourceMapper createSourceMapper(IPath sourcePath, IPath rootPath) throws JavaModelException {
+		IClasspathEntry entry = ((JavaProject) getParent()).getClasspathEntryFor(getPath());
+		String encoding = (entry== null) ? null : ((ClasspathEntry) entry).getSourceAttachmentEncoding();
+		IModule mod = getModule();
+		String modName = mod == null ? null : new String(mod.name());
+		SourceMapper mapper = new SourceMapper(
+			sourcePath,
+			rootPath == null ? modName : rootPath.toOSString(),
+			getJavaProject().getOptions(true),// cannot use workspace options if external jar is 1.5 jar and workspace options are 1.4 options
+			encoding);
+		return mapper;
+	}
 	public boolean equals(Object o) {
 		if (this == o)
 			return true;
@@ -99,10 +117,6 @@ public class JrtPackageFragmentRoot extends JarPackageFragmentRoot {
 	}
 	public String getElementName() {
 		return this.moduleName;
-	}
-	@Override
-	public boolean isModule() {
-		return true;
 	}
 	public PackageFragment getPackageFragment(String[] pkgName) {
 		// NOTE: Do we need a different kind of package fragment?
@@ -118,4 +132,42 @@ public class JrtPackageFragmentRoot extends JarPackageFragmentRoot {
 			buffer.append(" (not open)"); //$NON-NLS-1$
 		}
 	}
+
+	@Override
+	public IModuleEnvironment getLookupEnvironment() {
+		// 
+		return this;
+	}
+
+	@Override
+	public IModuleEnvironment getLookupEnvironmentFor(IModule module) {
+		// 
+		return getModule() == module ? this : null;
+	}
+
+	@Override
+	public ITypeLookup typeLookup() {
+		// No direct way to lookup, use the java model APIs instead
+		return ITypeLookup.Dummy;
+	}
+
+	@Override
+	public IPackageLookup packageLookup() {
+		// No direct way to lookup, use the java model APIs instead
+		return IPackageLookup.Dummy;
+	}
+
+	@Override
+	public IModule getModule() {
+		IModuleDescription desc = getModuleDescription();
+		if (desc != null) {
+			try {
+				return (ModuleDescriptionInfo)((JavaElement) desc).getElementInfo();
+			} catch (JavaModelException e) {
+				e.printStackTrace();
+			}
+		}
+		return null;
+	}
+
 }

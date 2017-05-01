@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2006, 2011 BEA Systems, Inc.
+ * Copyright (c) 2006, 2015 BEA Systems, Inc.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -90,7 +90,7 @@ public class BatchProcessingEnvImpl extends BaseProcessingEnvImpl {
 			_fileManager = manager;
 		}
 		_processorOptions = Collections.unmodifiableMap(parseProcessorOptions(commandLineArguments));
-		_filer = new AjBatchFilerImpl(_dispatchManager, this);
+		_filer = new BatchFilerImpl(_dispatchManager, this);
 		_messager = new BatchMessagerImpl(this, _compilerOwner);
 	}
 

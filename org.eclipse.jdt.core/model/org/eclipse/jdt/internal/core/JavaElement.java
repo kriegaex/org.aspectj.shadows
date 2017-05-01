@@ -96,6 +96,7 @@ public abstract class JavaElement extends PlatformObject implements IJavaElement
 	public static final char JEM_LAMBDA_EXPRESSION = ')';
 	public static final char JEM_LAMBDA_METHOD = '&';
 	public static final char JEM_STRING = '"';
+	public static final char JEM_MODULE = '`';
 	
 	/**
 	 * Before ')', '&' and '"' became the newest additions as delimiters, the former two
@@ -120,6 +121,7 @@ public abstract class JavaElement extends PlatformObject implements IJavaElement
 	 */
 	protected JavaElement parent;
 
+	protected static final String[] NO_STRINGS = new String[0];
 	protected static final JavaElement[] NO_ELEMENTS = new JavaElement[0];
 	protected static final Object NO_INFO = new Object();
 	

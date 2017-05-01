@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -48,101 +48,7 @@ import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.core.compiler.InvalidInputException;
 import org.eclipse.jdt.internal.compiler.ASTVisitor;
 import org.eclipse.jdt.internal.compiler.CompilationResult;
-import org.eclipse.jdt.internal.compiler.ast.AND_AND_Expression;
-import org.eclipse.jdt.internal.compiler.ast.ASTNode;
-import org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.AbstractVariableDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.AllocationExpression;
-import org.eclipse.jdt.internal.compiler.ast.Annotation;
-import org.eclipse.jdt.internal.compiler.ast.AnnotationMethodDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.Argument;
-import org.eclipse.jdt.internal.compiler.ast.ArrayAllocationExpression;
-import org.eclipse.jdt.internal.compiler.ast.ArrayInitializer;
-import org.eclipse.jdt.internal.compiler.ast.ArrayQualifiedTypeReference;
-import org.eclipse.jdt.internal.compiler.ast.ArrayReference;
-import org.eclipse.jdt.internal.compiler.ast.ArrayTypeReference;
-import org.eclipse.jdt.internal.compiler.ast.AssertStatement;
-import org.eclipse.jdt.internal.compiler.ast.Assignment;
-import org.eclipse.jdt.internal.compiler.ast.BinaryExpression;
-import org.eclipse.jdt.internal.compiler.ast.Block;
-import org.eclipse.jdt.internal.compiler.ast.BreakStatement;
-import org.eclipse.jdt.internal.compiler.ast.CaseStatement;
-import org.eclipse.jdt.internal.compiler.ast.CastExpression;
-import org.eclipse.jdt.internal.compiler.ast.CharLiteral;
-import org.eclipse.jdt.internal.compiler.ast.ClassLiteralAccess;
-import org.eclipse.jdt.internal.compiler.ast.CombinedBinaryExpression;
-import org.eclipse.jdt.internal.compiler.ast.CompilationUnitDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.CompoundAssignment;
-import org.eclipse.jdt.internal.compiler.ast.ConditionalExpression;
-import org.eclipse.jdt.internal.compiler.ast.ConstructorDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.ContinueStatement;
-import org.eclipse.jdt.internal.compiler.ast.DoStatement;
-import org.eclipse.jdt.internal.compiler.ast.DoubleLiteral;
-import org.eclipse.jdt.internal.compiler.ast.EmptyStatement;
-import org.eclipse.jdt.internal.compiler.ast.EqualExpression;
-import org.eclipse.jdt.internal.compiler.ast.ExplicitConstructorCall;
-import org.eclipse.jdt.internal.compiler.ast.ExportReference;
-import org.eclipse.jdt.internal.compiler.ast.Expression;
-import org.eclipse.jdt.internal.compiler.ast.FalseLiteral;
-import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.FieldReference;
-import org.eclipse.jdt.internal.compiler.ast.FloatLiteral;
-import org.eclipse.jdt.internal.compiler.ast.ForStatement;
-import org.eclipse.jdt.internal.compiler.ast.ForeachStatement;
-import org.eclipse.jdt.internal.compiler.ast.IfStatement;
-import org.eclipse.jdt.internal.compiler.ast.ImportReference;
-import org.eclipse.jdt.internal.compiler.ast.Initializer;
-import org.eclipse.jdt.internal.compiler.ast.InstanceOfExpression;
-import org.eclipse.jdt.internal.compiler.ast.IntLiteral;
-import org.eclipse.jdt.internal.compiler.ast.IntersectionCastTypeReference;
-import org.eclipse.jdt.internal.compiler.ast.Javadoc;
-import org.eclipse.jdt.internal.compiler.ast.LabeledStatement;
-import org.eclipse.jdt.internal.compiler.ast.LambdaExpression;
-import org.eclipse.jdt.internal.compiler.ast.LocalDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.LongLiteral;
-import org.eclipse.jdt.internal.compiler.ast.MarkerAnnotation;
-import org.eclipse.jdt.internal.compiler.ast.MemberValuePair;
-import org.eclipse.jdt.internal.compiler.ast.MessageSend;
-import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.ModuleReference;
-import org.eclipse.jdt.internal.compiler.ast.NameReference;
-import org.eclipse.jdt.internal.compiler.ast.NormalAnnotation;
-import org.eclipse.jdt.internal.compiler.ast.NullLiteral;
-import org.eclipse.jdt.internal.compiler.ast.OR_OR_Expression;
-import org.eclipse.jdt.internal.compiler.ast.OperatorIds;
-import org.eclipse.jdt.internal.compiler.ast.ParameterizedQualifiedTypeReference;
-import org.eclipse.jdt.internal.compiler.ast.ParameterizedSingleTypeReference;
-import org.eclipse.jdt.internal.compiler.ast.PostfixExpression;
-import org.eclipse.jdt.internal.compiler.ast.PrefixExpression;
-import org.eclipse.jdt.internal.compiler.ast.QualifiedAllocationExpression;
-import org.eclipse.jdt.internal.compiler.ast.QualifiedNameReference;
-import org.eclipse.jdt.internal.compiler.ast.QualifiedSuperReference;
-import org.eclipse.jdt.internal.compiler.ast.QualifiedThisReference;
-import org.eclipse.jdt.internal.compiler.ast.QualifiedTypeReference;
-import org.eclipse.jdt.internal.compiler.ast.Receiver;
-import org.eclipse.jdt.internal.compiler.ast.Reference;
-import org.eclipse.jdt.internal.compiler.ast.ReferenceExpression;
-import org.eclipse.jdt.internal.compiler.ast.ReturnStatement;
-import org.eclipse.jdt.internal.compiler.ast.SingleMemberAnnotation;
-import org.eclipse.jdt.internal.compiler.ast.SingleNameReference;
-import org.eclipse.jdt.internal.compiler.ast.SingleTypeReference;
-import org.eclipse.jdt.internal.compiler.ast.Statement;
-import org.eclipse.jdt.internal.compiler.ast.StringLiteral;
-import org.eclipse.jdt.internal.compiler.ast.SuperReference;
-import org.eclipse.jdt.internal.compiler.ast.SwitchStatement;
-import org.eclipse.jdt.internal.compiler.ast.SynchronizedStatement;
-import org.eclipse.jdt.internal.compiler.ast.ThisReference;
-import org.eclipse.jdt.internal.compiler.ast.ThrowStatement;
-import org.eclipse.jdt.internal.compiler.ast.TrueLiteral;
-import org.eclipse.jdt.internal.compiler.ast.TryStatement;
-import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.TypeParameter;
-import org.eclipse.jdt.internal.compiler.ast.TypeReference;
-import org.eclipse.jdt.internal.compiler.ast.UnaryExpression;
-import org.eclipse.jdt.internal.compiler.ast.UnionTypeReference;
-import org.eclipse.jdt.internal.compiler.ast.WhileStatement;
-import org.eclipse.jdt.internal.compiler.ast.Wildcard;
+import org.eclipse.jdt.internal.compiler.ast.*;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
 import org.eclipse.jdt.internal.compiler.codegen.ConstantPool;
 import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
@@ -1045,6 +951,7 @@ public org.eclipse.jdt.internal.compiler.ReadManager readManager;
 protected int valueLambdaNestDepth = -1;
 protected /*private*/ int stateStackLengthStack[] = new int[0]; // AspectJ Extension: made protected
 protected boolean parsingJava8Plus;
+protected boolean parsingJava9Plus;
 protected int unstackedAct = ERROR_ACTION;
 private boolean haltOnSyntaxError = false;
 private boolean tolerateDefaultClassMethods = false;
@@ -1062,6 +969,7 @@ public TheOriginalJDTParserClass(ProblemReporter problemReporter, boolean optimi
 	this.optimizeStringLiterals = optimizeStringLiterals;
 	initializeScanner();
 	this.parsingJava8Plus = this.options.sourceLevel >= ClassFileConstants.JDK1_8;
+	this.parsingJava9Plus = this.options.sourceLevel >= ClassFileConstants.JDK9;
 	this.astLengthStack = new int[50];
 	this.expressionLengthStack = new int[30];
 	this.typeAnnotationLengthStack = new int[30];
@@ -4818,7 +4726,8 @@ protected void consumeInterfaceMethodDeclaration(boolean hasSemicolonBody) {
 	
 	boolean isDefault = (md.modifiers & ExtraCompilerModifiers.AccDefaultMethod) != 0;
 	boolean isStatic = (md.modifiers & ClassFileConstants.AccStatic) != 0;
-	boolean bodyAllowed = isDefault || isStatic;
+	boolean isPrivate = (md.modifiers & ClassFileConstants.AccPrivate) != 0;
+	boolean bodyAllowed = (this.parsingJava9Plus && isPrivate) || isDefault || isStatic;
 	if (this.parsingJava8Plus) {
 		if (bodyAllowed && hasSemicolonBody) {
 			md.modifiers |= ExtraCompilerModifiers.AccSemicolonBody; // avoid complaints regarding undocumented empty body
@@ -5658,185 +5567,179 @@ protected void consumeInternalCompilationUnitWithModuleDeclaration() {
 	this.astLengthStack[this.astLengthPtr--] = 0;
 }
 protected void consumeRequiresStatement() {
-	ModuleReference impt = (ModuleReference) this.astStack[this.astPtr--];
-	ModuleDeclaration module = (ModuleDeclaration)this.astStack[this.astPtr];
-	// flush annotations defined prior to import statements
-	impt.declarationEnd = this.endStatementPosition;
-	impt.declarationSourceEnd =
-		flushCommentsDefinedPriorTo(impt.declarationSourceEnd);
-	if (module.requires == null) {
-		module.requires = new ModuleReference[1];
+	RequiresStatement req = (RequiresStatement) this.astStack[this.astPtr];
+	req.declarationEnd = req.declarationSourceEnd = this.endStatementPosition;
+	// recovery
+	if (this.currentElement instanceof RecoveredModule) {
+		this.lastCheckPoint = req.declarationSourceEnd + 1;
+		this.currentElement = this.currentElement.add(req, 0);
+		this.lastIgnoredToken = -1;
+		this.restartRecovery = true; // used to avoid branching back into the regular automaton
 	}
-	if (module.requiresCount + 1 > module.requires.length) {
-		System.arraycopy(module.requires, 0, module.requires = new ModuleReference[module.requiresCount + 1], 0, module.requiresCount);
-	}
-	module.requires[module.requiresCount++] = impt;
-	this.astLengthStack[this.astLengthPtr--] = 0;
-	
-	// recovery TBD
-//	if (this.currentElement != null) {
-//		this.lastCheckPoint = impt.declarationSourceEnd + 1;
-//		this.currentElement = this.currentElement.add(impt, 0);
-//		this.lastIgnoredToken = -1;
-//		this.restartRecovery = true;
-//		// used to avoid branching back into the regular automaton
-//	}
 }
 protected void consumeSingleRequiresModuleName() {
 	ModuleReference impt;
 	int length;
-	//consumeNonTypeUseName();
 	char[][] tokens = new char[length = this.identifierLengthStack[this.identifierLengthPtr--]][];
 	this.identifierPtr -= length;
 	long[] positions = new long[length];
 	System.arraycopy(this.identifierStack, this.identifierPtr + 1, tokens, 0, length);
 	System.arraycopy(this.identifierPositionStack, this.identifierPtr + 1, positions, 0, length);
-	pushOnAstStack(impt = new ModuleReference(tokens, positions));
-
+	RequiresStatement req = new RequiresStatement(impt = new ModuleReference(tokens, positions));
 	if (this.currentToken == TokenNameSEMICOLON){
-		impt.declarationSourceEnd = this.scanner.currentPosition - 1;
+		req.declarationSourceEnd = impt.sourceEnd + 1;
 	} else {
-		impt.declarationSourceEnd = impt.sourceEnd;
+		req.declarationSourceEnd = impt.sourceEnd;
 	}
-	impt.declarationEnd = impt.declarationSourceEnd;
-	//this.endPosition is just before the ;
-	impt.modifiersSourceStart = this.intStack[this.intPtr--];
-	impt.modifiers = this.intStack[this.intPtr--];
-	impt.declarationSourceStart = impt.sourceStart;
-//	if (impt.modifiersSourceStart >= 0) {
-//		impt.declarationSourceStart = impt.modifiersSourceStart;
-//	}
-	// recovery TBD
-//	if (this.currentElement != null){
-//		this.lastCheckPoint = impt.declarationSourceEnd+1;
-//		this.currentElement = this.currentElement.add(impt, 0);
-//		this.lastIgnoredToken = -1;
-//		this.restartRecovery = true; // used to avoid branching back into the regular automaton
-//	}
+	req.declarationEnd = req.declarationSourceEnd;
+	req.modifiersSourceStart = this.intStack[this.intPtr--];
+	req.modifiers |= this.intStack[this.intPtr--];
+	req.sourceStart = req.declarationSourceStart = this.intStack[this.intPtr--];
+	req.sourceEnd = impt.sourceEnd;
+	pushOnAstStack(req);
+	// recovery
+	if (this.currentElement instanceof RecoveredModule){
+		this.lastCheckPoint = req.declarationSourceEnd;
+	}
 }
 protected void consumeExportsStatement() {
-	ExportReference expt = (ExportReference) this.astStack[this.astPtr--];
-	ModuleDeclaration module = (ModuleDeclaration)this.astStack[this.astPtr];
-	// flush annotations defined prior to import statements
-	expt.declarationEnd = this.endStatementPosition;
-	expt.declarationSourceEnd =
-		flushCommentsDefinedPriorTo(expt.declarationSourceEnd);
-	if (module.exports == null)
-		module.exports = new ExportReference[1];
-	if (module.exportsCount + 1 > module.exports.length) {
-		System.arraycopy(module.exports, 0, module.exports = new ExportReference[module.exportsCount + 1], 0, module.exportsCount);
+	ExportsStatement expt = (ExportsStatement) this.astStack[this.astPtr];
+	expt.declarationSourceEnd = this.endStatementPosition;
+	expt.declarationEnd = expt.declarationSourceEnd;
+	// recovery
+	if (this.currentElement instanceof RecoveredPackageVisibilityStatement) {
+		this.lastCheckPoint = expt.declarationSourceEnd + 1;
+		this.currentElement = this.currentElement.parent;
+		this.lastIgnoredToken = -1;
+		this.restartRecovery = true;
+		// used to avoid branching back into the regular automaton
 	}
-	module.exports[module.exportsCount++] = expt;
-	this.astLengthStack[this.astLengthPtr--] = 0;
-	
-	// recovery TBD
-//	if (this.currentElement != null) {
-//		this.lastCheckPoint = impt.declarationSourceEnd + 1;
-//		this.currentElement = this.currentElement.add(expt, 0);
-//		this.lastIgnoredToken = -1;
-//		this.restartRecovery = true;
-//		// used to avoid branching back into the regular automaton
-//	}
 }
-protected void consumeSingleExportsTargetName() {
-	ModuleReference impt;
-	int length;
-	char[][] tokens = new char[length = this.identifierLengthStack[this.identifierLengthPtr--]][];
-	this.identifierPtr -= length;
-	long[] positions = new long[length];
-	System.arraycopy(this.identifierStack, this.identifierPtr + 1, tokens, 0, length);
-	System.arraycopy(this.identifierPositionStack, this.identifierPtr + 1, positions, 0, length);
-	pushOnAstStack(impt = new ModuleReference(tokens, positions));
-
-//	if (this.currentToken == TokenNameSEMICOLON){
-//		impt.declarationSourceEnd = this.scanner.currentPosition - 1;
-//	} else {
-		impt.declarationSourceEnd = impt.sourceEnd;
-//	}
-	impt.declarationEnd = impt.declarationSourceEnd;
-//	//this.endPosition is just before the ;
-//	impt.declarationSourceStart = this.intStack[this.intPtr--];
-}
-protected void consumeExportTarget() {
-	int length = this.astLengthStack[this.astLengthPtr--];
-	// target modues of this exports statement
-	this.astPtr -= length;
-	// There is an exports statement at the top of the stack
-	ExportReference expt = (ExportReference) this.astStack[this.astPtr];
-	System.arraycopy(
-		this.astStack,
-		this.astPtr + 1,
-		expt.targets = new ModuleReference[length],
-		0,
-		length);
-
-	this.listLength = 0; // reset after having read target modules list
-	// recovery TBD
-//	if (this.currentElement != null) { // is recovering
-//		this.lastCheckPoint = typeDecl.bodyStart;
-//	}
-}
-protected void consumeExportsTargetNameList() {
-	consumeSingleExportsTargetName();
-	this.listLength++;
-	optimizedConcatNodeLists();
-}
-protected void consumeSingleExportsPkgName() {
-	ExportReference expt;
-	int length;
-	char[][] tokens = new char[length = this.identifierLengthStack[this.identifierLengthPtr--]][];
-	this.identifierPtr -= length;
-	long[] positions = new long[length];
-	System.arraycopy(this.identifierStack, this.identifierPtr + 1, tokens, 0, length);
-	System.arraycopy(this.identifierPositionStack, this.identifierPtr + 1, positions, 0, length);
-	pushOnAstStack(expt = new ExportReference(tokens, positions));
-
+protected void consumeExportsHeader() {
+	ImportReference impt = (ImportReference) this.astStack[this.astPtr];
+	impt.bits |= ASTNode.inModule;
+	ExportsStatement expt = new ExportsStatement(impt);
+	expt.declarationSourceStart = this.intStack[this.intPtr--];
+	expt.sourceStart = expt.declarationSourceStart;
+	expt.sourceEnd = impt.sourceEnd;
 	if (this.currentToken == TokenNameSEMICOLON){
 		expt.declarationSourceEnd = this.scanner.currentPosition - 1;
 	} else {
 		expt.declarationSourceEnd = expt.sourceEnd;
 	}
 	expt.declarationEnd = expt.declarationSourceEnd;
-	//this.endPosition is just before the ;
-	expt.declarationSourceStart = this.intStack[this.intPtr--];
-
-	// recovery - TBD
-	if (this.currentElement != null){
-		this.lastCheckPoint = expt.declarationSourceEnd+1;
+	this.astStack[this.astPtr] = expt; // replace with ExportsStatement
+	// recovery
+	if (this.currentElement instanceof RecoveredModule) {
+		this.lastCheckPoint = expt.declarationSourceEnd + 1;
 		this.currentElement = this.currentElement.add(expt, 0);
+	}
+}
+protected void consumeOpensHeader() {
+	ImportReference impt = (ImportReference) this.astStack[this.astPtr];
+	impt.bits |= ASTNode.inModule;
+	OpensStatement stmt = new OpensStatement(impt);
+	stmt.declarationSourceStart = this.intStack[this.intPtr--];
+	stmt.sourceStart = stmt.declarationSourceStart;
+	stmt.sourceEnd = impt.sourceEnd;
+	if (this.currentToken == TokenNameSEMICOLON){
+		stmt.declarationSourceEnd = this.scanner.currentPosition - 1;
+	} else {
+		stmt.declarationSourceEnd = stmt.sourceEnd;
+	}
+	stmt.declarationEnd = stmt.declarationSourceEnd;
+	this.astStack[this.astPtr] = stmt; // replace with OpensStatement
+	// recovery
+	if (this.currentElement instanceof RecoveredModule) {
+		this.lastCheckPoint = stmt.declarationSourceEnd + 1;
+		this.lastCheckPoint = stmt.declarationSourceEnd + 1;
+		this.currentElement = this.currentElement.add(stmt, 0);
+	}
+}
+protected void consumeOpensStatement() {
+	OpensStatement expt = (OpensStatement) this.astStack[this.astPtr];
+	expt.declarationSourceEnd = this.endStatementPosition;
+	expt.declarationEnd = expt.declarationSourceEnd;
+	// recovery
+	if (this.currentElement instanceof RecoveredPackageVisibilityStatement) {
+		this.lastCheckPoint = expt.declarationSourceEnd + 1;
+		this.currentElement = this.currentElement.parent;
 		this.lastIgnoredToken = -1;
-		this.restartRecovery = true; // used to avoid branching back into the regular automaton
+		this.restartRecovery = true;
+		// used to avoid branching back into the regular automaton
+	}
+}
+protected void consumeSingleTargetModuleName() {
+	ModuleReference reference;
+	int length;
+	char[][] tokens = new char[length = this.identifierLengthStack[this.identifierLengthPtr--]][];
+	this.identifierPtr -= length;
+	long[] positions = new long[length];
+	System.arraycopy(this.identifierStack, this.identifierPtr + 1, tokens, 0, length);
+	System.arraycopy(this.identifierPositionStack, this.identifierPtr + 1, positions, 0, length);
+	pushOnAstStack(reference = new ModuleReference(tokens, positions));
+
+	// recovery
+	if (this.currentElement != null) {
+		this.lastCheckPoint = reference.sourceEnd + 1;
+	}
+
+}
+protected void consumeTargetModuleList() {
+	int length = this.astLengthStack[this.astLengthPtr--];
+	this.astPtr -= length;
+	PackageVisibilityStatement node = (PackageVisibilityStatement) this.astStack[this.astPtr];
+	if (length > 0) {
+	System.arraycopy(
+		this.astStack,
+		this.astPtr + 1,
+		node.targets = new ModuleReference[length],
+		0,
+		length);
+		node.sourceEnd = node.targets[length - 1].sourceEnd;
+		if (this.currentToken == TokenNameSEMICOLON){
+			node.declarationSourceEnd = node.sourceEnd + 1;
+		} else {
+			node.declarationSourceEnd = node.sourceEnd;
+		}
+	}
+	
+	this.listLength = 0; // reset after having read target modules list
+	// recovery TBD
+	if (this.currentElement != null) { // is recovering
+		this.lastCheckPoint = node.sourceEnd;
+	}
+}
+protected void consumeTargetModuleNameList() {
+	this.listLength++;
+	optimizedConcatNodeLists();
+}
+protected void consumeSinglePkgName() {
+	ImportReference impt;
+	int length;
+	char[][] tokens = new char[length = this.identifierLengthStack[this.identifierLengthPtr--]][];
+	this.identifierPtr -= length;
+	long[] positions = new long[length];
+	System.arraycopy(this.identifierStack, this.identifierPtr + 1, tokens, 0, length);
+	System.arraycopy(this.identifierPositionStack, this.identifierPtr + 1, positions, 0, length);
+	pushOnAstStack(impt = new ImportReference(tokens, positions, false, ClassFileConstants.AccDefault));
+
+	// recovery
+	if (this.currentElement instanceof RecoveredModule){
+		this.lastCheckPoint = impt.sourceEnd + 1;
 	}
 }
 protected void consumeUsesStatement() {
-	pushOnGenericsIdentifiersLengthStack(this.identifierLengthStack[this.identifierLengthPtr]);
-	pushOnGenericsLengthStack(0);
-	TypeReference siName = getTypeReference(0);
-	if (siName.annotations != null) {
-		for (int j = 0; j < siName.annotations.length; j++) {
-			Annotation[] qualifierAnnot = siName.annotations[j];
-			if (qualifierAnnot != null && qualifierAnnot.length > 0) {
-				problemReporter().misplacedTypeAnnotations(qualifierAnnot[0], qualifierAnnot[qualifierAnnot.length - 1]);
-				siName.annotations[j] = null;
-			}
-		}
-	}
-	// There is a module declaration on the top of stack
-	ModuleDeclaration module = (ModuleDeclaration) this.astStack[this.astPtr];
-	if (module.uses == null) {
-		module.uses = new TypeReference[1];
-	}
-	if (module.usesCount + 1 > module.uses.length) {
-		System.arraycopy(module.uses, 0, module.uses = new TypeReference[module.usesCount + 1], 0, module.usesCount);
-	}
-	module.uses[module.usesCount++] = siName;
-	
+	UsesStatement stmt = (UsesStatement) this.astStack[this.astPtr];
+	stmt.declarationEnd = stmt.declarationSourceEnd = this.endStatementPosition;
 	// recovery
-	if (this.currentElement != null){
-		this.lastCheckPoint = siName.sourceEnd + 1;
+	if (this.currentElement instanceof RecoveredModule){
+		this.lastCheckPoint = stmt.declarationSourceEnd;
+		this.lastIgnoredToken = -1;
+		this.restartRecovery = true;
 	}
 }
-protected void consumeProvidesStatement() {
+protected void consumeUsesHeader() {
 	pushOnGenericsIdentifiersLengthStack(this.identifierLengthStack[this.identifierLengthPtr]);
 	pushOnGenericsLengthStack(0);
 	TypeReference siName = getTypeReference(0);
@@ -5849,48 +5752,113 @@ protected void consumeProvidesStatement() {
 			}
 		}
 	}
-	// There is a module declaration on the top of stack
-	ModuleDeclaration module = (ModuleDeclaration) this.astStack[this.astPtr];
-	if (module.interfaces == null) {
-		module.interfaces = new TypeReference[1];
+	UsesStatement stmt = new UsesStatement(siName);
+	if (this.currentToken == TokenNameSEMICOLON){
+		stmt.declarationSourceEnd = siName.sourceEnd + 1;
+	} else {
+		stmt.declarationSourceEnd = siName.sourceEnd;
 	}
-	if (module.servicesCount + 1 > module.interfaces.length) {
-		System.arraycopy(module.interfaces, 0, module.interfaces = new TypeReference[module.servicesCount + 1], 0, module.servicesCount);
+	stmt.declarationEnd = stmt.declarationSourceEnd;
+	stmt.sourceStart = stmt.declarationSourceStart = this.intStack[this.intPtr--];
+	stmt.sourceEnd = siName.sourceEnd;
+	pushOnAstStack(stmt);
+	// recovery
+	if (this.currentElement instanceof RecoveredModule){
+		this.lastCheckPoint = stmt.sourceEnd + 1;
+		this.currentElement = this.currentElement.add(stmt, 0);
 	}
-	module.interfaces[module.servicesCount++] = siName;
-
+}
+protected void consumeProvidesInterface() {
+	pushOnGenericsIdentifiersLengthStack(this.identifierLengthStack[this.identifierLengthPtr]);
+	pushOnGenericsLengthStack(0);
+	TypeReference siName = getTypeReference(0);
+	if (siName.annotations != null) {
+		for (int j = 0; j < siName.annotations.length; j++) {
+			Annotation[] qualifierAnnot = siName.annotations[j];
+			if (qualifierAnnot != null && qualifierAnnot.length > 0) {
+				problemReporter().misplacedTypeAnnotations(qualifierAnnot[0], qualifierAnnot[qualifierAnnot.length - 1]);
+				siName.annotations[j] = null;
+			}
+		}
+	}
+	ProvidesStatement ref = new ProvidesStatement();
+	ref.serviceInterface = siName;
+	pushOnAstStack(ref);
+	ref.declarationSourceStart = this.intStack[this.intPtr--];
+	ref.sourceStart = ref.declarationSourceStart;
+	ref.sourceEnd = siName.sourceEnd;
+	ref.declarationSourceEnd = ref.sourceEnd;
 	// recovery
 	if (this.currentElement != null){
 		this.lastCheckPoint = siName.sourceEnd + 1;
+		this.currentElement = this.currentElement.add(ref, 0);
+		this.lastIgnoredToken = -1;
+	}
+}
+protected void consumeSingleServiceImplName() {
+	pushOnGenericsIdentifiersLengthStack(this.identifierLengthStack[this.identifierLengthPtr]);
+	pushOnGenericsLengthStack(0);
+	TypeReference siName = getTypeReference(0);
+	if (siName.annotations != null) {
+		for (int j = 0; j < siName.annotations.length; j++) {
+			Annotation[] qualifierAnnot = siName.annotations[j];
+			if (qualifierAnnot != null && qualifierAnnot.length > 0) {
+				problemReporter().misplacedTypeAnnotations(qualifierAnnot[0], qualifierAnnot[qualifierAnnot.length - 1]);
+				siName.annotations[j] = null;
+			}
+		}
+	}
+	pushOnAstStack(siName);
+	// recovery
+	if (this.currentElement instanceof RecoveredModule) {
+		this.lastCheckPoint = siName.sourceEnd + 1;
+	}
+
+}
+protected void consumeServiceImplNameList() {
+	this.listLength++;
+	optimizedConcatNodeLists();
+}
+protected void consumeProvidesStatement() {
+	ProvidesStatement ref = (ProvidesStatement) this.astStack[this.astPtr];
+	ref.declarationEnd = ref.declarationSourceEnd = this.endStatementPosition;
+	//recovery
+	if (this.currentElement != null) {
+		this.lastIgnoredToken = -1;
+		this.currentElement = this.currentElement.parent;
+		this.restartRecovery = true; // used to avoid branching back into the regular automaton
 	}
 }
 protected void consumeWithClause() {
-	pushOnGenericsIdentifiersLengthStack(this.identifierLengthStack[this.identifierLengthPtr]);
-	pushOnGenericsLengthStack(0);
-	TypeReference siName = getTypeReference(0);
-	if (siName.annotations != null) {
-		for (int j = 0; j < siName.annotations.length; j++) {
-			Annotation[] qualifierAnnot = siName.annotations[j];
-			if (qualifierAnnot != null && qualifierAnnot.length > 0) {
-				problemReporter().misplacedTypeAnnotations(qualifierAnnot[0], qualifierAnnot[qualifierAnnot.length - 1]);
-				siName.annotations[j] = null;
-			}
-		}
+	int length = this.astLengthStack[this.astLengthPtr--];
+	this.astPtr -= length;
+
+	ProvidesStatement service = (ProvidesStatement) this.astStack[this.astPtr];
+	System.arraycopy(
+		this.astStack,
+		this.astPtr + 1,
+		service.implementations = new TypeReference[length],
+		0,
+		length);
+
+	service.sourceEnd = service.implementations[length - 1].sourceEnd;
+
+	if (this.currentToken == TokenNameSEMICOLON){
+		service.declarationSourceEnd = service.sourceEnd + 1;
+	} else {
+		service.declarationSourceEnd = service.sourceEnd;
 	}
-	// There is a module declaration on the top of stack
-	ModuleDeclaration module = (ModuleDeclaration) this.astStack[this.astPtr];
-	if (module.implementations == null) {
-		module.implementations = new TypeReference[1];
-	}
-	if (module.servicesCount + 1 > module.implementations.length) {
-		System.arraycopy(module.implementations, 0, module.implementations = new TypeReference[module.servicesCount + 1], 0, module.servicesCount);
-	}
-	module.implementations[module.servicesCount] = siName;
-	
+	this.listLength = 0; // reset after having read super-interfaces
 	// recovery
-	if (this.currentElement != null){
-		this.lastCheckPoint = siName.sourceEnd + 1;
+	if (this.currentElement != null) { // is recovering
+		this.lastCheckPoint = service.declarationSourceEnd;
 	}
+}
+protected void consumeEmptyModuleStatementsOpt() {
+	pushOnAstLengthStack(0);
+}
+protected void consumeModuleStatements() {
+	concatNodeLists();
 }
 protected void consumeModuleHeader() {
 	// ModuleHeader ::= 'module' Name
@@ -5907,15 +5875,19 @@ protected void consumeModuleHeader() {
 		positions,
 		0,
 		length);
-	ModuleDeclaration typeDecl = new ModuleDeclaration(this.compilationUnit.compilationResult, tokens, positions);
 
+	ModuleDeclaration typeDecl = new ModuleDeclaration(this.compilationUnit.compilationResult, tokens, positions);
 	//compute the declaration source too
 	typeDecl.declarationSourceStart = this.intStack[this.intPtr--];
-
 	typeDecl.bodyStart = typeDecl.sourceEnd + 1;
+	typeDecl.modifiersSourceStart = this.intStack[this.intPtr--];
+	typeDecl.modifiers = this.intStack[this.intPtr--];
+	if (typeDecl.modifiersSourceStart >= 0) {
+		typeDecl.declarationSourceStart = typeDecl.modifiersSourceStart;
+	}
 	pushOnAstStack(typeDecl);
 
-	this.listLength = 0; // will be updated when reading super-interfaces
+	this.listLength = 0;
 	// recovery
 	if (this.currentElement != null){
 		this.lastCheckPoint = typeDecl.bodyStart;
@@ -5928,14 +5900,103 @@ protected void consumeModuleHeader() {
 }
 protected void consumeModuleDeclaration() {
 	// ModuleDeclaration ::= ModuleHeader ModuleBody
-	
+	int length = this.astLengthStack[this.astLengthPtr--];
+	int[] flag = new int[length + 1]; //plus one -- see <HERE>
+	int size1 = 0, size2 = 0, size3 = 0, size4 = 0, size5 = 0;
+	if (length != 0) {
+		//there are length declarations
+		//dispatch according to the type of the declarations
+		for (int i = length - 1; i >= 0; i--) {
+			ASTNode astNode = this.astStack[this.astPtr--];
+			if (astNode instanceof RequiresStatement) {
+				flag[i] = 1;
+				size1++;
+			} else if (astNode instanceof ExportsStatement) {
+				flag[i] = 2;
+				size2++;
+			} else if (astNode instanceof UsesStatement) {
+				//field
+				flag[i] = 3;
+				size3++;
+			} else if (astNode instanceof ProvidesStatement){
+				flag[i] = 4;
+				size4++;
+			} else if (astNode instanceof OpensStatement) {
+				flag[i] = 5;
+				size5++;
+			}
+		}
+	}
 	ModuleDeclaration modul = (ModuleDeclaration) this.astStack[this.astPtr];
-
+	modul.requiresCount = size1;
+	modul.exportsCount = size2;
+	modul.usesCount = size3;
+	modul.servicesCount = size4;
+	modul.opensCount = size5;
+	modul.requires = new RequiresStatement[size1];
+	modul.exports = new ExportsStatement[size2];
+	modul.uses = new UsesStatement[size3];
+	modul.services = new ProvidesStatement[size4];
+	modul.opens = new OpensStatement[size5];
+	//arrays fill up
+	size1 = size2 = size3 = size4 = size5 = 0;
+	int flagI = flag[0], start = 0;
+	int length2;
+	for (int end = 0; end <= length; end++) //<HERE> the plus one allows to
+		{
+		if (flagI != flag[end]) //treat the last element as a ended flag.....
+			{ //array copy
+			switch (flagI) {
+				case 1 :
+					size1 += (length2 = end - start);
+					System.arraycopy(
+						this.astStack,
+						this.astPtr + start + 1,
+						modul.requires,
+						size1 - length2,
+						length2);
+					break;
+				case 2 :
+					size2 += (length2 = end - start);
+					System.arraycopy(
+						this.astStack,
+						this.astPtr + start + 1,
+						modul.exports,
+						size2 - length2,
+						length2);
+					break;
+				case 3 :
+					size3 += (length2 = end - start);
+					System.arraycopy(
+						this.astStack,
+						this.astPtr + start + 1,
+						modul.uses,
+						size3 - length2,
+						length2);
+					break;
+				case 4 :
+					size4 += (length2 = end - start);
+					System.arraycopy(
+						this.astStack,
+						this.astPtr + start + 1,
+						modul.services,
+						size4 - length2,
+						length2);
+					break;
+				case 5 :
+					size5 += (length2 = end - start);
+					System.arraycopy(
+						this.astStack,
+						this.astPtr + start + 1,
+						modul.opens,
+						size5 - length2,
+						length2);
+					break;
+			}
+			flagI = flag[start = end];
+		}
+	}
 	modul.bodyEnd = this.endStatementPosition;
-//	if (length == 0 && !containsComment(typeDecl.bodyStart, typeDecl.bodyEnd)) {
-//		typeDecl.bits |= ASTNode.UndocumentedEmptyBlock;
-//	}
-
 	modul.declarationSourceEnd = flushCommentsDefinedPriorTo(this.endStatementPosition);
 }
 protected void consumePackageDeclaration() {
@@ -6308,6 +6369,20 @@ protected void consumeReferenceType2() {
 protected void consumeReferenceType3() {
 	pushOnGenericsStack(getTypeReference(this.intStack[this.intPtr--]));
 }
+
+protected void consumeResourceAsLocalVariable() {
+	// Resource ::= Name
+	NameReference ref = getUnspecifiedReference(true);
+	//ref.bits |= ASTNode.IsCapturedOuterLocal;
+	pushOnAstStack(ref);
+ }
+protected void consumeResourceAsFieldAccess() {
+	// Resource ::= FieldAccess
+	FieldReference ref = (FieldReference) this.expressionStack[this.expressionPtr--];
+	//NameReference ref = getUnspecifiedReference(true);
+	//ref.bits |= ASTNode.IsCapturedOuterLocal;
+	pushOnAstStack(ref);
+ }
 protected void consumeResourceAsLocalVariableDeclaration() {
 	// Resource ::= Type PushModifiers VariableDeclaratorId EnterVariable '=' ForceNoDiet VariableInitializer RestoreDiet ExitVariableWithInitialization
 	// Resource ::= Modifiers Type PushRealModifiers VariableDeclaratorId EnterVariable '=' ForceNoDiet VariableInitializer RestoreDiet ExitVariableWithInitialization
@@ -6318,9 +6393,12 @@ protected void consumeResourceSpecification() {
 }
 protected void consumeResourceOptionalTrailingSemiColon(boolean punctuated) {
 	// TrailingSemiColon ::= ';'
-	LocalDeclaration localDeclaration = (LocalDeclaration) this.astStack[this.astPtr];
+	Statement statement = (Statement) this.astStack[this.astPtr];
+	
 	if (punctuated) {
-		localDeclaration.declarationSourceEnd = this.endStatementPosition;
+		if (statement instanceof LocalDeclaration) {
+			((LocalDeclaration) statement).declarationSourceEnd = this.endStatementPosition;
+		}
 	}
 }
 protected void consumeRestoreDiet() {
@@ -6358,7 +6436,6 @@ protected void consumeZeroTypeAnnotations() {
 protected void consumeRule(int act) {
 	throw new UnsupportedOperationException("Should be invoking method in Parser instead"); // AspectJ extension - subclass should be used
 }
-
 protected void consumeVariableDeclaratorIdParameter () {
 	pushOnIntStack(1);  // signal "normal" variable declarator id parameter.
 }
@@ -6557,7 +6634,7 @@ protected void consumeEmptyTypeArguments() {
 }
 
 public ReferenceExpression newReferenceExpression() {
-	return new ReferenceExpression();
+	return new ReferenceExpression(this.scanner);
 }
 
 protected void consumeReferenceExpressionTypeForm(boolean isPrimitive) { // actually Name or Type form.
@@ -7136,16 +7213,26 @@ protected void consumeStatementTry(boolean withFinally, boolean hasResources) {
 	if (hasResources) {
 		// get the resources
 		length = this.astLengthStack[this.astLengthPtr--];
-		LocalDeclaration[] resources = new LocalDeclaration[length];
+		Statement[] stmts  = new Statement[length];
 		System.arraycopy(
 				this.astStack,
 				(this.astPtr -= length) + 1,
-				resources,
+		stmts,
 				0,
 				length);
-		tryStmt.resources = resources;
+
+		tryStmt.resources = stmts;
+			
 		if (this.options.sourceLevel < ClassFileConstants.JDK1_7) {
-			problemReporter().autoManagedResourcesNotBelow17(resources);
+			problemReporter().autoManagedResourcesNotBelow17(stmts);
+		}
+		if (this.options.sourceLevel < ClassFileConstants.JDK9) {
+			for (int i = 0, l = stmts.length; i < l; ++i) {
+				Statement stmt = stmts[i];
+				if (stmt instanceof FieldReference || stmt instanceof NameReference) {
+					problemReporter().autoManagedVariableResourcesNotBelow9((Expression) stmt);
+		}
+	}
 		}
 	}
 	//positions
@@ -7335,6 +7422,10 @@ protected void consumeToken(int type) {
 			checkAndSetModifiers(ClassFileConstants.AccNative);
 			pushOnExpressionStackLengthStack(0);
 			break;
+		case TokenNameopen :
+			checkAndSetModifiers(ClassFileConstants.ACC_OPEN);
+			pushOnExpressionStackLengthStack(0);
+			break;
 		case TokenNameprivate :
 			checkAndSetModifiers(ClassFileConstants.AccPrivate);
 			pushOnExpressionStackLengthStack(0);
@@ -7351,12 +7442,19 @@ protected void consumeToken(int type) {
 			checkAndSetModifiers(ClassFileConstants.AccTransient);
 			pushOnExpressionStackLengthStack(0);
 			break;
+		case TokenNametransitive :
+			checkAndSetModifiers(ClassFileConstants.ACC_TRANSITIVE);
+			pushOnExpressionStackLengthStack(0);
+			break;
 		case TokenNamevolatile :
 			checkAndSetModifiers(ClassFileConstants.AccVolatile);
 			pushOnExpressionStackLengthStack(0);
 			break;
 		case TokenNamestatic :
-			checkAndSetModifiers(ClassFileConstants.AccStatic);
+			if (isParsingModuleDeclaration())
+				checkAndSetModifiers(ClassFileConstants.ACC_STATIC_PHASE);
+			else
+				checkAndSetModifiers(ClassFileConstants.AccStatic);
 			pushOnExpressionStackLengthStack(0);
 			break;
 		case TokenNamesynchronized :
@@ -7508,6 +7606,9 @@ protected void consumeToken(int type) {
 		case TokenNamemodule:
 		case TokenNamerequires:
 		case TokenNameexports:
+		case TokenNameopens:
+		case TokenNameuses:
+		case TokenNameprovides:
 			pushOnIntStack(this.scanner.startPosition);
 			break;
 		case TokenNamenew :
@@ -10205,7 +10306,7 @@ protected void pushIdentifier(char [] identifier, long position) {
 	}
 	this.identifierLengthStack[this.identifierLengthPtr] = 1;
 	if (this.parsingJava8Plus && identifier.length == 1 && identifier[0] == '_' && !this.processingLambdaParameterList) {
-		problemReporter().illegalUseOfUnderscoreAsAnIdentifier((int) (position >>> 32), (int) position, false /* not a lambda parameter */);
+		problemReporter().illegalUseOfUnderscoreAsAnIdentifier((int) (position >>> 32), (int) position, this.parsingJava9Plus);
 	}
 }
 protected void pushIdentifier() {

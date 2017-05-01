@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -102,6 +102,8 @@
  *									COMPILER_INHERIT_NULL_ANNOTATIONS
  *									COMPILER_PB_NONNULL_PARAMETER_ANNOTATION_DROPPED
  *									COMPILER_PB_SYNTACTIC_NULL_ANALYSIS_FOR_FIELDS
+ *									COMPILER_PB_UNLIKELY_COLLECTION_METHOD_ARGUMENT_TYPE
+ *									COMPILER_PB_UNLIKELY_EQUALS_ARGUMENT_TYPE
  *     Jesper S Moller   - Contributions for bug 381345 : [1.8] Take care of the Java 8 major version
  *                       - added the following constants:
  *									COMPILER_CODEGEN_METHOD_PARAMETERS_ATTR
@@ -118,19 +120,6 @@ import java.util.HashSet;
 import java.util.Hashtable;
 import java.util.Map;
 
-import org.eclipse.core.runtime.CoreException;
-import org.eclipse.core.runtime.IConfigurationElement;
-import org.eclipse.core.runtime.IExtension;
-import org.eclipse.core.runtime.IExtensionPoint;
-import org.eclipse.core.runtime.IPath;
-import org.eclipse.core.runtime.IProgressMonitor;
-import org.eclipse.core.runtime.OperationCanceledException;
-import org.eclipse.core.runtime.Path;
-import org.eclipse.core.runtime.Platform;
-import org.eclipse.core.runtime.Plugin;
-import org.eclipse.core.runtime.QualifiedName;
-import org.eclipse.core.runtime.SubMonitor;
-import org.eclipse.core.runtime.jobs.ISchedulingRule;
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
@@ -144,6 +133,19 @@ import org.eclipse.core.resources.IWorkspace;
 import org.eclipse.core.resources.IWorkspaceRoot;
 import org.eclipse.core.resources.IWorkspaceRunnable;
 import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.IConfigurationElement;
+import org.eclipse.core.runtime.IExtension;
+import org.eclipse.core.runtime.IExtensionPoint;
+import org.eclipse.core.runtime.IPath;
+import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.OperationCanceledException;
+import org.eclipse.core.runtime.Path;
+import org.eclipse.core.runtime.Platform;
+import org.eclipse.core.runtime.Plugin;
+import org.eclipse.core.runtime.QualifiedName;
+import org.eclipse.core.runtime.SubMonitor;
+import org.eclipse.core.runtime.jobs.ISchedulingRule;
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.core.search.IJavaSearchConstants;
@@ -157,6 +159,8 @@ import org.eclipse.jdt.internal.compiler.problem.ProblemReporter;
 import org.eclipse.jdt.internal.core.*;
 import org.eclipse.jdt.internal.core.builder.JavaBuilder;
 import org.eclipse.jdt.internal.core.builder.State;
+import org.eclipse.jdt.internal.core.nd.indexer.Indexer;
+import org.eclipse.jdt.internal.core.search.indexing.IndexManager;
 import org.eclipse.jdt.internal.core.util.MementoTokenizer;
 import org.eclipse.jdt.internal.core.util.Messages;
 import org.eclipse.jdt.internal.core.util.ModuleUtil;
@@ -225,6 +229,11 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 	 * @since 3.0
 	 */
 	public static final String USER_LIBRARY_CONTAINER_ID= "org.eclipse.jdt.USER_LIBRARY"; //$NON-NLS-1$
+
+	/**
+	 * @since 3.13
+	 */
+	public static final String MODULE_PATH_CONTAINER_ID = "org.eclipse.jdt.MODULE_PATH"; //$NON-NLS-1$
 
 	// Begin configurable option IDs {
 
@@ -1502,6 +1511,60 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 	 * @category CompilerOptionID
 	 */
 	public static final String COMPILER_PB_EXPLICITLY_CLOSED_AUTOCLOSEABLE = PLUGIN_ID + ".compiler.problem.explicitlyClosedAutoCloseable"; //$NON-NLS-1$
+
+	/**
+	 * Compiler option ID: Reporting a method invocation providing an argument of an unlikely type.
+	 * <p>When enabled, the compiler will issue an error or warning when certain well-known Collection methods
+	 *    that take an 'Object', like e.g. {@link Map#get(Object)}, are used with an argument type
+	 *    that seems to be not related to the corresponding type argument of the Collection.</p>
+	 * <p>By default, this analysis will apply some heuristics to determine whether or not two
+	 *    types may or may not be related, which can be changed via option
+	 *    {@link #COMPILER_PB_UNLIKELY_COLLECTION_METHOD_ARGUMENT_TYPE_STRICT}.</p>
+	 * <dl>
+	 * <dt>Option id:</dt><dd><code>"org.eclipse.jdt.core.compiler.problem.unlikelyCollectionMethodArgumentType"</code></dd>
+	 * <dt>Possible values:</dt><dd><code>{ "error", "warning", "info", "ignore" }</code></dd>
+	 * <dt>Default:</dt><dd><code>"warning"</code></dd>
+	 * </dl>
+	 * @since 3.13
+	 * @category CompilerOptionID
+	 */
+	public static final String COMPILER_PB_UNLIKELY_COLLECTION_METHOD_ARGUMENT_TYPE = PLUGIN_ID + ".compiler.problem.unlikelyCollectionMethodArgumentType"; //$NON-NLS-1$
+
+	/**
+	 * Compiler option ID: Perform strict analysis against the expected type of collection methods.
+	 * <p>This is a sub-option of {@link #COMPILER_PB_UNLIKELY_COLLECTION_METHOD_ARGUMENT_TYPE},
+	 *    which will replace the heuristics with strict compatibility checks,
+	 *    i.e., each argument that is not strictly compatible with the expected type will trigger an error or warning.</p>
+	 * <p>This option has no effect if {@link #COMPILER_PB_UNLIKELY_COLLECTION_METHOD_ARGUMENT_TYPE} is set to <code>"ignore"</code>.</p>
+	 * <dl>
+	 * <dt>Option id:</dt><dd><code>"org.eclipse.jdt.core.compiler.problem.unlikelyCollectionMethodArgumentTypeStrict"</code></dd>
+	 * <dt>Possible values:</dt><dd><code>{ "enabled", "disabled" }</code></dd>
+	 * <dt>Default:</dt><dd><code>"disabled"</code></dd>
+	 * </dl>
+	 * @since 3.13
+	 * @category CompilerOptionID
+	 */
+	public static final String COMPILER_PB_UNLIKELY_COLLECTION_METHOD_ARGUMENT_TYPE_STRICT = PLUGIN_ID + ".compiler.problem.unlikelyCollectionMethodArgumentTypeStrict"; //$NON-NLS-1$
+
+	/**
+	 * Compiler option ID: Reporting a method invocation providing an argument of an unlikely type to method 'equals'.
+	 * <p>
+	 * When enabled, the compiler will issue an error or warning when {@link java.lang.Object#equals(Object)} is used with an argument type 
+	 * that seems to be not related to the receiver's type, or correspondingly when the arguments of {@link java.util.Objects#equals(Object, Object)}
+	 * have types that seem to be not related to each other.
+	 * </p>
+	 * <dl>
+	 * <dt>Option id:</dt><dd><code>"org.eclipse.jdt.core.compiler.problem.unlikelyEqualsArgumentType"</code></dd>
+	 * <dt>Possible values:</dt>
+	 * <dd><code>{ "error", "warning", "info", "ignore" }</code></dd>
+	 * <dt>Default:</dt><dd><code>"info"</code></dd>
+	 * </dl>
+	 * 
+	 * @since 3.13
+	 * @category CompilerOptionID
+	 */
+	public static final String COMPILER_PB_UNLIKELY_EQUALS_ARGUMENT_TYPE = PLUGIN_ID + ".compiler.problem.unlikelyEqualsArgumentType"; //$NON-NLS-1$
+
 	/**
 	 * Compiler option ID: Annotation-based Null Analysis.
 	 * <p>This option controls whether the compiler will use null annotations for
@@ -2826,7 +2889,7 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 	public static final String VERSION_1_8 = "1.8"; //$NON-NLS-1$
 	/**
 	 * Configurable option value: {@value}.
-	 * @since 3.12 BETA_JAVA9
+	 * @since 3.13 BETA_JAVA9
 	 * @category OptionValue
 	 */
 	public static final String VERSION_9 = "9"; //$NON-NLS-1$
@@ -4126,7 +4189,7 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 		// if factory is null, default factory must be used
 		if (factory == null) factory = BufferManager.getDefaultBufferManager().getDefaultBufferFactory();
 
-		return getWorkingCopies(BufferFactoryWrapper.create(factory));
+		return getWorkingCopies(org.eclipse.jdt.internal.core.BufferFactoryWrapper.create(factory));
 	}
 
 	/**
@@ -4184,7 +4247,6 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 	 * @since 3.1
 	 */
 	public static void initializeAfterLoad(IProgressMonitor monitor) throws CoreException {
-		try {
 			SubMonitor mainMonitor = SubMonitor.convert(monitor, Messages.javamodel_initialization, 100);
 			mainMonitor.subTask(Messages.javamodel_configuring_classpath_containers);
 	
@@ -4192,14 +4254,14 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 			JavaModelManager manager = JavaModelManager.getJavaModelManager();
 			try {
 				SubMonitor subMonitor = mainMonitor.split(50).setWorkRemaining(100); // 50% of the time is spent in initializing containers and variables
-				subMonitor.worked(5); // give feedback to the user that something is happening
+			subMonitor.split(5); // give feedback to the user that something is happening
 				manager.batchContainerInitializationsProgress.initializeAfterLoadMonitor.set(subMonitor);
 				if (manager.forceBatchInitializations(true/*initAfterLoad*/)) { // if no other thread has started the batch container initializations
 					manager.getClasspathContainer(Path.EMPTY, null); // force the batch initialization
 				} else { // else wait for the batch initialization to finish
 					while (manager.batchContainerInitializations == JavaModelManager.BATCH_INITIALIZATION_IN_PROGRESS) {
 						subMonitor.subTask(manager.batchContainerInitializationsProgress.subTaskName);
-						subMonitor.worked(manager.batchContainerInitializationsProgress.getWorked());
+					subMonitor.split(manager.batchContainerInitializationsProgress.getWorked());
 						synchronized(manager) {
 							try {
 								manager.wait(100);
@@ -4275,38 +4337,8 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 	
 			// dummy query for waiting until the indexes are ready
 			mainMonitor.subTask(Messages.javamodel_configuring_searchengine);
-			SearchEngine engine = new SearchEngine();
-			IJavaSearchScope scope = SearchEngine.createWorkspaceScope();
-			try {
-				engine.searchAllTypeNames(
-					null,
-					SearchPattern.R_EXACT_MATCH,
-					"!@$#!@".toCharArray(), //$NON-NLS-1$
-					SearchPattern.R_PATTERN_MATCH | SearchPattern.R_CASE_SENSITIVE,
-					IJavaSearchConstants.CLASS,
-					scope,
-					new TypeNameRequestor() {
-						public void acceptType(
-							int modifiers,
-							char[] packageName,
-							char[] simpleTypeName,
-							char[][] enclosingTypeNames,
-							String path) {
-							// no type to accept
-						}
-					},
-					// will not activate index query caches if indexes are not ready, since it would take to long
-					// to wait until indexes are fully rebuild
-					IJavaSearchConstants.CANCEL_IF_NOT_READY_TO_SEARCH,
-					mainMonitor.split(47) // 47% of the time is spent in the dummy search
-				);
-			} catch (JavaModelException e) {
-				// /search failed: ignore
-			} catch (OperationCanceledException e) {
-				if (mainMonitor.isCanceled())
-					throw e;
-				// else indexes were not ready: catch the exception so that jars are still refreshed
-			}
+		// 47% of the time is spent in the dummy search
+		updateLegacyIndex(mainMonitor.split(47));
 	
 			// check if the build state version number has changed since last session
 			// (see https://bugs.eclipse.org/bugs/show_bug.cgi?id=98969)
@@ -4351,10 +4383,40 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 					Util.log(e, "Could not persist build state version number"); //$NON-NLS-1$
 				}
 			}
-		} finally {
-			if (monitor != null) {
-				monitor.done();
 			}
+
+	private static void updateLegacyIndex(IProgressMonitor monitor) {
+		SearchEngine engine = new SearchEngine();
+		IJavaSearchScope scope = SearchEngine.createWorkspaceScope();
+		try {
+			engine.searchAllTypeNames(
+				null,
+				SearchPattern.R_EXACT_MATCH,
+				"!@$#!@".toCharArray(), //$NON-NLS-1$
+				SearchPattern.R_PATTERN_MATCH | SearchPattern.R_CASE_SENSITIVE,
+				IJavaSearchConstants.CLASS,
+				scope,
+				new TypeNameRequestor() {
+					public void acceptType(
+						int modifiers,
+						char[] packageName,
+						char[] simpleTypeName,
+						char[][] enclosingTypeNames,
+						String path) {
+						// no type to accept
+					}
+				},
+				// will not activate index query caches if indexes are not ready, since it would take to long
+				// to wait until indexes are fully rebuild
+				IJavaSearchConstants.CANCEL_IF_NOT_READY_TO_SEARCH,
+				monitor
+			);
+		} catch (JavaModelException e) {
+			// /search failed: ignore
+		} catch (OperationCanceledException e) {
+			if (monitor.isCanceled())
+				throw e;
+			// else indexes were not ready: catch the exception so that jars are still refreshed
 		}
 	}
 
@@ -5455,6 +5517,22 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 		JavaModelManager.getDeltaState().removePreResourceChangedListener(listener);
 	}
 
+	/**
+	 * Deletes and rebuilds the java index.
+	 * 
+	 * @param monitor a progress monitor, or <code>null</code> if progress
+	 *    reporting and cancellation are not desired
+	 * @throws CoreException 
+	 * @since 3.13
+	 */
+	public static void rebuildIndex(IProgressMonitor monitor) throws CoreException {
+		SubMonitor subMonitor = SubMonitor.convert(monitor, 100);
+		IndexManager manager = JavaModelManager.getIndexManager();
+		manager.deleteIndexFiles(subMonitor.split(1));
+		manager.reset();
+		Indexer.getInstance().rebuildIndex(subMonitor.split(95));
+		updateLegacyIndex(subMonitor.split(4));
+	}
 
 
 	/**
@@ -5835,7 +5913,7 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 	 * @param root the package fragment root for which the module is sought
 	 * @return the module-info content as a String
 	 * @throws CoreException
-	 * @since 3.12 BETA_JAVA9
+	 * @since 3.13 BETA_JAVA9
 	 */
 	public static String createModuleFromPackageRoot(String moduleName, IPackageFragmentRoot root) throws CoreException {
 		return ModuleUtil.createModuleFromPackageRoot(moduleName, root);
@@ -5871,5 +5949,6 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 		super.start(context);
 		JavaModelManager.registerDebugOptionsListener(context);
 		JavaModelManager.getJavaModelManager().startup();
+		Indexer.getInstance().rescanAll();
 	}
 }

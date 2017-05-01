@@ -29,6 +29,7 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -52,6 +53,7 @@ import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Path;
 import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.QualifiedName;
+import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.content.IContentDescription;
 import org.eclipse.core.runtime.preferences.IEclipsePreferences;
 import org.eclipse.core.runtime.preferences.IScopeContext;
@@ -64,6 +66,7 @@ import org.eclipse.jdt.core.IJavaModelMarker;
 import org.eclipse.jdt.core.IJavaModelStatus;
 import org.eclipse.jdt.core.IJavaModelStatusConstants;
 import org.eclipse.jdt.core.IJavaProject;
+import org.eclipse.jdt.core.IModuleDescription;
 import org.eclipse.jdt.core.IPackageFragment;
 import org.eclipse.jdt.core.IPackageFragmentRoot;
 import org.eclipse.jdt.core.IRegion;
@@ -75,6 +78,10 @@ import org.eclipse.jdt.core.WorkingCopyOwner;
 import org.eclipse.jdt.core.compiler.CategorizedProblem;
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.core.eval.IEvaluationContext;
+import org.eclipse.jdt.internal.compiler.env.IModuleEnvironment;
+import org.eclipse.jdt.internal.compiler.env.IPackageLookup;
+import org.eclipse.jdt.internal.compiler.env.ITypeLookup;
+import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.compiler.util.JRTUtil;
 import org.eclipse.jdt.internal.compiler.util.ObjectVector;
 import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
@@ -115,7 +122,7 @@ import org.xml.sax.SAXException;
 @SuppressWarnings({ "rawtypes", "unchecked" })
 public class JavaProject
 	extends Openable
-	implements IJavaProject, IProjectNature, SuffixConstants {
+	implements IJavaProject, IProjectNature, IModuleEnvironment, SuffixConstants {
 
 	/**
 	 * Name of file containing project classpath
@@ -374,7 +381,6 @@ public class JavaProject
 	 * @throws JavaModelException
 	 */
 	public static void validateCycles(Map preferredClasspaths) throws JavaModelException {
-
 		//long start = System.currentTimeMillis();
 
 		IWorkspaceRoot workspaceRoot = ResourcesPlugin.getWorkspace().getRoot();
@@ -382,7 +388,7 @@ public class JavaProject
 		int length = rscProjects.length;
 		JavaProject[] projects = new JavaProject[length];
 
-		LinkedHashSet cycleParticipants = new LinkedHashSet();
+		LinkedHashSet<IPath> cycleParticipants = new LinkedHashSet<>();
 		HashSet traversed = new HashSet();
 
 		// compute cycle participants
@@ -398,10 +404,18 @@ public class JavaProject
 		}
 		//System.out.println("updateAllCycleMarkers: " + (System.currentTimeMillis() - start) + " ms");
 
+		String cycleString = cycleParticipants.stream()
+			.map(path -> workspaceRoot.findMember(path))
+			.filter(r -> r != null)
+			.map(r -> JavaCore.create((IProject)r))
+			.filter(p -> p != null)
+			.map(p -> p.getElementName())
+			.collect(Collectors.joining(", ")); //$NON-NLS-1$
+
 		for (int i = 0; i < length; i++){
 			JavaProject project = projects[i];
 			if (project != null) {
-				if (cycleParticipants.contains(project.getPath())){
+				if (cycleParticipants.contains(project.getPath())) {
 					IMarker cycleMarker = project.getCycleMarker();
 					String circularCPOption = project.getOption(JavaCore.CORE_CIRCULAR_CLASSPATH, true);
 					int circularCPSeverity = JavaCore.ERROR.equals(circularCPOption) ? IMarker.SEVERITY_ERROR : IMarker.SEVERITY_WARNING;
@@ -412,30 +426,16 @@ public class JavaProject
 							if (existingSeverity != circularCPSeverity) {
 								cycleMarker.setAttribute(IMarker.SEVERITY, circularCPSeverity);
 							}
+							String existingMessage = cycleMarker.getAttribute(IMarker.MESSAGE, ""); //$NON-NLS-1$
+							String newMessage = new JavaModelStatus(IJavaModelStatusConstants.CLASSPATH_CYCLE,
+									project, cycleString).getMessage();
+							if (!newMessage.equals(existingMessage)) {
+								cycleMarker.setAttribute(IMarker.MESSAGE, newMessage);
+							}
 						} catch (CoreException e) {
 							throw new JavaModelException(e);
 						}
 					} else {
-						IJavaProject[] projectsInCycle;
-						String cycleString = "";	 //$NON-NLS-1$
-						if (cycleParticipants.isEmpty()) {
-							projectsInCycle = null;
-						} else {
-							projectsInCycle = new IJavaProject[cycleParticipants.size()];
-							Iterator it = cycleParticipants.iterator();
-							int k = 0;
-							while (it.hasNext()) {
-								//projectsInCycle[i++] = (IPath) it.next();
-								IResource member = workspaceRoot.findMember((IPath) it.next());
-								if (member != null && member.getType() == IResource.PROJECT){
-									projectsInCycle[k] = JavaCore.create((IProject)member);
-									if (projectsInCycle[k] != null) {
-										if (k != 0) cycleString += ", "; //$NON-NLS-1$
-										cycleString += projectsInCycle[k++].getElementName();
-									}
-								}
-							}
-						}
 						// create new marker
 						project.createClasspathProblemMarker(
 							new JavaModelStatus(IJavaModelStatusConstants.CLASSPATH_CYCLE, project, cycleString));
@@ -471,8 +471,25 @@ public class JavaProject
 		IClasspathEntry[] resolvedClasspath = getResolvedClasspath();
 
 		// compute the pkg fragment roots
-		info.setChildren(computePackageFragmentRoots(resolvedClasspath, false, null /*no reverse map*/));
-
+		IPackageFragmentRoot[] roots = computePackageFragmentRoots(resolvedClasspath, false, null /*no reverse map*/);
+		info.setChildren(roots);
+		IModuleDescription module = null;
+		IModuleDescription current = null;
+		for (IPackageFragmentRoot root : roots) {
+			if (root.getKind() != IPackageFragmentRoot.K_SOURCE)
+				continue;
+			module = root.getModuleDescription();
+			if (module != null) {
+				if (current != null) {
+					throw new JavaModelException(new Status(IStatus.ERROR, JavaCore.PLUGIN_ID, 
+							Messages.bind(Messages.classpath_duplicateEntryPath, TypeConstants.MODULE_INFO_FILE_NAME_STRING, getElementName())));
+				}
+				current = module;
+				JavaModelManager.getModulePathManager().addEntry(module, this);
+				//break; continue looking, there may be other roots containing module-info
+				info.setModule(module);
+			}
+		}
 		return true;
 	}
 
@@ -634,7 +651,10 @@ public class JavaProject
 							} else {
 								accumulatedRoots.addAll(info.jrtRoots.get(entryPath));
 							}
-						} else {
+						} else if (JavaModel.isJmod((File) target)) {
+							root = new JModPackageFragmentRoot(entryPath, this);
+						}
+						else {
 							root = new JarPackageFragmentRoot(entryPath, this);
 						}
 					} else if (((File) target).isDirectory()) {
@@ -990,9 +1010,9 @@ public class JavaProject
 			DocumentBuilder parser = DocumentBuilderFactory.newInstance().newDocumentBuilder();
 			cpElement = parser.parse(new InputSource(reader)).getDocumentElement();
 		} catch (SAXException e) {
-			throw new IOException(Messages.file_badFormat);
+			throw new IOException(Messages.file_badFormat, e);
 		} catch (ParserConfigurationException e) {
-			throw new IOException(Messages.file_badFormat);
+			throw new IOException(Messages.file_badFormat, e);
 		} finally {
 			reader.close();
 		}
@@ -1924,6 +1944,12 @@ public class JavaProject
 			return new ExternalPackageFragmentRoot(linkedFolder, externalLibraryPath, this);
 		if (JavaModelManager.isJrt(externalLibraryPath)) {
 			return this.new JImageModuleFragmentBridge(externalLibraryPath);
+		}
+		Object target = JavaModel.getTarget(externalLibraryPath, true/*check existency*/);
+		if (target instanceof File && JavaModel.isFile(target)) {
+			if (JavaModel.isJmod((File) target)) {
+				return new JModPackageFragmentRoot(externalLibraryPath, this);
+			}
 		}
 		return new JarPackageFragmentRoot(externalLibraryPath, this);
 	}
@@ -3329,5 +3355,34 @@ public class JavaProject
 			return newDoesNotExistStatus();
 		}
 		return JavaModelStatus.VERIFIED_OK;
+	}
+
+	public IModuleDescription getModuleDescription() throws JavaModelException {
+		JavaProjectElementInfo info = (JavaProjectElementInfo) getElementInfo();
+		return info.getModule();
+	}
+
+	public void setModuleDescription(IModuleDescription module) throws JavaModelException {
+		JavaProjectElementInfo info = (JavaProjectElementInfo) getElementInfo();	
+		IModuleDescription current = info.getModule();
+		if (current != null) {
+			IPackageFragmentRoot root = (IPackageFragmentRoot) current.getAncestor(IJavaElement.PACKAGE_FRAGMENT_ROOT);
+			IPackageFragmentRoot newRoot = (IPackageFragmentRoot) module.getAncestor(IJavaElement.PACKAGE_FRAGMENT_ROOT);
+			if (!root.equals(newRoot))
+				throw new JavaModelException(new Status(IStatus.ERROR, JavaCore.PLUGIN_ID,
+						Messages.bind(Messages.classpath_duplicateEntryPath, TypeConstants.MODULE_INFO_FILE_NAME_STRING, getElementName())));
+		}
+		info.setModule(module);
+	}
+	@Override
+	public ITypeLookup typeLookup() {
+		// No direct way to lookup, use the java model APIs instead
+		return ITypeLookup.Dummy;
+	}
+
+	@Override
+	public IPackageLookup packageLookup() {
+		// No direct way to lookup, use the java model APIs instead
+		return IPackageLookup.Dummy;
 	}
 }

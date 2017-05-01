@@ -1,3 +1,4 @@
+// ASPECTJ
 /*******************************************************************************
  * Copyright (c) 2000, 2014 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials

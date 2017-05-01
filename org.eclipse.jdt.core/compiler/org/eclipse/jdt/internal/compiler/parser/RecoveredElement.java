@@ -17,10 +17,10 @@ package org.eclipse.jdt.internal.compiler.parser;
 import org.eclipse.jdt.internal.compiler.ast.ASTNode;
 import org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.Block;
-import org.eclipse.jdt.internal.compiler.ast.ExportReference;
 import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ImportReference;
 import org.eclipse.jdt.internal.compiler.ast.LocalDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.ModuleStatement;
 import org.eclipse.jdt.internal.compiler.ast.Statement;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
 import org.eclipse.jdt.internal.compiler.util.Util;
@@ -76,13 +76,13 @@ public RecoveredElement add(Block nestedBlockDeclaration, int bracketBalanceValu
 /*
  *	Record an e reference
  */
-public RecoveredElement add(ExportReference exportReference, int bracketBalanceValue){
+public RecoveredElement add(ModuleStatement moduleStatement, int bracketBalanceValue){
 
 	/* default behavior is to delegate recording to parent if any */
 	resetPendingModifiers();
 	if (this.parent == null) return this; // ignore
-	this.updateSourceEndIfNecessary(previousAvailableLineEnd(exportReference.declarationSourceStart - 1));
-	return this.parent.add(exportReference, bracketBalanceValue);
+	this.updateSourceEndIfNecessary(previousAvailableLineEnd(moduleStatement.declarationSourceStart - 1));
+	return this.parent.add(moduleStatement, bracketBalanceValue);
 }
 /*
  * Record a field declaration

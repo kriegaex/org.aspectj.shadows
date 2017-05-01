@@ -1,6 +1,6 @@
 // ASPECTJ
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -89,6 +89,7 @@ public class BinaryTypeBinding extends SourceTypeBinding {
 //	protected MethodBinding[] methods;
 //	protected ReferenceBinding[] memberTypes;
 //	protected TypeVariableBinding[] typeVariables;
+//  protected ModuleBinding module;
 // End AspectJ Extension
 	private BinaryTypeBinding prototype;
 
@@ -275,7 +276,6 @@ public BinaryTypeBinding(PackageBinding packageBinding, IBinaryType binaryType, 
 	this.environment = environment;
 	this.fPackage = packageBinding;
 	this.fileName = binaryType.getFileName();
-	this.module = environment.getModule(binaryType.getModule());
 	/* https://bugs.eclipse.org/bugs/show_bug.cgi?id=324850, even in a 1.4 project, we
 	   must internalize type variables and observe any parameterization of super class
 	   and/or super interfaces in order to be able to detect overriding in the presence
@@ -314,7 +314,10 @@ public BinaryTypeBinding(PackageBinding packageBinding, IBinaryType binaryType, 
 	if (needFieldsAndMethods)
 		cachePartsFrom(binaryType, true);
 }
-
+public boolean canBeSeenBy(Scope sco) {
+	ModuleBinding mod = this.environment.getModule(sco.module());
+	return mod.canSee(this.fPackage) && super.canBeSeenBy(sco);
+}
 /**
  * @see org.eclipse.jdt.internal.compiler.lookup.ReferenceBinding#availableFields()
  */
@@ -626,7 +629,7 @@ private void createFields(IBinaryField[] iFields, IBinaryType binaryType, long s
 			for (int i = 0; i < size; i++) {
 				IBinaryField binaryField = iFields[i];
 				char[] fieldSignature = use15specifics ? binaryField.getGenericSignature() : null;
-				ITypeAnnotationWalker walker = getTypeAnnotationWalker(binaryField.getTypeAnnotations(), Binding.NO_NULL_DEFAULT);
+				ITypeAnnotationWalker walker = getTypeAnnotationWalker(binaryField.getTypeAnnotations(), getNullDefaultFrom(binaryField.getAnnotations()));
 				if (sourceLevel >= ClassFileConstants.JDK1_8) { // below 1.8, external annotations will be attached later
 					walker = binaryType.enrichWithExternalAnnotationsFor(walker, iFields[i], this.environment);
 				}
@@ -890,7 +893,7 @@ private MethodBinding createMethod(IBinaryMethod method, IBinaryType binaryType,
 		? new MethodBinding(methodModifiers, parameters, exceptions, this)
 		: new MethodBinding(methodModifiers, method.getSelector(), returnType, parameters, exceptions, this);
 	
-	IBinaryAnnotation[] receiverAnnotations = walker.toReceiver().getAnnotationsAtCursor(this.id);
+	IBinaryAnnotation[] receiverAnnotations = walker.toReceiver().getAnnotationsAtCursor(this.id, false);
 	if (receiverAnnotations != null && receiverAnnotations.length > 0) {
 		result.receiver = this.environment.createAnnotatedType(this, createAnnotations(receiverAnnotations, this.environment, missingTypeNames));
 	}
@@ -899,7 +902,7 @@ private MethodBinding createMethod(IBinaryMethod method, IBinaryType binaryType,
 		IBinaryAnnotation[] annotations = method.getAnnotations();
 	    if (annotations == null || annotations.length == 0)
 	    	if (method.isConstructor())
-	    		annotations = walker.toMethodReturn().getAnnotationsAtCursor(this.id); // FIXME: When both exist, order could become an issue.
+	    		annotations = walker.toMethodReturn().getAnnotationsAtCursor(this.id, false); // FIXME: When both exist, order could become an issue.
 		result.setAnnotations(
 			createAnnotations(annotations, this.environment, missingTypeNames),
 			paramAnnotations,
@@ -1013,7 +1016,7 @@ private TypeVariableBinding[] createTypeVariables(SignatureWrapper wrapper, bool
 						int colon = CharOperation.indexOf(Util.C_COLON, typeSignature, i);
 						char[] variableName = CharOperation.subarray(typeSignature, i, colon);
 						TypeVariableBinding typeVariable = new TypeVariableBinding(variableName, this, rank, this.environment);
-						AnnotationBinding [] annotations = BinaryTypeBinding.createAnnotations(walker.toTypeParameter(isClassTypeParameter, rank++).getAnnotationsAtCursor(0), 
+						AnnotationBinding [] annotations = BinaryTypeBinding.createAnnotations(walker.toTypeParameter(isClassTypeParameter, rank++).getAnnotationsAtCursor(0, false), 
 																										this.environment, missingTypeNames);
 						if (annotations != null && annotations != Binding.NO_ANNOTATIONS)
 							typeVariable.setTypeAnnotations(annotations, this.environment.globalOptions.isAnnotationBasedNullAnalysisEnabled);
@@ -1319,8 +1322,7 @@ public MethodBinding[] getMethodsBase(char[] selector, int suggestedParameterLen
 		int length = end - start + 1;
 		int count = 0;
 		for (int i = start; i <= end; i++) {
-			int len = this.methods[i].parameters.length;
-			if (len <= suggestedParameterLength || (this.methods[i].isVarargs() && len == suggestedParameterLength + 1))
+			if (this.methods[i].doesParameterLengthMatch(suggestedParameterLength))
 				count++;
 		}
 		if (count == 0) {
@@ -1333,8 +1335,7 @@ public MethodBinding[] getMethodsBase(char[] selector, int suggestedParameterLen
 			MethodBinding[] result = new MethodBinding[count];
 			// iterate methods to resolve them
 			for (int i = start, index = 0; i <= end; i++) {
-				int len = this.methods[i].parameters.length;
-				if (len <= suggestedParameterLength || (this.methods[i].isVarargs() && len == suggestedParameterLength + 1))
+				if (this.methods[i].doesParameterLengthMatch(suggestedParameterLength))
 					result[index++] = resolveTypesFor(this.methods[i]);
 			}
 			return result;
@@ -1636,9 +1637,14 @@ private void scanFieldForNullAnnotation(IBinaryField field, FieldBinding fieldBi
 		if (fieldType != null
 				&& !fieldType.isBaseType()
 				&& (fieldType.tagBits & TagBits.AnnotationNullMASK) == 0
-				&& fieldType.acceptsNonNullDefault()
-				&& hasNonNullDefaultFor(DefaultLocationField, true)) {
-			fieldBinding.type = this.environment.createAnnotatedType(fieldType, new AnnotationBinding[]{this.environment.getNonNullAnnotation()});
+				&& fieldType.acceptsNonNullDefault()) {
+				int nullDefaultFromField = getNullDefaultFrom(field.getAnnotations());
+				if (nullDefaultFromField == Binding.NO_NULL_DEFAULT
+						? hasNonNullDefaultFor(DefaultLocationField, true, -1)
+						: (nullDefaultFromField & DefaultLocationField) != 0) {
+					fieldBinding.type = this.environment.createAnnotatedType(fieldType,
+							new AnnotationBinding[] { this.environment.getNonNullAnnotation() });
+		}
 		}
 		return; // not using fieldBinding.tagBits when we have type annotations.
 	}
@@ -1650,7 +1656,7 @@ private void scanFieldForNullAnnotation(IBinaryField field, FieldBinding fieldBi
 
 	boolean explicitNullness = false;
 	IBinaryAnnotation[] annotations = externalAnnotationWalker != ITypeAnnotationWalker.EMPTY_ANNOTATION_WALKER
-											? externalAnnotationWalker.getAnnotationsAtCursor(fieldBinding.type.id) 
+											? externalAnnotationWalker.getAnnotationsAtCursor(fieldBinding.type.id, false) 
 											: field.getAnnotations();
 	if (annotations != null) {
 		for (int i = 0; i < annotations.length; i++) {
@@ -1703,7 +1709,7 @@ private void scanMethodForNullAnnotation(IBinaryMethod method, MethodBinding met
 	// return:
 	ITypeAnnotationWalker returnWalker = externalAnnotationWalker.toMethodReturn();
 	IBinaryAnnotation[] annotations = returnWalker != ITypeAnnotationWalker.EMPTY_ANNOTATION_WALKER
-								? returnWalker.getAnnotationsAtCursor(methodBinding.returnType.id)
+								? returnWalker.getAnnotationsAtCursor(methodBinding.returnType.id, false)
 								: method.getAnnotations();
 	if (annotations != null) {
 		for (int i = 0; i < annotations.length; i++) {
@@ -1724,8 +1730,20 @@ private void scanMethodForNullAnnotation(IBinaryMethod method, MethodBinding met
 				}
 			} else if (typeBit == TypeIds.BitNonNullAnnotation) {
 					methodBinding.tagBits |= TagBits.AnnotationNonNull;
+				if (this.environment.usesNullTypeAnnotations()) {
+					if (methodBinding.returnType != null && !methodBinding.returnType.hasNullTypeAnnotations()) {
+						methodBinding.returnType = this.environment.createAnnotatedType(methodBinding.returnType,
+								new AnnotationBinding[] { this.environment.getNonNullAnnotation() });
+					}
+				}
 			} else if (typeBit == TypeIds.BitNullableAnnotation) {
 					methodBinding.tagBits |= TagBits.AnnotationNullable;
+				if (this.environment.usesNullTypeAnnotations()) {
+					if (methodBinding.returnType != null && !methodBinding.returnType.hasNullTypeAnnotations()) {
+						methodBinding.returnType = this.environment.createAnnotatedType(methodBinding.returnType,
+								new AnnotationBinding[] { this.environment.getNullableAnnotation() });
+					}
+				}
 			}
 		}
 	}
@@ -1742,7 +1760,7 @@ private void scanMethodForNullAnnotation(IBinaryMethod method, MethodBinding met
 				int startIndex = numParamAnnotations - numVisibleParams;
 				ITypeAnnotationWalker parameterWalker = externalAnnotationWalker.toMethodParameter((short) (j+startIndex));
 				IBinaryAnnotation[] paramAnnotations = parameterWalker != ITypeAnnotationWalker.EMPTY_ANNOTATION_WALKER
-															? parameterWalker.getAnnotationsAtCursor(parameters[j].id)
+															? parameterWalker.getAnnotationsAtCursor(parameters[j].id, false)
 															: method.getParameterAnnotations(j+startIndex, this.fileName);
 				if (paramAnnotations != null) {
 					for (int i = 0; i < paramAnnotations.length; i++) {
@@ -1754,11 +1772,27 @@ private void scanMethodForNullAnnotation(IBinaryMethod method, MethodBinding met
 							if (methodBinding.parameterNonNullness == null)
 								methodBinding.parameterNonNullness = new Boolean[numVisibleParams];
 							methodBinding.parameterNonNullness[j] = Boolean.TRUE;
+							if (this.environment.usesNullTypeAnnotations()) {
+								if (methodBinding.parameters[j] != null
+										&& !methodBinding.parameters[j].hasNullTypeAnnotations()) {
+									methodBinding.parameters[j] = this.environment.createAnnotatedType(
+											methodBinding.parameters[j],
+											new AnnotationBinding[] { this.environment.getNonNullAnnotation() });
+								}
+							}
 							break;
 						} else if (typeBit == TypeIds.BitNullableAnnotation) {
 							if (methodBinding.parameterNonNullness == null)
 								methodBinding.parameterNonNullness = new Boolean[numVisibleParams];
 							methodBinding.parameterNonNullness[j] = Boolean.FALSE;
+							if (this.environment.usesNullTypeAnnotations()) {
+								if (methodBinding.parameters[j] != null
+										&& !methodBinding.parameters[j].hasNullTypeAnnotations()) {
+									methodBinding.parameters[j] = this.environment.createAnnotatedType(
+											methodBinding.parameters[j],
+											new AnnotationBinding[] { this.environment.getNullableAnnotation() });
+								}
+							}
 							break;
 						}
 					}
@@ -1767,7 +1801,9 @@ private void scanMethodForNullAnnotation(IBinaryMethod method, MethodBinding met
 		}
 	}
 	if (useNullTypeAnnotations && this.externalAnnotationStatus.isPotentiallyUnannotatedLib()) {
-		if (methodBinding.returnType.hasNullTypeAnnotations()) {
+		if (methodBinding.returnType.hasNullTypeAnnotations() 
+				|| (methodBinding.tagBits & TagBits.AnnotationNullMASK) != 0 
+				|| methodBinding.parameterNonNullness != null) {
 			this.externalAnnotationStatus = ExternalAnnotationStatus.TYPE_IS_ANNOTATED;
 		} else {
 			for (TypeBinding parameter : parameters) {
@@ -1835,7 +1871,9 @@ private void scanTypeForNullDefaultAnnotation(IBinaryType binaryType, PackageBin
 			}
 	// no annotation found on the type or its enclosing types
 	// check the package-info for default annotation if not already done before
-	if (packageBinding.defaultNullness == Binding.NO_NULL_DEFAULT && !isPackageInfo) {
+	if (packageBinding.defaultNullness == Binding.NO_NULL_DEFAULT && !isPackageInfo
+			&& ((this.typeBits & (TypeIds.BitAnyNullAnnotation)) == 0))
+	{
 		// this will scan the annotations in package-info
 		ReferenceBinding packageInfo = packageBinding.getType(TypeConstants.PACKAGE_INFO_NAME, null);
 		if (packageInfo == null) {
@@ -2127,6 +2165,9 @@ public FieldBinding[] unResolvedFields() {
 		return this.prototype.unResolvedFields();
 	
 	return this.fields;
+}
+public ModuleBinding module() {
+	return this.module;
 }
 
 //AspectJ Extension

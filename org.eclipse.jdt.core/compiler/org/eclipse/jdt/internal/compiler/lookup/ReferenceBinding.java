@@ -1,6 +1,6 @@
 // ASPECTJ
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -40,6 +40,7 @@
  *								Bug 452788 - [1.8][compiler] Type not correctly inferred in lambda expression
  *								Bug 446442 - [1.8] merge null annotations from super methods
  *								Bug 456532 - [1.8][null] ReferenceBinding.appendNullAnnotation() includes phantom annotations in error messages
+ *								Bug 410218 - Optional warning for arguments of "unexpected" types to Map#get(Object), Collection#remove(Object) et al.
  *      Jesper S Moller - Contributions for
  *								bug 382701 - [1.8][compiler] Implement semantic analysis of Lambda expressions & Reference expression
  *								bug 412153 - [1.8][compiler] Check validity of annotations which may be repeatable
@@ -283,6 +284,9 @@ public final boolean innerCanBeSeenBy(ReferenceBinding receiverType, ReferenceBi
     // End AspectJ Extension - this is the original implementation
     if (isPublic()) return true;
 
+	if (isStatic() && (receiverType.isRawType() || receiverType.isParameterizedType()))
+		receiverType = receiverType.actualType(); // outer generics are irrelevant
+
 	if (TypeBinding.equalsEquals(invocationType, this) && TypeBinding.equalsEquals(invocationType, receiverType)) return true;
 
 	if (isProtected()) {
@@ -439,7 +443,7 @@ public final boolean innerCanBeSeenBy(Scope scope) {
 
 public char[] computeGenericTypeSignature(TypeVariableBinding[] typeVariables) {
 
-	boolean isMemberOfGeneric = isMemberType() && (enclosingType().modifiers & ExtraCompilerModifiers.AccGenericSignature) != 0;
+	boolean isMemberOfGeneric = isMemberType() && !isStatic() && (enclosingType().modifiers & ExtraCompilerModifiers.AccGenericSignature) != 0;
 	if (typeVariables == Binding.NO_TYPE_VARIABLES && !isMemberOfGeneric) {
 		return signature();
 	}
@@ -543,12 +547,26 @@ public void computeId() {
 						if (CharOperation.equals(packageName, TypeConstants.UTIL)) {
 							switch (typeName[0]) {
 								case 'C' :
-									if (CharOperation.equals(typeName, TypeConstants.JAVA_UTIL_COLLECTION[2]))
+									if (CharOperation.equals(typeName, TypeConstants.JAVA_UTIL_COLLECTION[2])) {
 										this.id = TypeIds.T_JavaUtilCollection;
+										this.typeBits |= TypeIds.BitCollection;
+									}										
 									return;
 								case 'I' :
 									if (CharOperation.equals(typeName, TypeConstants.JAVA_UTIL_ITERATOR[2]))
 										this.id = TypeIds.T_JavaUtilIterator;
+									return;
+								case 'L' :
+									if (CharOperation.equals(typeName, TypeConstants.JAVA_UTIL_LIST[2])) {
+										this.id = TypeIds.T_JavaUtilList;
+										this.typeBits |= TypeIds.BitList;
+									}										
+									return;
+								case 'M' :
+									if (CharOperation.equals(typeName, TypeConstants.JAVA_UTIL_MAP[2])) {
+										this.id = TypeIds.T_JavaUtilMap;
+										this.typeBits |= TypeIds.BitMap;
+									}
 									return;
 								case 'O' :
 									if (CharOperation.equals(typeName, TypeConstants.JAVA_UTIL_OBJECTS[2]))
@@ -1175,7 +1193,7 @@ public boolean hasMemberTypes() {
  * for 1.8 check if the default is applicable to the given kind of location.
  */
 // pre: null annotation analysis is enabled
-boolean hasNonNullDefaultFor(int location, boolean useTypeAnnotations) {
+boolean hasNonNullDefaultFor(int location, boolean useTypeAnnotations, int sourceStart) {
 	// Note, STB overrides for correctly handling local types
 	ReferenceBinding currentType = this;
 	while (currentType != null) {
@@ -1703,12 +1721,16 @@ public char[] qualifiedSourceName() {
  * NOTE: This method should only be used during/after code gen.
  */
 public char[] readableName() /*java.lang.Object,  p.X<T> */ {
+	return readableName(true);
+}
+public char[] readableName(boolean showGenerics) /*java.lang.Object,  p.X<T> */ {
     char[] readableName;
 	if (isMemberType()) {
-		readableName = CharOperation.concat(enclosingType().readableName(), this.sourceName, '.');
+		readableName = CharOperation.concat(enclosingType().readableName(showGenerics && !isStatic()), this.sourceName, '.');
 	} else {
 		readableName = CharOperation.concatWith(this.compoundName, '.');
 	}
+	if (showGenerics) {
 	TypeVariableBinding[] typeVars;
 	if ((typeVars = typeVariables()) != Binding.NO_TYPE_VARIABLES) {
 	    StringBuffer nameBuffer = new StringBuffer(10);
@@ -1721,6 +1743,7 @@ public char[] readableName() /*java.lang.Object,  p.X<T> */ {
 		int nameLength = nameBuffer.length();
 		readableName = new char[nameLength];
 		nameBuffer.getChars(0, nameLength, readableName, 0);
+	}
 	}
 	return readableName;
 }
@@ -1846,12 +1869,16 @@ char[] nullAnnotatedShortReadableName(CompilerOptions options) {
 }
 
 public char[] shortReadableName() /*Object*/ {
+	return shortReadableName(true);
+}
+public char[] shortReadableName(boolean showGenerics) /*Object*/ {
 	char[] shortReadableName;
 	if (isMemberType()) {
-		shortReadableName = CharOperation.concat(enclosingType().shortReadableName(), this.sourceName, '.');
+		shortReadableName = CharOperation.concat(enclosingType().shortReadableName(showGenerics && !isStatic()), this.sourceName, '.');
 	} else {
 		shortReadableName = this.sourceName;
 	}
+	if (showGenerics) {
 	TypeVariableBinding[] typeVars;
 	if ((typeVars = typeVariables()) != Binding.NO_TYPE_VARIABLES) {
 	    StringBuffer nameBuffer = new StringBuffer(10);
@@ -1864,6 +1891,7 @@ public char[] shortReadableName() /*Object*/ {
 		int nameLength = nameBuffer.length();
 		shortReadableName = new char[nameLength];
 		nameBuffer.getChars(0, nameLength, shortReadableName, 0);
+	}
 	}
 	return shortReadableName;
 }
@@ -2211,5 +2239,8 @@ public static boolean isConsistentIntersection(TypeBinding[] intersectingTypes) 
 			return false;
 	}
 	return true;
+}
+public ModuleBinding module() {
+	return null;
 }
 }

@@ -528,6 +528,9 @@ public FlowInfo getInitsForFinalBlankInitializationCheck(TypeBinding declaringTy
 			inits = initializationContext.initsBeforeContext;
 			current = initializationContext.initializationParent;
 		} else if (current instanceof ExceptionHandlingFlowContext) {
+			if(current instanceof FieldInitsFakingFlowContext) {
+				return FlowInfo.DEAD_END; // isDefinitelyAssigned will return true for all fields
+			}
 			ExceptionHandlingFlowContext exceptionContext = (ExceptionHandlingFlowContext) current;
 			current = exceptionContext.initializationParent == null ? exceptionContext.parent : exceptionContext.initializationParent;
 		} else {
@@ -535,7 +538,7 @@ public FlowInfo getInitsForFinalBlankInitializationCheck(TypeBinding declaringTy
 		}
 	} while (current != null);
 	// not found
-	return null;
+	throw new IllegalStateException(declaringType.debugName());
 }
 
 /*

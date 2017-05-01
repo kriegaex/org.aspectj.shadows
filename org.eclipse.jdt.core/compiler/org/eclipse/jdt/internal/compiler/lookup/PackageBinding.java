@@ -56,7 +56,7 @@ public PackageBinding(char[][] compoundName, PackageBinding parent, LookupEnviro
 public PackageBinding(LookupEnvironment environment) {
 	this(CharOperation.NO_CHAR_CHAR, null, environment);
 }
-private void addNotFoundPackage(char[] simpleName) {
+/*private*/ void addNotFoundPackage(char[] simpleName) {
 	this.knownPackages.put(simpleName, LookupEnvironment.TheNotFoundPackage);
 }
 private void addNotFoundType(char[] simpleName) {
@@ -96,13 +96,16 @@ public char[] computeUniqueKey(boolean isLeaf) {
 	return CharOperation.concatWith(this.compoundName, '/');
 }
 private PackageBinding findPackage(char[] name, char[] mod) {
-	if (!this.environment.isPackage(this.compoundName, name, mod))
+	ModuleBinding module = this.environment.getModule(mod);
+	PackageBinding sub = module == null ? null : module.getPackage(this.compoundName, name);
+	if (sub == null)
 		return null;
 
-	char[][] subPkgCompoundName = CharOperation.arrayConcat(this.compoundName, name);
-	PackageBinding subPackageBinding = new PackageBinding(subPkgCompoundName, this, this.environment);
-	addPackage(subPackageBinding);
-	return subPackageBinding;
+//	char[][] subPkgCompoundName = CharOperation.arrayConcat(this.compoundName, name);
+//	PackageBinding subPackageBinding = new PackageBinding(subPkgCompoundName, this, this.environment);
+//	addPackage(subPackageBinding);
+//	return subPackageBinding;
+	return sub;
 }
 /* Answer the subpackage named name; ask the oracle for the package if its not in the cache.
 * Answer null if it could not be resolved.
@@ -199,22 +202,10 @@ public Binding getTypeOrPackage(char[] name, char[] mod) {
 
 	PackageBinding packageBinding = getPackage0(name);
 	if (packageBinding != null && packageBinding != LookupEnvironment.TheNotFoundPackage) {
-		return packageBinding;
+		return (packageBinding.canBeSeenBy(mod)) ? packageBinding : null;
+		//return packageBinding;
 	}
-
-	if (packageBinding == null) { // have not looked for it before
-		if ((packageBinding = findPackage(name, mod)) != null) {
-			return packageBinding;
-		}
-		if (referenceBinding != null && referenceBinding != LookupEnvironment.TheNotFoundType) {
-			return referenceBinding; // found cached missing type - check if package conflict
-		}
-		addNotFoundPackage(name);
-	}
-
 	if (referenceBinding == null) { // have not looked for it before
-		//This call (to askForType) should be the last option to call, because the call is very expensive regarding performance
-		// (a search for secondary types may get triggered which requires to parse all classes of a package).
 		if ((referenceBinding = this.environment.askForType(this, name, mod)) != null) {
 			if (referenceBinding.isNestedType()) {
 				return new ProblemReferenceBinding(new char[][]{name}, referenceBinding, ProblemReasons.InternalNameProvided);
@@ -234,7 +225,7 @@ public Binding getTypeOrPackage(char[] name, char[] mod) {
 		if (referenceBinding != null && referenceBinding != LookupEnvironment.TheNotFoundType) {
 			return referenceBinding; // found cached missing type - check if package conflict
 		}
-		addNotFoundPackage(name);
+		//addNotFoundPackage(name); Not a package in module mod does not mean not a package at all
 	}
 
 	return null;
@@ -277,7 +268,10 @@ void checkIfNullAnnotationPackage() {
 			env.nonnullByDefaultAnnotationPackage = this;
 	}
 }
-
+public boolean canBeSeenBy(char[] clientModule) {
+	ModuleBinding client = this.environment.getModule(clientModule);
+	return client.canSee(this);
+}
 private boolean isPackageOfQualifiedTypeName(char[][] packageName, char[][] typeName) {
 	int length;
 	if (typeName == null || (length = packageName.length) != typeName.length -1)

@@ -1,10 +1,14 @@
 /*******************************************************************************
- * Copyright (c) 2004, 2011 IBM Corporation and others.
+ * Copyright (c) 2004, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
  * 
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *******************************************************************************/
@@ -879,7 +883,7 @@ public class CompletionProposal {
 	 * <code>"module com.greetings"</code>.
 	 *
 	 * @see #getKind()
-	 * @since 3.12
+	 * @since 3.13 BETA_JAVA9
 	 */
 	public static final int MODULE_DECLARATION = 28;
 
@@ -892,7 +896,7 @@ public class CompletionProposal {
 	 * <code> "to com.g^"</code> to <code>"to com.greetings</code>
 	 *
 	 * @see #getKind()
-	 * @since 3.12
+	 * @since 3.13 BETA_JAVA9
 	 */
 	public static final int MODULE_REF = 29;
 	/**
@@ -1179,7 +1183,7 @@ public class CompletionProposal {
 	}
 
 	/**
-	 * Returns the type signature or package name of the relevant
+	 * Returns the type signature or package name or module name (1.9) of the relevant
 	 * declaration in the context, or <code>null</code> if none.
 	 * <p>
 	 * This field is available for the following kinds of
@@ -1204,6 +1208,8 @@ public class CompletionProposal {
 	 * 	<li><code>METHOD_DECLARATION</code> - type signature
 	 * of the type that declares the method that is being
 	 * implemented or overridden</li>
+	 * 	<li><code>MODULE_REF</code> - 
+	 * name of the module that is referenced</li>
 	 * 	<li><code>PACKAGE_REF</code> - dot-based package
 	 * name of the package that is referenced</li>
 	 * 	<li><code>TYPE_IMPORT</code> - dot-based package
@@ -1218,7 +1224,7 @@ public class CompletionProposal {
 	 * returned.
 	 * </p>
 	 *
-	 * @return a type signature or a package name (depending
+	 * @return a type signature or a package name or module name (1.9) (depending
 	 * on the kind of completion), or <code>null</code> if none
 	 * @see Signature
 	 */
@@ -1254,7 +1260,7 @@ public class CompletionProposal {
 	}
 
 	/**
-	 * Sets the type or package signature of the relevant
+	 * Sets the type or package or module(1.9) signature of the relevant
 	 * declaration in the context, or <code>null</code> if none.
 	 * <p>
 	 * If not set, defaults to none.
@@ -1264,7 +1270,7 @@ public class CompletionProposal {
 	 * its properties; this method is not intended to be used by other clients.
 	 * </p>
 	 *
-	 * @param signature the type or package signature, or
+	 * @param signature the type or package  or module(1.9) signature, or
 	 * <code>null</code> if none
 	 */
 	public void setDeclarationSignature(char[] signature) {

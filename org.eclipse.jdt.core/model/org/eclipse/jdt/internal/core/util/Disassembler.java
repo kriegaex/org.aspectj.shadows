@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -183,55 +187,13 @@ public class Disassembler extends ClassFileBytesDisassembler {
 		StringBuffer buffer = new StringBuffer();
 		for (int i = 0, max = chars.length; i < max; i++) {
 			char c = chars[i];
-			escapeChar(buffer, c);
+			org.eclipse.jdt.internal.compiler.util.Util.appendEscapedChar(buffer, c, true);
 		}
 		return buffer.toString();
 	}
 
 	private static void escapeChar(StringBuffer buffer, char c) {
-		switch(c) {
-			case '\b' :
-				buffer.append("\\b"); //$NON-NLS-1$
-				break;
-			case '\t' :
-				buffer.append("\\t"); //$NON-NLS-1$
-				break;
-			case '\n' :
-				buffer.append("\\n"); //$NON-NLS-1$
-				break;
-			case '\f' :
-				buffer.append("\\f"); //$NON-NLS-1$
-				break;
-			case '\r' :
-				buffer.append("\\r"); //$NON-NLS-1$
-				break;
-			case '\0' :
-				buffer.append("\\0"); //$NON-NLS-1$
-				break;
-			case '\1' :
-				buffer.append("\\1"); //$NON-NLS-1$
-				break;
-			case '\2' :
-				buffer.append("\\2"); //$NON-NLS-1$
-				break;
-			case '\3' :
-				buffer.append("\\3"); //$NON-NLS-1$
-				break;
-			case '\4' :
-				buffer.append("\\4"); //$NON-NLS-1$
-				break;
-			case '\5' :
-				buffer.append("\\5"); //$NON-NLS-1$
-				break;
-			case '\6' :
-				buffer.append("\\6"); //$NON-NLS-1$
-				break;
-			case '\7' :
-				buffer.append("\\7"); //$NON-NLS-1$
-				break;
-			default:
-				buffer.append(c);
-		}
+		org.eclipse.jdt.internal.compiler.util.Util.appendEscapedChar(buffer, c, false);
 	}
 
 	static String decodeStringValue(String s) {
@@ -1016,6 +978,8 @@ public class Disassembler extends ClassFileBytesDisassembler {
 				versionNumber = JavaCore.VERSION_1_7;
 			} else if (minorVersion == 0 && majorVersion == 52) {
 				versionNumber = JavaCore.VERSION_1_8;
+			} else if (minorVersion == 0 && majorVersion == 53) {
+				versionNumber = JavaCore.VERSION_9;
 			}
 			buffer.append(
 				Messages.bind(Messages.classfileformat_versiondetails,
@@ -1281,9 +1245,9 @@ public class Disassembler extends ClassFileBytesDisassembler {
 		try {
 			codeAttribute.traverse(visitor);
 		} catch(ClassFormatException e) {
-			dumpTab(tabNumber + 2, buffer);
+			dumpTab(tabNumber + 3, buffer);
 			buffer.append(Messages.classformat_classformatexception);
-			writeNewLine(buffer, lineSeparator, tabNumber + 1);
+			writeNewLine(buffer, lineSeparator, tabNumber - 1);
 		}
 		final int exceptionTableLength = codeAttribute.getExceptionTableLength();
 		boolean isFirstAttribute = true;

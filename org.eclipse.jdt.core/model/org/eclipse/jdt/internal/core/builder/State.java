@@ -24,6 +24,7 @@ import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
 import org.eclipse.jdt.internal.compiler.env.INameEnvironment;
 import org.eclipse.jdt.internal.compiler.env.AccessRule;
 import org.eclipse.jdt.internal.compiler.util.SimpleLookupTable;
+import org.eclipse.jdt.internal.compiler.util.Util;
 import org.eclipse.jdt.internal.core.ClasspathAccessRule;
 import org.eclipse.jdt.internal.core.JavaModelManager;
 
@@ -53,7 +54,7 @@ private long previousStructuralBuildTime;
 private StringSet structurallyChangedTypes;
 public static int MaxStructurallyChangedTypes = 100; // keep track of ? structurally changed types, otherwise consider all to be changed
 
-public static final byte VERSION = 0x001D;
+public static final byte VERSION = 0x001E;
 
 static final byte SOURCE_FOLDER = 1;
 static final byte BINARY_FOLDER = 2;
@@ -275,13 +276,17 @@ static State read(IProject project, DataInputStream in) throws IOException {
 				IContainer outputFolder = path.segmentCount() == 1
 					? (IContainer) root.getProject(path.toString())
 					: (IContainer) root.getFolder(path);
-				newState.binaryLocations[i] = ClasspathLocation.forBinaryFolder(outputFolder, in.readBoolean(), readRestriction(in), new Path(in.readUTF()), newState.environment);
+					newState.binaryLocations[i] = ClasspathLocation.forBinaryFolder(outputFolder, in.readBoolean(),
+							readRestriction(in), new Path(in.readUTF()), newState.environment, in.readBoolean());
 				break;
 			case EXTERNAL_JAR :
-				newState.binaryLocations[i] = ClasspathLocation.forLibrary(in.readUTF(), in.readLong(), readRestriction(in), new Path(in.readUTF()), newState.environment);
+				String jarPath = in.readUTF();
+				newState.binaryLocations[i] = ClasspathLocation.forLibrary(jarPath, in.readLong(),
+							readRestriction(in), new Path(in.readUTF()), newState.environment, Util.isJrt(jarPath) ? false : in.readBoolean());
 				break;
 			case INTERNAL_JAR :
-				newState.binaryLocations[i] = ClasspathLocation.forLibrary(root.getFile(new Path(in.readUTF())), readRestriction(in), new Path(in.readUTF()), newState.environment);
+					newState.binaryLocations[i] = ClasspathLocation.forLibrary(root.getFile(new Path(in.readUTF())),
+							readRestriction(in), new Path(in.readUTF()), newState.environment, in.readBoolean());
 		}
 	}
 
@@ -462,6 +467,7 @@ void write(DataOutputStream out) throws IOException {
 			out.writeBoolean(cd.isOutputFolder);
 			writeRestriction(cd.accessRuleSet, out);
 			out.writeUTF(cd.externalAnnotationPath != null ? cd.externalAnnotationPath : ""); //$NON-NLS-1$
+			out.writeBoolean(cd.isAutomaticModule());
 		} else if (c instanceof ClasspathJar) {
 			ClasspathJar jar = (ClasspathJar) c;
 			if (jar.resource == null) {
@@ -474,6 +480,7 @@ void write(DataOutputStream out) throws IOException {
 			}
 			writeRestriction(jar.accessRuleSet, out);
 			out.writeUTF(jar.externalAnnotationPath != null ? jar.externalAnnotationPath : ""); //$NON-NLS-1$
+			out.writeBoolean(jar.isAutomaticModule());
 		} else {
 			ClasspathJrt jrt = (ClasspathJrt) c;
 			out.writeByte(EXTERNAL_JAR);

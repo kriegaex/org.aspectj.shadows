@@ -50,18 +50,15 @@ public FlowInfo analyseAssignment(BlockScope currentScope, FlowContext flowConte
 			currentScope,
 			flowContext,
 			analyseCode(currentScope, flowContext, flowInfo).unconditionalInits());
-	if ((this.resolvedType.tagBits & TagBits.AnnotationNonNull) != 0) {
-		int nullStatus = assignment.expression.nullStatus(flowInfo, flowContext);
-		if (nullStatus != FlowInfo.NON_NULL) {
-			currentScope.problemReporter().nullityMismatch(this, assignment.expression.resolvedType, this.resolvedType, nullStatus, currentScope.environment().getNonNullAnnotationName());
-		}
+	if (currentScope.environment().usesNullTypeAnnotations()) {
+		checkAgainstNullTypeAnnotation(currentScope, this.resolvedType, assignment.expression, flowContext, flowInfo);
 	}
 	return flowInfo;
 }
 
 public FlowInfo analyseCode(BlockScope currentScope, FlowContext flowContext, FlowInfo flowInfo) {
-	this.receiver.checkNPE(currentScope, flowContext, flowInfo, 1);
 	flowInfo = this.receiver.analyseCode(currentScope, flowContext, flowInfo);
+	this.receiver.checkNPE(currentScope, flowContext, flowInfo, 1);
 	flowInfo = this.position.analyseCode(currentScope, flowContext, flowInfo);
 	this.position.checkNPEbyUnboxing(currentScope, flowContext, flowInfo);
 	// account for potential ArrayIndexOutOfBoundsException:
@@ -222,5 +219,12 @@ public void traverse(ASTVisitor visitor, BlockScope scope) {
 		this.position.traverse(visitor, scope);
 	}
 	visitor.endVisit(this, scope);
+}
+
+public int nullStatus(FlowInfo flowInfo, FlowContext flowContext) {
+	if (this.resolvedType != null && (this.resolvedType.tagBits & TagBits.AnnotationNullMASK) == 0L && this.resolvedType.isFreeTypeVariable()) {
+		return FlowInfo.FREE_TYPEVARIABLE;
+	}
+	return super.nullStatus(flowInfo, flowContext);
 }
 }

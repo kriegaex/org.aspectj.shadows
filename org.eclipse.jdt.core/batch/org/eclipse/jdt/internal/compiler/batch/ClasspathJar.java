@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -24,8 +24,6 @@ package org.eclipse.jdt.internal.compiler.batch;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.FileVisitResult;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashSet;
@@ -38,18 +36,23 @@ import java.util.zip.ZipFile;
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileReader;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFormatException;
+import org.eclipse.jdt.internal.compiler.classfmt.ExternalAnnotationDecorator;
 import org.eclipse.jdt.internal.compiler.classfmt.ExternalAnnotationProvider;
 import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
 import org.eclipse.jdt.internal.compiler.env.IModule;
+import org.eclipse.jdt.internal.compiler.env.IModuleEnvironment;
 import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
-import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
-import org.eclipse.jdt.internal.compiler.util.JRTUtil;
+import org.eclipse.jdt.internal.compiler.env.IPackageLookup;
+import org.eclipse.jdt.internal.compiler.env.ITypeLookup;
+import org.eclipse.jdt.internal.compiler.env.IBinaryType;
+import org.eclipse.jdt.internal.compiler.lookup.BinaryTypeBinding.ExternalAnnotationStatus;
+import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment.AutoModule;
 import org.eclipse.jdt.internal.compiler.util.ManifestAnalyzer;
 import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
 import org.eclipse.jdt.internal.compiler.util.Util;
 
 @SuppressWarnings({"rawtypes", "unchecked"})
-public class ClasspathJar extends ClasspathLocation {
+public class ClasspathJar extends ClasspathLocation implements IModuleEnvironment {
 
 	// AspectJ Extension
 	/**
@@ -79,8 +82,6 @@ protected ZipFile annotationZipFile;
 protected boolean closeZipFileAtEnd;
 private Set<String> packageCache;
 protected List<String> annotationPaths;
-protected boolean isJrt;
-
 
 // AspectJ Extension	
 static {
@@ -91,17 +92,15 @@ static {
 // End AspectJ Extension
 
 public ClasspathJar(File file, boolean closeZipFileAtEnd,
-		AccessRuleSet accessRuleSet, String destinationPath, boolean isJrt) {
+		AccessRuleSet accessRuleSet, String destinationPath) {
 	super(accessRuleSet, destinationPath);
 	this.file = file;
-	this.isJrt = isJrt;
 	this.closeZipFileAtEnd = closeZipFileAtEnd;
 }
 
 public List fetchLinkedJars(FileSystem.ClasspathSectionProblemReporter problemReporter) {
 	// expected to be called once only - if multiple calls desired, consider
 	// using a cache
-	if (this.isJrt) return null;
 	InputStream inputStream = null;
 	try {
 		initialize();
@@ -125,7 +124,8 @@ public List fetchLinkedJars(FileSystem.ClasspathSectionProblemReporter problemRe
 				int lastSeparator = directoryPath.lastIndexOf(File.separatorChar);
 				directoryPath = directoryPath.substring(0, lastSeparator + 1); // potentially empty (see bug 214731)
 				while (calledFilesIterator.hasNext()) {
-					result.add(new ClasspathJar(new File(directoryPath + (String) calledFilesIterator.next()), this.closeZipFileAtEnd, this.accessRuleSet, this.destinationPath, false));
+						result.add(new ClasspathJar(new File(directoryPath + (String) calledFilesIterator.next()),
+								this.closeZipFileAtEnd, this.accessRuleSet, this.destinationPath));
 				}
 			}
 		}
@@ -144,38 +144,45 @@ public List fetchLinkedJars(FileSystem.ClasspathSectionProblemReporter problemRe
 		}
 	}
 }
-public NameEnvironmentAnswer findClass(String typeName, String qualifiedPackageName, String qualifiedBinaryFileName, IModule mod) {
-	return findClass(typeName, qualifiedPackageName, qualifiedBinaryFileName, false, mod);
+public NameEnvironmentAnswer findClass(char[] typeName, String qualifiedPackageName, String qualifiedBinaryFileName) {
+	return findClass(typeName, qualifiedPackageName, qualifiedBinaryFileName, false);
 }
-public NameEnvironmentAnswer findClass(String typeName, String qualifiedPackageName, String qualifiedBinaryFileName, boolean asBinaryOnly, IModule mod) {
+public NameEnvironmentAnswer findClass(char[] typeName, String qualifiedPackageName, String qualifiedBinaryFileName, boolean asBinaryOnly) {
 	if (!isPackage(qualifiedPackageName))
 		return null; // most common case
 
 	try {
 	    ensureOpen(); // AspectJ Extension 
-		ClassFileReader reader = null;
-		if (this.isJrt) {
-			reader = ClassFileReader.readFromJrt(this.file, qualifiedBinaryFileName, mod);
-		} else {
-			reader = ClassFileReader.read(this.zipFile, qualifiedBinaryFileName);
-		}
+		IBinaryType reader = ClassFileReader.read(this.zipFile, qualifiedBinaryFileName);
 		if (reader != null) {
-			if (reader.moduleName == null) {
-				reader.moduleName = this.module == null ? null : this.module.name();
+			char[] modName = this.module == null ? null : this.module.name();
+			if (reader instanceof ClassFileReader) {
+				ClassFileReader classReader = (ClassFileReader) reader;
+				if (classReader.moduleName == null) {
+					classReader.moduleName = modName;
+				}
 			}
+			searchPaths:
 			if (this.annotationPaths != null) {
 				String qualifiedClassName = qualifiedBinaryFileName.substring(0, qualifiedBinaryFileName.length()-SuffixConstants.EXTENSION_CLASS.length()-1);
 				for (String annotationPath : this.annotationPaths) {
 					try {
-						this.annotationZipFile = reader.setExternalAnnotationProvider(annotationPath, qualifiedClassName, this.annotationZipFile, null);
-						if (reader.hasAnnotationProvider())
-							break;
+						if (this.annotationZipFile == null) {
+							this.annotationZipFile = ExternalAnnotationDecorator.getAnnotationZipFile(annotationPath, null);
+						}
+						reader = ExternalAnnotationDecorator.create(reader, annotationPath, qualifiedClassName, this.annotationZipFile);
+
+						if (reader.getExternalAnnotationStatus() == ExternalAnnotationStatus.TYPE_IS_ANNOTATED) {
+							break searchPaths;
+						}
 					} catch (IOException e) {
 						// don't let error on annotations fail class reading
 					}
 				}
+				// location is configured for external annotations, but no .eea found, decorate in order to answer NO_EEA_FILE:
+				reader = new ExternalAnnotationDecorator(reader, null);
 			}
-			return new NameEnvironmentAnswer(reader, fetchAccessRestriction(qualifiedBinaryFileName));
+			return new NameEnvironmentAnswer(reader, fetchAccessRestriction(qualifiedBinaryFileName), modName);
 		}
 	} catch(ClassFormatException e) {
 		// treat as if class file is missing
@@ -186,7 +193,6 @@ public NameEnvironmentAnswer findClass(String typeName, String qualifiedPackageN
 }
 @Override
 public boolean hasAnnotationFileFor(String qualifiedTypeName) {
-	if (this.isJrt) return false; // TODO: Revisit
 	return this.zipFile.getEntry(qualifiedTypeName+ExternalAnnotationProvider.ANNOTATION_FILE_SUFFIX) != null; 
 }
 public char[][][] findTypeNames(final String qualifiedPackageName, final IModule mod) {
@@ -194,45 +200,7 @@ public char[][][] findTypeNames(final String qualifiedPackageName, final IModule
 		return null; // most common case
 	final char[] packageArray = qualifiedPackageName.toCharArray();
 	final ArrayList answers = new ArrayList();
-	if (this.isJrt) {
-		try {
-			JRTUtil.walkModuleImage(this.file, new JRTUtil.JrtFileVisitor<java.nio.file.Path>() {
 
-				@Override
-				public FileVisitResult visitPackage(java.nio.file.Path dir, java.nio.file.Path modPath, BasicFileAttributes attrs) throws IOException {
-					if (qualifiedPackageName.startsWith(dir.toString())) {
-						return FileVisitResult.CONTINUE;	
-					}
-					return FileVisitResult.SKIP_SUBTREE;
-				}
-
-				@Override
-				public FileVisitResult visitFile(java.nio.file.Path dir, java.nio.file.Path modPath, BasicFileAttributes attrs) throws IOException {
-					if (!dir.getParent().toString().equals(qualifiedPackageName)) {
-						return FileVisitResult.CONTINUE;
-					}
-					String fileName = dir.getName(dir.getNameCount() - 1).toString();
-					// The path already excludes the folders and all the '/', hence the -1 for last index of '/'
-					addTypeName(answers, fileName, -1, packageArray);
-					return FileVisitResult.CONTINUE;
-				}
-
-				@Override
-				public FileVisitResult visitModule(java.nio.file.Path modPath) throws IOException {
-					if (mod == ModuleEnvironment.UNNAMED_MODULE)
-						return FileVisitResult.CONTINUE;
-					if (!CharOperation.equals(mod.name(), modPath.toString().toCharArray())) {
-						return FileVisitResult.SKIP_SUBTREE;
-					}
-					return FileVisitResult.CONTINUE;
-				}
-
-			}, JRTUtil.NOTIFY_ALL);
-		} catch (IOException e) {
-			// Ignore and move on
-		}
-	} else {
-	
 	// AspectJ Extension
 	try {
         ensureOpen();
@@ -244,8 +212,8 @@ public char[][][] findTypeNames(final String qualifiedPackageName, final IModule
 	}
 	// End AspectJ Extension
 	
-	nextEntry : for (Enumeration e = this.zipFile.entries(); e.hasMoreElements(); ) {
-		String fileName = ((ZipEntry) e.nextElement()).getName();
+		nextEntry : for (Enumeration e = this.zipFile.entries(); e.hasMoreElements(); ) {
+			String fileName = ((ZipEntry) e.nextElement()).getName();
 
 			// add the package name & all of its parent packages
 			int last = fileName.lastIndexOf('/');
@@ -257,7 +225,6 @@ public char[][][] findTypeNames(final String qualifiedPackageName, final IModule
 				addTypeName(answers, fileName, last, packageArray);
 			}
 		}
-	}
 	int size = answers.size();
 	if (size != 0) {
 		char[][][] result = new char[size][][];
@@ -278,11 +245,28 @@ protected void addTypeName(final ArrayList answers, String fileName, int last, c
 	}
 }
 public void initialize() throws IOException {
-	if (this.zipFile == null && !this.isJrt) {
+	if (this.zipFile == null) {
 		this.zipFile = new ZipFile(this.file);
 	}
 }
-
+void acceptModule(ClassFileReader reader) {
+	if (reader != null) {
+		acceptModule(reader.getModuleDeclaration());
+	}
+}
+void acceptModule(byte[] content) {
+	if (content == null) 
+		return;
+	ClassFileReader reader = null;
+	try {
+		reader = new ClassFileReader(content, IModuleEnvironment.MODULE_INFO_CLASS.toCharArray(), null);
+	} catch (ClassFormatException e) {
+		e.printStackTrace();
+	}
+	if (reader != null && reader.getModuleDeclaration() != null) {
+		acceptModule(reader);
+	}
+}
 protected void addToPackageCache(String fileName, boolean endsWithSep) {
 	int last = endsWithSep ? fileName.length() : fileName.lastIndexOf('/');
 	while (last > 0) {
@@ -310,40 +294,16 @@ public synchronized boolean isPackage(String qualifiedPackageName) {
 	// End AspectJ Extension
 	this.packageCache = new HashSet<>(41);
 	this.packageCache.add(Util.EMPTY_STRING);
-	if (this.isJrt) {
-		try {
-			JRTUtil.walkModuleImage(this.file, new JRTUtil.JrtFileVisitor<java.nio.file.Path>() {
-
-				@Override
-				public FileVisitResult visitPackage(java.nio.file.Path dir, java.nio.file.Path mod, BasicFileAttributes attrs) throws IOException {
-					addToPackageCache(dir.toString(), true);
-					return FileVisitResult.CONTINUE;
-				}
-
-				@Override
-				public FileVisitResult visitFile(java.nio.file.Path dir, java.nio.file.Path mod, BasicFileAttributes attrs) throws IOException {
-					return FileVisitResult.CONTINUE;
-				}
-
-				@Override
-				public FileVisitResult visitModule(java.nio.file.Path mod) throws IOException {
-					return FileVisitResult.CONTINUE;
-				}
-
-			}, JRTUtil.NOTIFY_PACKAGES);
-		} catch (IOException e) {
-			// Ignore and move on
-		}
-	} else {
-		for (Enumeration e = this.zipFile.entries(); e.hasMoreElements(); ) {
-			String fileName = ((ZipEntry) e.nextElement()).getName();
-			addToPackageCache(fileName, false);
-		}
+	
+	for (Enumeration e = this.zipFile.entries(); e.hasMoreElements(); ) {
+		String fileName = ((ZipEntry) e.nextElement()).getName();
+		addToPackageCache(fileName, false);
 	}
 	return this.packageCache.contains(qualifiedPackageName);
 }
 public void reset() {
-	if (this.zipFile != null && this.closeZipFileAtEnd) {
+	if (this.closeZipFileAtEnd) {
+		if (this.zipFile != null) {
 		// AspectJ Extension
 		// old code:
 		//try { 
@@ -354,6 +314,7 @@ public void reset() {
 		//this.zipFile = null;
 		// new code:
 		close();
+		}
 		// End AspectJ Extension
 		if (this.annotationZipFile != null) {
 			try {
@@ -364,7 +325,7 @@ public void reset() {
 			this.annotationZipFile = null;
 		}
 	}
-	if (!this.isJrt || this.annotationPaths != null) {
+	if (this.annotationPaths != null) {
 		this.packageCache = null;
 		this.annotationPaths = null;
 	}
@@ -398,12 +359,32 @@ public int getMode() {
 	return BINARY;
 }
 
+public IModule getModule() {
+	if (this.isAutoModule && this.module == null) {
+		return this.module = new AutoModule(this.file.getName().toCharArray());
+	}
+	return this.module;
+}
 @Override
-public IModule getModule(char[] moduleName) {
-	// TODO Auto-generated method stub
-	return null;
+public ITypeLookup typeLookup() {
+	return this::findClass;
+}
+@Override
+public IPackageLookup packageLookup() {
+	return this::isPackage;
 }
 
+@Override
+public IModuleEnvironment getLookupEnvironmentFor(IModule mod) {
+	// 
+	return servesModule(mod.name()) ? this : null;
+}
+
+@Override
+public IModuleEnvironment getLookupEnvironment() {
+	// 
+	return this;
+}
 // AspectJ Extension
 private void ensureOpen() throws IOException {
 	if (zipFile != null) return; // If its not null, the zip is already open

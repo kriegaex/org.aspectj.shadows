@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ *  * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -165,6 +169,7 @@ private void checkAndSetModifiersForConstructor(MethodBinding methodBinding) {
 
 /**
  * Spec : 8.4.3 & 9.4
+ * TODO: Add the spec section number for private interface methods from jls 9
  */
 private void checkAndSetModifiersForMethod(MethodBinding methodBinding) {
 	int modifiers = methodBinding.modifiers;
@@ -174,17 +179,16 @@ private void checkAndSetModifiersForMethod(MethodBinding methodBinding) {
 
 	// after this point, tests on the 16 bits reserved.
 	int realModifiers = modifiers & ExtraCompilerModifiers.AccJustFlag;
-
+	long sourceLevel = compilerOptions().sourceLevel;
 	// set the requested modifiers for a method in an interface/annotation
 	if (declaringClass.isInterface()) {
 		int expectedModifiers = ClassFileConstants.AccPublic | ClassFileConstants.AccAbstract;
 		boolean isDefaultMethod = (modifiers & ExtraCompilerModifiers.AccDefaultMethod) != 0; // no need to check validity, is done by the parser
 		boolean reportIllegalModifierCombination = false;
-		boolean isJDK18orGreater = false;
-		if (compilerOptions().sourceLevel >= ClassFileConstants.JDK1_8 && !declaringClass.isAnnotationType()) {
+		if (sourceLevel >= ClassFileConstants.JDK1_8 && !declaringClass.isAnnotationType()) {
 			expectedModifiers |= ClassFileConstants.AccStrictfp
 					| ExtraCompilerModifiers.AccDefaultMethod | ClassFileConstants.AccStatic;
-			isJDK18orGreater = true;
+			expectedModifiers |= sourceLevel >= ClassFileConstants.JDK9 ? ClassFileConstants.AccPrivate : 0;
 			if (!methodBinding.isAbstract()) {
 				reportIllegalModifierCombination = isDefaultMethod && methodBinding.isStatic();
 			} else {
@@ -195,6 +199,14 @@ private void checkAndSetModifiersForMethod(MethodBinding methodBinding) {
 			}
 			if (reportIllegalModifierCombination) {
 				problemReporter().illegalModifierCombinationForInterfaceMethod((AbstractMethodDeclaration) this.referenceContext);
+			} 
+			if (sourceLevel >= ClassFileConstants.JDK9 && (methodBinding.modifiers & ClassFileConstants.AccPrivate) != 0) {
+				int remaining = realModifiers & ~expectedModifiers;
+				if (remaining == 0) { // check for the combination of allowed modifiers with private
+					remaining = realModifiers & ~(ClassFileConstants.AccPrivate | ClassFileConstants.AccStatic | ClassFileConstants.AccStrictfp);
+					if (isDefaultMethod || remaining != 0)
+						problemReporter().illegalModifierCombinationForPrivateInterfaceMethod((AbstractMethodDeclaration) this.referenceContext);
+				}
 			}
 			// Kludge - The AccDefaultMethod bit is outside the lower 16 bits and got removed earlier. Putting it back.
 			if (isDefaultMethod) {
@@ -205,9 +217,22 @@ private void checkAndSetModifiersForMethod(MethodBinding methodBinding) {
 			if ((declaringClass.modifiers & ClassFileConstants.AccAnnotation) != 0)
 				problemReporter().illegalModifierForAnnotationMember((AbstractMethodDeclaration) this.referenceContext);
 			else
-				problemReporter().illegalModifierForInterfaceMethod((AbstractMethodDeclaration) this.referenceContext, isJDK18orGreater);
+				problemReporter().illegalModifierForInterfaceMethod((AbstractMethodDeclaration) this.referenceContext, sourceLevel);
+			methodBinding.modifiers &= (expectedModifiers | ~ExtraCompilerModifiers.AccJustFlag);
 		}
 		return;
+	} else if (declaringClass.isAnonymousType() && sourceLevel >= ClassFileConstants.JDK9) {
+		// If the class instance creation expression elides the supertype's type arguments using '<>',
+		// then for all non-private methods declared in the class body, it is as if the method declaration
+		// is annotated with @Override - https://bugs.openjdk.java.net/browse/JDK-8073593
+		LocalTypeBinding local = (LocalTypeBinding) declaringClass;
+		TypeReference ref = local.scope.referenceContext.allocation.type;
+		if (ref != null && (ref.bits & ASTNode.IsDiamond) != 0) {
+			// 
+			if ((realModifiers & (ClassFileConstants.AccPrivate | ClassFileConstants.AccStatic )) == 0) {
+				methodBinding.tagBits |= TagBits.AnnotationOverride;
+			}
+		}
 	}
 
 	// check for abnormal modifiers
@@ -342,6 +367,7 @@ MethodBinding createMethod(AbstractMethodDeclaration method) {
 	// is necessary to ensure error reporting
 	this.referenceContext = method;
 	method.scope = this;
+	long sourceLevel = compilerOptions().sourceLevel;
 	SourceTypeBinding declaringClass = referenceType().binding;
 	int modifiers = method.modifiers | ExtraCompilerModifiers.AccUnresolved;
 	if (method.isConstructor()) {
@@ -351,7 +377,9 @@ MethodBinding createMethod(AbstractMethodDeclaration method) {
 		checkAndSetModifiersForConstructor(method.binding);
 	} else {
 		if (declaringClass.isInterface()) {// interface or annotation type
-			if (method.isDefaultMethod() || method.isStatic()) {
+			if (sourceLevel >= ClassFileConstants.JDK9 && ((method.modifiers & ClassFileConstants.AccPrivate) != 0)) { // private method
+				// do nothing
+			} else if (method.isDefaultMethod() || method.isStatic()) {
 				modifiers |= ClassFileConstants.AccPublic; // default method is not abstract
 			} else {
 				modifiers |= ClassFileConstants.AccPublic | ClassFileConstants.AccAbstract;
@@ -365,7 +393,6 @@ MethodBinding createMethod(AbstractMethodDeclaration method) {
 
 	Argument[] argTypes = method.arguments;
 	int argLength = argTypes == null ? 0 : argTypes.length;
-	long sourceLevel = compilerOptions().sourceLevel;
 	if (argLength > 0) {
 		Argument argument = argTypes[--argLength];
 		if (argument.isVarArgs() && sourceLevel >= ClassFileConstants.JDK1_5)
@@ -571,12 +598,33 @@ void resolveTypeParameter(TypeParameter typeParameter) {
 	typeParameter.resolve(this);
 }
 @Override
-public boolean hasDefaultNullnessFor(int location) {
-	if (this.referenceContext instanceof AbstractMethodDeclaration) {
-		MethodBinding binding = ((AbstractMethodDeclaration) this.referenceContext).binding;
-		if (binding != null && binding.defaultNullness != 0)
-			return (binding.defaultNullness & location) != 0;
+public boolean hasDefaultNullnessFor(int location, int sourceStart) {
+	int nonNullByDefaultValue = localNonNullByDefaultValue(sourceStart);
+	if(nonNullByDefaultValue != 0) {
+		return (nonNullByDefaultValue & location) != 0;
 	}
-	return this.parent.hasDefaultNullnessFor(location);
+	AbstractMethodDeclaration referenceMethod = referenceMethod();
+	if (referenceMethod != null) {
+		MethodBinding binding = referenceMethod.binding;
+		if (binding != null && binding.defaultNullness != 0) {
+			return (binding.defaultNullness & location) != 0;
+		}
+	}
+	return this.parent.hasDefaultNullnessFor(location, sourceStart);
+}
+@Override
+public Binding checkRedundantDefaultNullness(int nullBits, int sourceStart) {
+	Binding target = localCheckRedundantDefaultNullness(nullBits, sourceStart);
+	if (target != null) {
+		return target;
+	}
+	AbstractMethodDeclaration referenceMethod = referenceMethod();
+	if (referenceMethod != null) {
+		MethodBinding binding = referenceMethod.binding;
+		if (binding != null && binding.defaultNullness != 0) {
+			return (binding.defaultNullness == nullBits) ? binding : null;
+		}
+	}
+	return this.parent.checkRedundantDefaultNullness(nullBits, sourceStart);
 }
 }

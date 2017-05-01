@@ -26,6 +26,9 @@ import org.eclipse.jdt.internal.compiler.env.AccessRestriction;
 import org.eclipse.jdt.internal.compiler.env.IBinaryType;
 import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
 import org.eclipse.jdt.internal.compiler.env.IModule;
+import org.eclipse.jdt.internal.compiler.env.IModuleAwareNameEnvironment;
+import org.eclipse.jdt.internal.compiler.env.IModuleContext;
+import org.eclipse.jdt.internal.compiler.env.IModuleEnvironment;
 import org.eclipse.jdt.internal.compiler.env.ISourceType;
 import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
 import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
@@ -41,8 +44,8 @@ import org.eclipse.jdt.internal.core.util.Util;
  *	This class provides a <code>SearchableBuilderEnvironment</code> for code assist which
  *	uses the Java model as a search tool.
  */
-public class SearchableEnvironment extends ModuleEnvironment
-	implements IJavaSearchConstants {
+public class SearchableEnvironment
+	implements IModuleAwareNameEnvironment, IJavaSearchConstants {
 
 	public NameLookup nameLookup;
 	protected ICompilationUnit unitToSkip;
@@ -96,7 +99,7 @@ public class SearchableEnvironment extends ModuleEnvironment
 	 * Returns the given type in the the given package if it exists,
 	 * otherwise <code>null</code>.
 	 */
-	protected NameEnvironmentAnswer find(String typeName, String packageName, IModule[] module) {
+	protected NameEnvironmentAnswer find(String typeName, String packageName, IModuleContext context) {
 		if (packageName == null)
 			packageName = IPackageFragment.DEFAULT_PACKAGE_NAME;
 		if (this.owner != null) {
@@ -112,12 +115,14 @@ public class SearchableEnvironment extends ModuleEnvironment
 				packageName,
 				false/*exact match*/,
 				NameLookup.ACCEPT_ALL,
-				this.checkAccessRestrictions);
+				this.checkAccessRestrictions,
+				context);
 		if (answer != null) {
 			// construct name env answer
 			if (answer.type instanceof BinaryType) { // BinaryType
 				try {
-					return new NameEnvironmentAnswer((IBinaryType) ((BinaryType) answer.type).getElementInfo(), answer.restriction);
+					char[] moduleName = answer.module != null ? answer.module.getElementName().toCharArray() : null;
+					return new NameEnvironmentAnswer((IBinaryType) ((BinaryType) answer.type).getElementInfo(), answer.restriction, moduleName);
 				} catch (JavaModelException npe) {
 					// fall back to using owner
 				}
@@ -142,7 +147,8 @@ public class SearchableEnvironment extends ModuleEnvironment
 						if (!otherType.equals(topLevelType) && index < length) // check that the index is in bounds (see https://bugs.eclipse.org/bugs/show_bug.cgi?id=62861)
 							sourceTypes[index++] = otherType;
 					}
-					return new NameEnvironmentAnswer(sourceTypes, answer.restriction, getExternalAnnotationPath(answer.entry));
+					char[] moduleName = answer.module != null ? answer.module.getElementName().toCharArray() : null;
+					return new NameEnvironmentAnswer(sourceTypes, answer.restriction, getExternalAnnotationPath(answer.entry), moduleName);
 				} catch (JavaModelException jme) {
 					if (jme.isDoesNotExist() && String.valueOf(TypeConstants.PACKAGE_INFO_NAME).equals(typeName)) {
 						// in case of package-info.java the type doesn't exist in the model,
@@ -166,6 +172,17 @@ public class SearchableEnvironment extends ModuleEnvironment
 	}
 
 	/**
+	 * Find the modules that start with the given prefix.
+	 * A valid prefix is a qualified name separated by periods
+	 * (ex. java.util).
+	 * The packages found are passed to:
+	 *    ISearchRequestor.acceptModule(char[][] moduleName)
+	 */
+	public void findModules(char[] prefix, ISearchRequestor requestor, IJavaProject javaProject) {
+		this.nameLookup.seekModule(prefix, true, new SearchableEnvironmentRequestor(requestor));
+	}
+
+	/**
 	 * Find the packages that start with the given prefix.
 	 * A valid prefix is a qualified name separated by periods
 	 * (ex. java.util).
@@ -179,6 +196,19 @@ public class SearchableEnvironment extends ModuleEnvironment
 			new SearchableEnvironmentRequestor(requestor));
 	}
 
+	/**
+	 * Find the packages that start with the given prefix.
+	 * A valid prefix is a qualified name separated by periods
+	 * (ex. java.util).
+	 * The packages found are passed to:
+	 *    ISearchRequestor.acceptPackage(char[][] packageName)
+	 */
+	public void findPackages(char[] prefix, ISearchRequestor requestor, IModuleContext context) {
+		this.nameLookup.seekPackageFragments(
+			new String(prefix),
+			true,
+			new SearchableEnvironmentRequestor(requestor), context);
+	}
 	/**
 	 * Find the top-level types that are defined
 	 * in the current environment and whose simple name matches the given name.
@@ -281,15 +311,15 @@ public class SearchableEnvironment extends ModuleEnvironment
 	}
 
 	/**
-	 * @see ModuleEnvironment#findType(char[][], IModule[])
+	 * @see ModuleEnvironment#findType(char[][])
 	 */
-	public NameEnvironmentAnswer findType(char[][] compoundTypeName, IModule[] module) {
+	public NameEnvironmentAnswer findType(char[][] compoundTypeName, IModuleContext context) {
 		if (compoundTypeName == null) return null;
 
 		int length = compoundTypeName.length;
 		if (length <= 1) {
 			if (length == 0) return null;
-			return find(new String(compoundTypeName[0]), null, module);
+			return find(new String(compoundTypeName[0]), null, context);
 		}
 
 		int lengthM1 = length - 1;
@@ -298,18 +328,18 @@ public class SearchableEnvironment extends ModuleEnvironment
 
 		return find(
 			new String(compoundTypeName[lengthM1]),
-			CharOperation.toString(packageName), module);
+			CharOperation.toString(packageName), context);
 	}
 
 	/**
-	 * @see ModuleEnvironment#findType(char[], char[][], IModule[])
+	 * @see ModuleEnvironment#findType(char[], char[][])
 	 */
-	public NameEnvironmentAnswer findType(char[] name, char[][] packageName, IModule[] module) {
+	public NameEnvironmentAnswer findType(char[] name, char[][] packageName, IModuleContext context) {
 		if (name == null) return null;
 
 		return find(
 			new String(name),
-			packageName == null || packageName.length == 0 ? null : CharOperation.toString(packageName), module);
+			packageName == null || packageName.length == 0 ? null : CharOperation.toString(packageName), context);
 	}
 
 	/**
@@ -700,9 +730,9 @@ public class SearchableEnvironment extends ModuleEnvironment
 	}
 
 	/**
-	 * @see ModuleEnvironment#isPackage(char[][], char[], IModule[])
+	 * @see ModuleEnvironment#isPackage(char[][], char[])
 	 */
-	public boolean isPackage(char[][] parentPackageName, char[] subPackageName, IModule[] modules) {
+	public boolean isPackage(char[][] parentPackageName, char[] subPackageName, IModuleContext moduleContext) {
 		String[] pkgName;
 		if (parentPackageName == null)
 			pkgName = new String[] {new String(subPackageName)};
@@ -715,7 +745,7 @@ public class SearchableEnvironment extends ModuleEnvironment
 		}
 		return 
 			(this.owner != null && this.owner.isPackage(pkgName))
-			|| this.nameLookup.isPackage(pkgName);
+			|| this.nameLookup.isPackage(pkgName, moduleContext);
 	}
 
 	/**
@@ -742,12 +772,44 @@ public class SearchableEnvironment extends ModuleEnvironment
 	}
 
 	@Override
-	public IModule getModule(char[] name) {
-		IModule module = null;
+	public org.eclipse.jdt.internal.compiler.env.IModule getModule(char[] name) {
 		NameLookup.Answer answer = this.nameLookup.findModule(CharOperation.charToString(name));
+		IModule module = null;
 		if (answer != null) {
-			module = answer.module;
+			module = NameLookup.getModuleDescriptionInfo(answer.module);
 		}
 		return module;
+	}
+	public IModuleEnvironment getModuleEnvironmentFor(char[] moduleName) {
+		IModuleEnvironment env = null;
+		try {
+			env = this.nameLookup.getModuleEnvironmentFor(moduleName);
+		} catch (JavaModelException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		return env;
+	}
+	@Override
+	public NameEnvironmentAnswer findType(char[][] compoundTypeName) {
+		// 
+		return findType(compoundTypeName, IModuleContext.UNNAMED_MODULE_CONTEXT);
+	}
+
+	@Override
+	public NameEnvironmentAnswer findType(char[] typeName, char[][] packageName) {
+		// 
+		return findType(typeName, packageName, IModuleContext.UNNAMED_MODULE_CONTEXT);
+	}
+
+	@Override
+	public boolean isPackage(char[][] parentPackageName, char[] packageName) {
+		// 
+		return isPackage(parentPackageName, packageName, IModuleContext.UNNAMED_MODULE_CONTEXT);
+	}
+
+	@Override
+	public IModule[] getAllAutomaticModules() {
+		return new IModule[0];
 	}
 }

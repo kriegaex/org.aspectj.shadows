@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -64,6 +68,7 @@ import org.eclipse.jdt.internal.compiler.lookup.LocalVariableBinding;
 import org.eclipse.jdt.internal.compiler.lookup.MethodBinding;
 import org.eclipse.jdt.internal.compiler.lookup.PackageBinding;
 import org.eclipse.jdt.internal.compiler.lookup.ParameterizedGenericMethodBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ParameterizedMethodBinding;
 import org.eclipse.jdt.internal.compiler.lookup.ProblemMethodBinding;
 import org.eclipse.jdt.internal.compiler.lookup.ProblemReasons;
 import org.eclipse.jdt.internal.compiler.lookup.ReferenceBinding;
@@ -284,6 +289,7 @@ public abstract class ASTNode implements TypeConstants, TypeIds {
 	// for import reference
 	public static final int OnDemand = Bit18;
 	public static final int Used = Bit2;
+	public static final int inModule = Bit19;
 
 	// for parameterized qualified/single type ref
 	public static final int DidResolve = Bit19;
@@ -695,11 +701,19 @@ public abstract class ASTNode implements TypeConstants, TypeIds {
 				} else {
 					updatedArgumentType = argument.resolveType(scope);
 				}
-				if (updatedArgumentType != null && updatedArgumentType.kind() != Binding.POLY_TYPE)
+				if (updatedArgumentType != null && updatedArgumentType.kind() != Binding.POLY_TYPE) {
 						argumentTypes[i] = updatedArgumentType;
+					if (candidateMethod.isPolymorphic())
+						candidateMethod.parameters[i] = updatedArgumentType;
 					}
 				}
 			}
+		if (method instanceof ParameterizedGenericMethodBinding) {
+			InferenceContext18 ic18 = invocation.getInferenceContext((ParameterizedMethodBinding) method);
+			if (ic18 != null)
+				ic18.flushBoundOutbox(); // overload resolution is done, now perform the push of bounds from inner to outer
+		}
+	}
 
 	public static void resolveAnnotations(BlockScope scope, Annotation[] sourceAnnotations, Binding recipient) {
 		resolveAnnotations(scope, sourceAnnotations, recipient, false);
@@ -943,6 +957,24 @@ public abstract class ASTNode implements TypeConstants, TypeIds {
 		return scope.environment().createAnnotatedType(type, annotationBindings);
 	}
 
+	/**
+	 * "early" handling of NonNullByDefault because for local variables annotations are resolved after their type because of bug
+	 * 96991.
+	 * @param localDeclaration 
+	 */
+	public static void handleNonNullByDefault(BlockScope scope, Annotation[] sourceAnnotations, LocalDeclaration localDeclaration) {
+		if (sourceAnnotations == null || sourceAnnotations.length == 0) {
+			return;
+		}
+		int length = sourceAnnotations.length;
+		for (int i = 0; i < length; i++) {
+			Annotation annotation = sourceAnnotations[i];
+			annotation.handleNonNullByDefault(scope, localDeclaration);
+		}
+	}
+
+
+	
 	// When SE8 annotations feature in SE7 locations, they get attributed to the declared entity. Copy/move these to the type of the declared entity (field, local, argument etc.)
 	public static void copySE8AnnotationsToType(BlockScope scope, Binding recipient, Annotation[] annotations, boolean annotatingEnumerator) {
 		
@@ -1070,6 +1102,14 @@ public abstract class ASTNode implements TypeConstants, TypeIds {
 		
 		// for arrays: @T X[] SE7 associates @T to the type, but in SE8 it affects the leaf component type
 		TypeBinding oldLeafType = (unionRef == null) ? existingType.leafComponentType() : unionRef.resolvedType;
+		if (se8nullBits != 0) {
+			if (typeRef instanceof ArrayTypeReference) { // NOTE: no corresponding code for ArrayQualifiedTypeReference is necessary
+				ArrayTypeReference arrayTypeReference = (ArrayTypeReference) typeRef;
+				if(arrayTypeReference.leafComponentTypeWithoutDefaultNullness != null) {
+					oldLeafType=arrayTypeReference.leafComponentTypeWithoutDefaultNullness;
+				}
+			}
+		}
 		if (se8nullBits != 0 && oldLeafType.isBaseType()) {
 			scope.problemReporter().illegalAnnotationForBaseType(typeRef, new Annotation[] { se8NullAnnotation }, se8nullBits);
 			return existingType;

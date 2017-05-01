@@ -61,10 +61,10 @@ public class CommentsPreparator extends ASTVisitor {
 		String breakBeforeTags = "(dd|dt|li|td|th|h1|h2|h3|h4|h5|h6|q)"; //$NON-NLS-1$
 		String breakAfterTags = "(br)"; //$NON-NLS-1$
 		String noFormatTags = "(code|tt)"; //$NON-NLS-1$
-		String otherTags = "([^<>&&\\S]++)"; //$NON-NLS-1$
+		String otherTags = "([\\S&&[^<>]]++)"; //$NON-NLS-1$
 		String ws = "(?>[ \\t]++|[\\r\\n]++[ \\t]*+\\*?)"; // whitespace or line break with optional asterisk //$NON-NLS-1$
-		String attributeValue = "(?>\"[^\"]*\")|(?>\'[^\']*\')|[^/>\"\'&&\\S]++"; //$NON-NLS-1$
-		String attribute = "(?>" + ws + "+[^=&&\\S]+" + ws + "*(=)" + ws + "*(?>" + attributeValue  + "))"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+		String attributeValue = "(?>\"[^\"]*\")|(?>\'[^\']*\')|[\\S&&[^/>\"\']]++"; //$NON-NLS-1$
+		String attribute = "(?>" + ws + "+[\\S&&[^=]]+" + ws + "*(=)" + ws + "*(?>" + attributeValue  + "))"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
 		HTML_TAG_PATTERN = Pattern.compile("<(/)?+(?:" //$NON-NLS-1$
 				+ formatCodeTags + '|' + separateLineTags + '|' + breakBeforeTags + '|' + breakAfterTags + '|' + noFormatTags + '|' + otherTags + ')'
 				+ "(" + attribute + "*)" + ws + "*/?>", Pattern.CASE_INSENSITIVE); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -1008,11 +1008,14 @@ public class CommentsPreparator extends ASTVisitor {
 		boolean newLinesAtBoundries = commentToken.tokenType == TokenNameCOMMENT_JAVADOC
 				? this.options.comment_new_lines_at_javadoc_boundaries
 				: this.options.comment_new_lines_at_block_boundaries;
-		if (newLinesAtBoundries && this.tm.countLineBreaksBetween(first, last) > 0) {
+		if (!newLinesAtBoundries) {
+			structure.get(1).clearLineBreaksBefore();
+			last.clearLineBreaksBefore();
+		} else if (this.tm.countLineBreaksBetween(first, last) > 0) {
 			first.breakAfter();
 			last.breakBefore();
-			last.setAlign(1);
 		}
+		last.setAlign(1);
 
 		if (structure.size() == 2)
 			return false;
@@ -1206,14 +1209,22 @@ public class CommentsPreparator extends ASTVisitor {
 			Token translated = new Token(token, newStart + startPosition, newEnd + startPosition, token.tokenType);
 			if (translated.getWrapPolicy() == null)
 				translated.setWrapPolicy(WrapPolicy.DISABLE_WRAP);
-			if (token.hasNLSTag())
-				translationMap.put(token, translated);
+
+			if (token.hasNLSTag()) {
+				if (translationMap == null)
+					translationMap = new HashMap<>();
+				Token translatedNLS = translationMap.get(token.getNLSTag());
+				if (translatedNLS != null) {
+					translatedNLS.setNLSTag(translated);
+					translated.setNLSTag(translatedNLS);
+				} else {
+					translationMap.put(token, translated);
+				}
+			}
 
 			int lineBreaks = Math.max(previousLineBreaks, token.getLineBreaksBefore());
 			List<Token> structure = token.getInternalStructure();
 			if (structure != null && !structure.isEmpty()) {
-				if (translationMap == null)
-					translationMap = new HashMap<>();
 				translated.setInternalStructure(translateFormattedTokens(startPosition, structure, positionMapping,
 						translationMap));
 			}
@@ -1223,14 +1234,6 @@ public class CommentsPreparator extends ASTVisitor {
 		}
 		result.get(result.size() - 1).putLineBreaksAfter(previousLineBreaks);
 
-		for (Token translated : result) {
-			if (translated.getNLSTag() != null) {
-				Token nlsTagToken = translationMap.get(translated.getNLSTag());
-				translated.setNLSTag(nlsTagToken);
-				nlsTagToken.setNLSTag(translated);
-				assert translated.getNLSTag() != null;
-			}
-		}
 		return result;
 	}
 

@@ -21,7 +21,6 @@ import org.eclipse.jdt.core.*;
 import org.eclipse.jdt.core.compiler.*;
 import org.eclipse.jdt.internal.compiler.*;
 import org.eclipse.jdt.internal.compiler.classfmt.*;
-import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.compiler.problem.*;
 import org.eclipse.jdt.internal.compiler.util.SimpleLookupTable;
@@ -423,7 +422,7 @@ protected void findAffectedSourceFiles(IResourceDelta binaryDelta, int segmentCo
 							System.out.println("Skipped dependents of added package " + packageName); //$NON-NLS-1$
 					} else {
 						// see if the package still exists on the classpath
-						if (!this.nameEnvironment.isPackage(packageName, null)) {
+						if (!this.nameEnvironment.isPackage(packageName)) {
 							if (JavaBuilder.DEBUG)
 								System.out.println("Found removed package " + packageName); //$NON-NLS-1$
 							addDependentsOf(packagePath, false);
@@ -604,10 +603,6 @@ protected boolean findSourceFiles(IResourceDelta sourceDelta, ClasspathMultiDire
 							System.out.println("Compile this added source file " + typeLocator); //$NON-NLS-1$
 						this.sourceFiles.add(new SourceFile((IFile) resource, md, true));
 						this.sourceFiles.add(new SourceFile((IFile) resource, md, true));
-						String complianceLevel = IncrementalImageBuilder.this.javaBuilder.javaProject.getOption(JavaCore.COMPILER_COMPLIANCE, true);
-						if (CompilerOptions.versionToJdkLevel(complianceLevel) >= ClassFileConstants.JDK9) {
-							md.resetModule(this.nameEnvironment.getModule(md));
-						}
 						String typeName = typePath.toString();
 						if (!this.newState.isDuplicateLocator(typeName, typeLocator)) { // adding dependents results in 2 duplicate errors
 							if (JavaBuilder.DEBUG)
@@ -645,11 +640,8 @@ protected boolean findSourceFiles(IResourceDelta sourceDelta, ClasspathMultiDire
 							return true; // skip it since it really isn't changed
 						if (JavaBuilder.DEBUG)
 							System.out.println("Compile this changed source file " + typeLocator); //$NON-NLS-1$
-						this.sourceFiles.add(new SourceFile((IFile) resource, md, true));
-						complianceLevel = IncrementalImageBuilder.this.javaBuilder.javaProject.getOption(JavaCore.COMPILER_COMPLIANCE, true);
-						if (CompilerOptions.versionToJdkLevel(complianceLevel) >= ClassFileConstants.JDK9) {
-							//md.resetModule(this.nameEnvironment.getModule(md)); TODO: revisit why this is needed
-						}
+						SourceFile unit = new SourceFile((IFile) resource, md, true);
+						this.sourceFiles.add(unit);
 				}
 				return true;
 			} else if (org.eclipse.jdt.internal.compiler.util.Util.isClassFileName(resourceName)) {

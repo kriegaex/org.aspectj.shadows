@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -22,7 +22,7 @@ import org.eclipse.core.resources.*;
 import org.eclipse.core.runtime.*;
 import org.eclipse.jdt.core.*;
 import org.eclipse.jdt.core.compiler.CharOperation;
-
+import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.core.util.MementoTokenizer;
 import org.eclipse.jdt.internal.core.util.Messages;
 import org.eclipse.jdt.internal.core.util.Util;
@@ -841,13 +841,46 @@ protected void verifyAttachSource(IPath sourcePath) throws JavaModelException {
 		throw new JavaModelException(new JavaModelStatus(IJavaModelStatusConstants.RELATIVE_PATH, sourcePath));
 	}
 }
-
-@Override
-public boolean isModule() {
+/**
+ * Returns the relative path within an archive for the given class file name. In certain
+ * kind of archives, such as a JMOD file, class files are stored in a nested folder, as opposed
+ * to directly under the root. It is the responsibility of such package fragment roots to
+ * provide the custom behavior.
+ *
+ * @param classname
+ * @return the relative path for the class file within the archive
+ */
+public String getClassFilePath(String classname) {
+	return classname;
+}
+public IModuleDescription getModuleDescription() {
 	try {
-		return ((PackageFragmentRootInfo) getElementInfo()).isModule(resource(), this);
+		IJavaElement[] pkgs = getChildren();
+		for (int j = 0, length = pkgs.length; j < length; j++) {
+			// only look in the default package
+			if (pkgs[j].getElementName().length() == 0) {
+				OpenableElementInfo info = null;
+				if (getKind() == IPackageFragmentRoot.K_SOURCE) {
+					ICompilationUnit unit = ((PackageFragment) pkgs[j])
+							.getCompilationUnit(TypeConstants.MODULE_INFO_FILE_NAME_STRING);
+					if (unit instanceof CompilationUnit && unit.exists()) {
+						info = (CompilationUnitElementInfo) ((CompilationUnit) unit)
+								.getElementInfo();
+						if (info != null)
+							return info.getModule();
+					}
+				} else {
+					IClassFile classFile = ((IPackageFragment)pkgs[j]).getClassFile(TypeConstants.MODULE_INFO_CLASS_NAME_STRING);
+					if (classFile instanceof ClassFile && classFile.exists()) {
+						return classFile.getModule();
+					}
+				}
+				break;
+			}
+		}
 	} catch (JavaModelException e) {
-		return false;
+		//
 	}
+	return null;
 }
 }

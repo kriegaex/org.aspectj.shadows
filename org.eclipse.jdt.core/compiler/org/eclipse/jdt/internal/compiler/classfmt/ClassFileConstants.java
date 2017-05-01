@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -52,8 +52,13 @@ public interface ClassFileConstants {
 	 */
 	int AccMandated     = 0x8000;
 
-	int ACC_PUBLIC 		= 0x0020;
-	int ACC_SYNTHETIC 	= 0x1000;
+	/**
+	 * Flags in module declaration - since java9
+	 */
+	int ACC_OPEN			= 0x0020;
+	int ACC_TRANSITIVE 		= 0x0020;
+	int ACC_STATIC_PHASE	= 0x0040;
+	int ACC_SYNTHETIC 		= 0x1000;
 	
 	/**
 	 * Other VM flags.
@@ -80,6 +85,8 @@ public interface ClassFileConstants {
 	int MethodHandleTag = 15;
 	int MethodTypeTag = 16;
 	int InvokeDynamicTag = 18;
+	int ModuleTag = 19;
+	int PackageTag = 20;
 
 	int ConstantMethodRefFixedSize = 5;
 	int ConstantClassFixedSize = 3;
@@ -95,6 +102,8 @@ public interface ClassFileConstants {
 	int ConstantMethodHandleFixedSize = 4;
 	int ConstantMethodTypeFixedSize = 3;
 	int ConstantInvokeDynamicFixedSize = 5;
+	int ConstantModuleFixedSize = 3;
+	int ConstantPackageFixedSize = 3;
 
 	// JVMS 4.4.8
 	int MethodHandleRefKindGetField = 1;

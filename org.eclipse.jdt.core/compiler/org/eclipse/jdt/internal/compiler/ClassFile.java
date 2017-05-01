@@ -1,6 +1,6 @@
 // ASPECTJ
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -55,7 +55,7 @@ import org.eclipse.jdt.internal.compiler.ast.AnnotationMethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.Argument;
 import org.eclipse.jdt.internal.compiler.ast.ArrayInitializer;
 import org.eclipse.jdt.internal.compiler.ast.ClassLiteralAccess;
-import org.eclipse.jdt.internal.compiler.ast.ExportReference;
+import org.eclipse.jdt.internal.compiler.ast.ExportsStatement;
 import org.eclipse.jdt.internal.compiler.ast.Expression;
 import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.FunctionalExpression;
@@ -64,11 +64,12 @@ import org.eclipse.jdt.internal.compiler.ast.LocalDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.MemberValuePair;
 import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.ModuleReference;
 import org.eclipse.jdt.internal.compiler.ast.NormalAnnotation;
+import org.eclipse.jdt.internal.compiler.ast.OpensStatement;
 import org.eclipse.jdt.internal.compiler.ast.QualifiedNameReference;
 import org.eclipse.jdt.internal.compiler.ast.Receiver;
 import org.eclipse.jdt.internal.compiler.ast.ReferenceExpression;
+import org.eclipse.jdt.internal.compiler.ast.RequiresStatement;
 import org.eclipse.jdt.internal.compiler.ast.SingleMemberAnnotation;
 import org.eclipse.jdt.internal.compiler.ast.SingleNameReference;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
@@ -84,10 +85,10 @@ import org.eclipse.jdt.internal.compiler.codegen.ExceptionLabel;
 import org.eclipse.jdt.internal.compiler.codegen.Opcodes;
 import org.eclipse.jdt.internal.compiler.codegen.StackMapFrame;
 import org.eclipse.jdt.internal.compiler.codegen.StackMapFrameCodeStream;
-import org.eclipse.jdt.internal.compiler.codegen.TypeAnnotationCodeStream;
 import org.eclipse.jdt.internal.compiler.codegen.StackMapFrameCodeStream.ExceptionMarker;
 import org.eclipse.jdt.internal.compiler.codegen.StackMapFrameCodeStream.StackDepthMarker;
 import org.eclipse.jdt.internal.compiler.codegen.StackMapFrameCodeStream.StackMarker;
+import org.eclipse.jdt.internal.compiler.codegen.TypeAnnotationCodeStream;
 import org.eclipse.jdt.internal.compiler.codegen.VerificationTypeInfo;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.impl.Constant;
@@ -98,6 +99,8 @@ import org.eclipse.jdt.internal.compiler.lookup.LocalTypeBinding;
 import org.eclipse.jdt.internal.compiler.lookup.LocalVariableBinding;
 import org.eclipse.jdt.internal.compiler.lookup.LookupEnvironment;
 import org.eclipse.jdt.internal.compiler.lookup.MethodBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ModuleBinding;
+import org.eclipse.jdt.internal.compiler.lookup.PolymorphicMethodBinding;
 import org.eclipse.jdt.internal.compiler.lookup.ReferenceBinding;
 import org.eclipse.jdt.internal.compiler.lookup.SourceTypeBinding;
 import org.eclipse.jdt.internal.compiler.lookup.SyntheticArgumentBinding;
@@ -2379,7 +2382,7 @@ public class ClassFile implements TypeConstants, TypeIds {
 	public char[] fileName() {
 		// TODO Is there a better way of doing this?
 		char[] name = this.constantPool.UTF8Cache.returnKeyFor(2);
-		if (CharOperation.endsWith(name, TypeConstants.MODULE_INFO_NAME))
+		if (CharOperation.endsWith(name, TypeConstants.MODULE_INFO_FILE_NAME))
 			return TypeConstants.MODULE_INFO_NAME;
 		return name;
 	}
@@ -2621,17 +2624,29 @@ public class ClassFile implements TypeConstants, TypeIds {
 	}
 	private int generateModuleAttribute() {
 		ModuleDeclaration module = (ModuleDeclaration)this.referenceBinding.scope.referenceContext;
+		ModuleBinding binding = module.moduleBinding;
 		int localContentsOffset = this.contentsOffset;
-		if (localContentsOffset + 18 >= this.contents.length) {
-			resizeContents(18);
+		if (localContentsOffset + 10 >= this.contents.length) {
+			resizeContents(10);
 		}
 		int moduleAttributeNameIndex =
 			this.constantPool.literalIndex(AttributeNamesConstants.ModuleName);
 		this.contents[localContentsOffset++] = (byte) (moduleAttributeNameIndex >> 8);
 		this.contents[localContentsOffset++] = (byte) moduleAttributeNameIndex;
 		int attrLengthOffset = localContentsOffset;
-		int attrLength = 0;
 		localContentsOffset += 4;
+		int moduleNameIndex =
+				this.constantPool.literalIndexForModule(binding.moduleName);
+		this.contents[localContentsOffset++] = (byte) (moduleNameIndex >> 8);
+		this.contents[localContentsOffset++] = (byte) moduleNameIndex;
+		int flags = module.modifiers & ~(ClassFileConstants.AccModule);
+		this.contents[localContentsOffset++] = (byte) (flags >> 8);
+		this.contents[localContentsOffset++] = (byte) flags;
+		int module_version = 0;
+		this.contents[localContentsOffset++] = (byte) (module_version >> 8);
+		this.contents[localContentsOffset++] = (byte) module_version;
+		int attrLength = 6;
+		
 		// ================= requires section =================
 		/** u2 requires_count;
 	    	{   u2 requires_index;
@@ -2639,98 +2654,191 @@ public class ClassFile implements TypeConstants, TypeIds {
 	    	} requires[requires_count];
 	    **/
 		int requiresCountOffset = localContentsOffset;
+		int requiresCount = module.requiresCount;
+		int requiresSize = 2 + requiresCount * 6;
+		if (localContentsOffset + requiresSize >= this.contents.length) {
+			resizeContents(requiresSize);
+		}
+		
 		localContentsOffset += 2;
-		boolean javabaseSeen = false;
+		ModuleBinding javaBaseBinding = null;
 		for(int i = 0; i < module.requiresCount; i++) {
-			ModuleReference ref = module.requires[i];
-			if (CharOperation.equals(ref.moduleName, TypeConstants.JAVA_BASE)) {
-				javabaseSeen = true;
+			RequiresStatement req = module.requires[i];
+			ModuleBinding reqBinding = binding.environment.getModule(req.module.moduleName);
+			if (CharOperation.equals(req.module.moduleName, TypeConstants.JAVA_BASE)) {
+				javaBaseBinding = reqBinding;
 			}
-			int nameIndex = this.constantPool.literalIndex(ref.moduleName);
+			int nameIndex = this.constantPool.literalIndexForModule(reqBinding.moduleName);
 			this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
 			this.contents[localContentsOffset++] = (byte) (nameIndex);
-			int flags = ref.isPublic() ? ClassFileConstants.ACC_PUBLIC : ClassFileConstants.AccDefault;
+			flags = req.modifiers;
 			this.contents[localContentsOffset++] = (byte) (flags >> 8);
 			this.contents[localContentsOffset++] = (byte) (flags);
+			int required_version = 0;
+			this.contents[localContentsOffset++] = (byte) (required_version >> 8);
+			this.contents[localContentsOffset++] = (byte) (required_version);
 		}
-		if (!javabaseSeen) {
-			int javabase_index = this.constantPool.literalIndex(TypeConstants.JAVA_BASE);
+		if (javaBaseBinding == null) {
+			if (localContentsOffset + 6 >= this.contents.length) {
+				resizeContents(6);
+			}
+			javaBaseBinding = binding.environment.getModule(TypeConstants.JAVA_BASE);
+			int javabase_index = this.constantPool.literalIndexForModule(javaBaseBinding.moduleName);
 			this.contents[localContentsOffset++] = (byte) (javabase_index >> 8);
 			this.contents[localContentsOffset++] = (byte) (javabase_index);
-			int flags = ClassFileConstants.AccMandated;
+			flags = ClassFileConstants.AccMandated;
 			this.contents[localContentsOffset++] = (byte) (flags >> 8);
 			this.contents[localContentsOffset++] = (byte) flags;
+			int required_version = 0;
+			this.contents[localContentsOffset++] = (byte) (required_version >> 8);
+			this.contents[localContentsOffset++] = (byte) (required_version);
+			requiresCount++;
 		}
-		int requiresCount = javabaseSeen ? module.requiresCount : module.requiresCount + 1;
 		this.contents[requiresCountOffset++] = (byte) (requiresCount >> 8);
 		this.contents[requiresCountOffset++] = (byte) requiresCount;
-		attrLength += 2 + 4 * requiresCount;
+		attrLength += 2 + 6 * requiresCount;
 		// ================= end requires section =================
 
 		// ================= exports section =================
 		/**
 		 * u2 exports_count;
 		 * {   u2 exports_index;
+		 *     u2 exports_flags;
 		 *     u2 exports_to_count;
 		 *     u2 exports_to_index[exports_to_count];
 		 * } exports[exports_count];
 		 */
+		int exportsSize = 2 + module.exportsCount * 6;
+		if (localContentsOffset + exportsSize >= this.contents.length) {
+			resizeContents(exportsSize);
+		}
 		this.contents[localContentsOffset++] = (byte) (module.exportsCount >> 8);
 		this.contents[localContentsOffset++] = (byte) module.exportsCount;
 		for (int i = 0; i < module.exportsCount; i++) {
-			ExportReference ref = module.exports[i];
-			int nameIndex = this.constantPool.literalIndex(ref.pkgName);
+			ExportsStatement ref = module.exports[i];
+			int nameIndex = this.constantPool.literalIndexForPackage(CharOperation.replaceOnCopy(ref.pkgName, '.', '/'));
 			this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
 			this.contents[localContentsOffset++] = (byte) (nameIndex);
+			// TODO exports_flags - check when they are set
+			this.contents[localContentsOffset++] = (byte) 0;
+			this.contents[localContentsOffset++] = (byte) 0;
 			
-			int exportsToCount = ref.isTargeted() ? ref.targets.length : 0; 
+			int exportsToCount = ref.isQualified() ? ref.targets.length : 0; 
 			this.contents[localContentsOffset++] = (byte) (exportsToCount >> 8);
 			this.contents[localContentsOffset++] = (byte) (exportsToCount);
 			if (exportsToCount > 0) {
+				int targetSize = 2 * exportsToCount;
+				if (localContentsOffset + targetSize >= this.contents.length) {
+					resizeContents(targetSize);
+				}
 				for(int j = 0; j < exportsToCount; j++) {
-					nameIndex = this.constantPool.literalIndex(ref.targets[j].moduleName);
+					nameIndex = this.constantPool.literalIndexForModule(ref.targets[j].moduleName);
 					this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
 					this.contents[localContentsOffset++] = (byte) (nameIndex);
 				}
-				attrLength += 2 * exportsToCount;
+				attrLength += targetSize;
 			}
 		}
-		attrLength += 2 + 4 * module.exportsCount;
+		attrLength += exportsSize;
 		// ================= end exports section =================
+
+		// ================= opens section =================
+		/**
+		 * u2 opens_count;
+		 * {   u2 opens_index;
+		 *     u2 opens_flags;
+		 *     u2 opens_to_count;
+		 *     u2 opens_to_index[opens_to_count];
+		 * } exports[exports_count];
+		 */
+		int opensSize = 2 + module.opensCount * 6;
+		if (localContentsOffset + opensSize >= this.contents.length) {
+			resizeContents(opensSize);
+		}
+		this.contents[localContentsOffset++] = (byte) (module.opensCount >> 8);
+		this.contents[localContentsOffset++] = (byte) module.opensCount;
+		for (int i = 0; i < module.opensCount; i++) {
+			OpensStatement ref = module.opens[i];
+			int nameIndex = this.constantPool.literalIndexForPackage(CharOperation.replaceOnCopy(ref.pkgName, '.', '/'));
+			this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
+			this.contents[localContentsOffset++] = (byte) (nameIndex);
+			// TODO opens_flags - check when they are set
+			this.contents[localContentsOffset++] = (byte) 0;
+			this.contents[localContentsOffset++] = (byte) 0;
+			
+			int opensToCount = ref.isQualified() ? ref.targets.length : 0; 
+			this.contents[localContentsOffset++] = (byte) (opensToCount >> 8);
+			this.contents[localContentsOffset++] = (byte) (opensToCount);
+			if (opensToCount > 0) {
+				int targetSize = 2 * opensToCount;
+				if (localContentsOffset + targetSize >= this.contents.length) {
+					resizeContents(targetSize);
+				}
+				for(int j = 0; j < opensToCount; j++) {
+					nameIndex = this.constantPool.literalIndexForModule(ref.targets[j].moduleName);
+					this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
+					this.contents[localContentsOffset++] = (byte) (nameIndex);
+				}
+				attrLength += targetSize;
+			}
+		}
+		attrLength += opensSize;
+		// ================= end opens section =================
 
 		// ================= uses section =================
 		/**
 		 * u2 uses_count;
 		 * u2 uses_index[uses_count];
 		 */
+		int usesSize = 2 + 2 * module.usesCount;
+		if (localContentsOffset + usesSize >= this.contents.length) {
+			resizeContents(usesSize);
+		}
 		this.contents[localContentsOffset++] = (byte) (module.usesCount >> 8);
 		this.contents[localContentsOffset++] = (byte) module.usesCount;
 		for(int i = 0; i < module.usesCount; i++) {
-			int nameIndex = this.constantPool.literalIndex(module.uses[i].resolvedType);
+			int nameIndex = this.constantPool.literalIndexForType(module.uses[i].serviceInterface.resolvedType.constantPoolName());
 			this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
 			this.contents[localContentsOffset++] = (byte) (nameIndex);
 		}
-		attrLength += 2 + 2 * module.usesCount;
+		attrLength += usesSize;
 		// ================= end uses section =================
 
 		// ================= provides section =================
 		/**
 		 * u2 provides_count;
-		 * {   u2 provides_index;
-		 *     u2 with_index;
+		 * {
+		 * 		u2 provides_index;
+		 * 		u2 provides_with_count;
+		 * 		u2 provides_with_index[provides_with_count];
 		 * } provides[provides_count];
 		 */
+		int servicesSize = 2 + 4 * module.servicesCount;
+		if (localContentsOffset + servicesSize >= this.contents.length) {
+			resizeContents(servicesSize);
+		}
 		this.contents[localContentsOffset++] = (byte) (module.servicesCount >> 8);
 		this.contents[localContentsOffset++] = (byte) module.servicesCount;
 		for(int i = 0; i < module.servicesCount; i++) {
-			int nameIndex = this.constantPool.literalIndex(module.interfaces[i].resolvedType);
+			int nameIndex = this.constantPool.literalIndexForType(module.services[i].serviceInterface.resolvedType.constantPoolName());
 			this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
 			this.contents[localContentsOffset++] = (byte) (nameIndex);
-			nameIndex = this.constantPool.literalIndex(module.implementations[i].resolvedType);
+			TypeReference[] impls = module.services[i].implementations;
+			int implLength = impls.length;
+			this.contents[localContentsOffset++] = (byte) (implLength >> 8);
+			this.contents[localContentsOffset++] = (byte) implLength;
+			int targetSize = implLength * 2;
+			if (localContentsOffset + targetSize >= this.contents.length) {
+				resizeContents(targetSize);
+			}
+			for (int j = 0; j < implLength; j++) {
+				nameIndex = this.constantPool.literalIndexForType(impls[j].resolvedType.constantPoolName());
 			this.contents[localContentsOffset++] = (byte) (nameIndex >> 8);
 			this.contents[localContentsOffset++] = (byte) (nameIndex);
 		}
-		attrLength += 2 + 4 * module.servicesCount;
+			attrLength += targetSize;
+		}
+		attrLength += servicesSize;
 		// ================= end provides section =================
 
 		this.contents[attrLengthOffset++] = (byte)(attrLength >> 24);
@@ -3191,6 +3299,9 @@ public class ClassFile implements TypeConstants, TypeIds {
 					}					
 				}
 			} else {
+				if (contentsEntries + localContentsOffset >= this.contents.length) {
+					resizeContents(contentsEntries);
+				}
 				if (indexForMetaFactory == 0) {
 					indexForMetaFactory = this.constantPool.literalIndexForMethodHandle(ClassFileConstants.MethodHandleRefKindInvokeStatic, javaLangInvokeLambdaMetafactory, 
 							ConstantPool.METAFACTORY, ConstantPool.JAVA_LANG_INVOKE_LAMBDAMETAFACTORY_METAFACTORY_SIGNATURE, false);
@@ -3206,7 +3317,7 @@ public class ClassFile implements TypeConstants, TypeIds {
 				this.contents[localContentsOffset++] = (byte) (functionalDescriptorIndex >> 8);
 				this.contents[localContentsOffset++] = (byte) functionalDescriptorIndex;
 	
-				int methodHandleIndex = this.constantPool.literalIndexForMethodHandle(functional.binding.original()); // Speak of " implementation" (erased) version here, adaptations described below.
+				int methodHandleIndex = this.constantPool.literalIndexForMethodHandle(functional.binding instanceof PolymorphicMethodBinding ? functional.binding : functional.binding.original()); // Speak of " implementation" (erased) version here, adaptations described below.
 				this.contents[localContentsOffset++] = (byte) (methodHandleIndex >> 8);
 				this.contents[localContentsOffset++] = (byte) methodHandleIndex;
 	
@@ -3810,7 +3921,9 @@ public class ClassFile implements TypeConstants, TypeIds {
 			long annotationMask = annotation.resolvedType != null ? annotation.resolvedType.getAnnotationTagBits() & TagBits.AnnotationTargetMASK : 0;
 			// AspectJ Extension: this prevents a Type targeting annotation being stashed on a
 			// method representing an 'declare @type'. So don't enforce this restriction
-//			if (annotationMask != 0 && (annotationMask & targetMask) == 0) continue;
+//			if (annotationMask != 0 && (annotationMask & targetMask) == 0) {
+//				if (!jdk16packageInfoAnnotation(annotationMask, targetMask)) continue;
+//			}
 			// AspectJ Extension: End
 			if (annotation.isRuntimeInvisible() || annotation.isRuntimeTypeInvisible()) {
 				invisibleAnnotationsCounter++;
@@ -3820,8 +3933,6 @@ public class ClassFile implements TypeConstants, TypeIds {
 		}
 
 		int annotationAttributeOffset = this.contentsOffset;
-		int constantPOffset = this.constantPool.currentOffset;
-		int constantPoolIndex = this.constantPool.currentIndex;
 		if (invisibleAnnotationsCounter != 0) {
 			if (this.contentsOffset + 10 >= this.contents.length) {
 				resizeContents(10);
@@ -3844,7 +3955,9 @@ public class ClassFile implements TypeConstants, TypeIds {
 				long annotationMask = annotation.resolvedType != null ? annotation.resolvedType.getAnnotationTagBits() & TagBits.AnnotationTargetMASK : 0;
 				// AspectJ Extension: this prevents a Type targeting annotation being stashed on a
 				// method representing an 'declare @type'. So don't enforce this restriction
-//				if (annotationMask != 0 && (annotationMask & targetMask) == 0) continue;
+//				if (annotationMask != 0 && (annotationMask & targetMask) == 0) {
+//					if (!jdk16packageInfoAnnotation(annotationMask, targetMask)) continue;
+//				}
 				// AspectJ Extension: end
 				if (annotation.isRuntimeInvisible() || annotation.isRuntimeTypeInvisible()) {
 					int currentAnnotationOffset = this.contentsOffset;
@@ -3867,14 +3980,10 @@ public class ClassFile implements TypeConstants, TypeIds {
 				attributesNumber++;
 			} else {
 				this.contentsOffset = annotationAttributeOffset;
-				// reset the constant pool to its state before the clinit
-				this.constantPool.resetForAttributeName(AttributeNamesConstants.RuntimeInvisibleAnnotationsName, constantPoolIndex, constantPOffset);
 			}
 		}
 
 		annotationAttributeOffset = this.contentsOffset;
-		constantPOffset = this.constantPool.currentOffset;
-		constantPoolIndex = this.constantPool.currentIndex;
 		if (visibleAnnotationsCounter != 0) {
 			if (this.contentsOffset + 10 >= this.contents.length) {
 				resizeContents(10);
@@ -3897,7 +4006,9 @@ public class ClassFile implements TypeConstants, TypeIds {
 				long annotationMask = annotation.resolvedType != null ? annotation.resolvedType.getAnnotationTagBits() & TagBits.AnnotationTargetMASK : 0;
 				// AspectJ Extension: this prevents a Type targeting annotation being stashed on a
 				// method representing an 'declare @type'. So don't enforce this restriction
-//				if (annotationMask != 0 && (annotationMask & targetMask) == 0) continue;
+//				if (annotationMask != 0 && (annotationMask & targetMask) == 0) {
+//					if (!jdk16packageInfoAnnotation(annotationMask, targetMask)) continue;
+//				}
 				// AspectJ Extension: end
 				if (annotation.isRuntimeVisible() || annotation.isRuntimeTypeVisible()) {
 					visibleAnnotationsCounter--;
@@ -3920,7 +4031,6 @@ public class ClassFile implements TypeConstants, TypeIds {
 				attributesNumber++;
 			} else {
 				this.contentsOffset = annotationAttributeOffset;
-				this.constantPool.resetForAttributeName(AttributeNamesConstants.RuntimeVisibleAnnotationsName, constantPoolIndex, constantPOffset);
 			}
 		}
 		return attributesNumber;
@@ -4095,8 +4205,6 @@ public class ClassFile implements TypeConstants, TypeIds {
 		int visibleTypeAnnotationsCounter = visibleTypeAnnotationsNumber;
 		int invisibleTypeAnnotationsCounter = invisibleTypeAnnotationsNumber;
 		int annotationAttributeOffset = this.contentsOffset;
-		int constantPOffset = this.constantPool.currentOffset;
-		int constantPoolIndex = this.constantPool.currentIndex;
 		if (invisibleTypeAnnotationsCounter != 0) {
 			if (this.contentsOffset + 10 >= this.contents.length) {
 				resizeContents(10);
@@ -4136,14 +4244,10 @@ public class ClassFile implements TypeConstants, TypeIds {
 				attributesNumber++;
 			} else {
 				this.contentsOffset = annotationAttributeOffset;
-				// reset the constant pool to its state before the clinit
-				this.constantPool.resetForAttributeName(AttributeNamesConstants.RuntimeInvisibleTypeAnnotationsName, constantPoolIndex, constantPOffset);
 			}
 		}
 
 		annotationAttributeOffset = this.contentsOffset;
-		constantPOffset = this.constantPool.currentOffset;
-		constantPoolIndex = this.constantPool.currentIndex;
 		if (visibleTypeAnnotationsCounter != 0) {
 			if (this.contentsOffset + 10 >= this.contents.length) {
 				resizeContents(10);
@@ -4183,7 +4287,6 @@ public class ClassFile implements TypeConstants, TypeIds {
 				attributesNumber++;
 			} else {
 				this.contentsOffset = annotationAttributeOffset;
-				this.constantPool.resetForAttributeName(AttributeNamesConstants.RuntimeVisibleTypeAnnotationsName, constantPoolIndex, constantPOffset);
 			}
 		}
 		return attributesNumber;

@@ -1,5 +1,6 @@
+// ASPECTJ
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -22,6 +23,7 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -31,6 +33,8 @@ import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Properties;
+import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -39,6 +43,7 @@ import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.ClassFile;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
 import org.eclipse.jdt.internal.compiler.batch.FileSystem;
+import org.eclipse.jdt.internal.compiler.batch.FileSystem.Classpath;
 import org.eclipse.jdt.internal.compiler.batch.Main;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
@@ -237,6 +242,10 @@ public class Util implements SuffixConstants {
 	public static final String LINE_SEPARATOR = System.getProperty("line.separator"); //$NON-NLS-1$
 
 	public static final String EMPTY_STRING = new String(CharOperation.NO_CHAR);
+	/**
+	 * @since 3.13 BETA_JAVA9
+	 */
+	public static final String COMMA_SEPARATOR = new String(CharOperation.COMMA_SEPARATOR);
 	public static final int[] EMPTY_INT_ARRAY= new int[0];
 
 	/**
@@ -749,10 +758,11 @@ public class Util implements SuffixConstants {
 	}
 	
 	public static final int ZIP_FILE = 0;
+	public static final int JMOD_FILE = 1;
 	
 	/**
-	 * Returns whether the given name is potentially a zip archive file name
-	 * (it has a file extension and it is not ".java" nor ".class")
+	 * Returns the kind of archive this file is. The format is one of
+	 * #ZIP_FILE or {@link #JMOD_FILE}
 	 */
 	public final static int archiveFormat(String name) {
 		int lastDot = name.lastIndexOf('.');
@@ -780,6 +790,14 @@ public class Util implements SuffixConstants {
 				}
 			}
 			return -1; // it is a ".class" file, it cannot be a zip archive name
+		}
+		if (extensionLength == EXTENSION_jmod.length()) {
+			for (int i = extensionLength-1; i >=0; i--) {
+				if (Character.toLowerCase(name.charAt(length - extensionLength + i)) != EXTENSION_jmod.charAt(i)) {
+					return ZIP_FILE; // not a ".jmod" file, so this is a potential archive name
+				}
+			}
+			return JMOD_FILE;
 		}
 		return ZIP_FILE; // it is neither a ".java" file nor a ".class" file, so this is a potential archive name
 	}
@@ -1157,35 +1175,58 @@ public class Util implements SuffixConstants {
 		return null;
 	}
 
-	public static void collectRunningVMBootclasspath(List bootclasspaths) {
-		for (String filePath : collectFilesNames()) {
-			FileSystem.Classpath currentClasspath = FileSystem.getClasspath(filePath, null, null, null);
-			if (currentClasspath != null) {
-				bootclasspaths.add(currentClasspath);
-			}
-		}
+	public static void collectVMBootclasspath(List bootclasspaths, File javaHome) {
+		List<Classpath> classpaths = collectPlatformLibraries(javaHome);
+		bootclasspaths.addAll(classpaths);
 	}
-
-	public static List<String> collectFilesNames() {
+	public static void collectRunningVMBootclasspath(List bootclasspaths) {
+		collectVMBootclasspath(bootclasspaths, null);
+			}
+	public static long getJDKLevel(File javaHome) {
+		String version = getJavaVersion(javaHome);
+		return CompilerOptions.versionToJdkLevel(version);
+		}
+	public static String getJavaVersion(File javaHome) {
+		if (javaHome == null) {
+			return System.getProperty("java.version"); //$NON-NLS-1$
+		}
+		File release = new File(javaHome, "release"); //$NON-NLS-1$
+		Properties prop = new Properties();
+		try {
+			prop.load(new FileReader(release));
+			String ver = prop.getProperty("JAVA_VERSION"); //$NON-NLS-1$
+			if (ver != null)
+				ver = ver.replace("\"", "");  //$NON-NLS-1$//$NON-NLS-2$
+			return ver;
+		} catch (IOException e) {
+			// Nothing can be done.
+		}
+		return null;
+	}
+	public static List<FileSystem.Classpath> collectFilesNames() {
+		return collectPlatformLibraries(null);
+	}
+	public static List<FileSystem.Classpath> collectPlatformLibraries(File javaHome) {
 		/* no bootclasspath specified
 		 * we can try to retrieve the default librairies of the VM used to run
 		 * the batch compiler
 		 */
-		String javaversion = System.getProperty("java.version");//$NON-NLS-1$
+		String javaversion = null;
+		javaversion = getJavaVersion(javaHome);
 		if (javaversion != null && javaversion.equalsIgnoreCase("1.1.8")) { //$NON-NLS-1$
 			throw new IllegalStateException();
 		}
-		if (javaversion.length() > 3) {
-			long jdkLevel = CompilerOptions.versionToJdkLevel(javaversion.substring(0, 3));
+		long jdkLevel = CompilerOptions.versionToJdkLevel(javaversion);
 			if (jdkLevel >= ClassFileConstants.JDK9) {
-				List<String> filePaths = new ArrayList<>();
-				final File javaHome = getJavaHome();
+			List<FileSystem.Classpath> filePaths = new ArrayList<>();
+			if (javaHome == null) {
+				javaHome = getJavaHome();
+			}
 				if (javaHome != null) {
-					filePaths.add((new File(javaHome, "/" + JRTUtil.JRT_FS_JAR)).getAbsolutePath()); //$NON-NLS-1$
+				filePaths.add(FileSystem.getJrtClasspath(javaHome.getAbsolutePath(), null, null, null));
 					return filePaths;
 				}
 			}
-		}
 
 		/*
 		 * Handle >= JDK 1.2.2 settings: retrieve the bootclasspath
@@ -1200,7 +1241,7 @@ public class Util implements SuffixConstants {
 				bootclasspathProperty = System.getProperty("org.apache.harmony.boot.class.path"); //$NON-NLS-1$
 			}
 		}
-		List<String> filePaths = new ArrayList<>();
+		Set<String> filePaths = new HashSet<>();
 		if ((bootclasspathProperty != null) && (bootclasspathProperty.length() != 0)) {
 			StringTokenizer tokenizer = new StringTokenizer(bootclasspathProperty, File.pathSeparator);
 			while (tokenizer.hasMoreTokens()) {
@@ -1208,7 +1249,9 @@ public class Util implements SuffixConstants {
 			}
 		} else {
 			// try to get all jars inside the lib folder of the java home
-			final File javaHome = getJavaHome();
+			if (javaHome == null) {
+				javaHome = getJavaHome();
+			}
 			if (javaHome != null) {
 				File[] directoriesToCheck = null;
 				if (System.getProperty("os.name").startsWith("Mac")) {//$NON-NLS-1$//$NON-NLS-2$
@@ -1234,7 +1277,14 @@ public class Util implements SuffixConstants {
 				}
 			}
 		}
-		return filePaths;
+		List<FileSystem.Classpath> classpaths = new ArrayList<>();
+		for (String filePath : filePaths) {
+			FileSystem.Classpath currentClasspath = FileSystem.getClasspath(filePath, null, null, null);
+			if (currentClasspath != null) {
+				classpaths.add(currentClasspath);
+			}
+		}
+		return classpaths;
 	}
 	public static int getParameterCount(char[] methodSignature) {
 		try {
@@ -1258,7 +1308,7 @@ public class Util implements SuffixConstants {
 				count++;
 			}
 		} catch (ArrayIndexOutOfBoundsException e) {
-			throw new IllegalArgumentException();
+			throw new IllegalArgumentException(e);
 		}
 	}
 
@@ -1536,10 +1586,6 @@ public class Util implements SuffixConstants {
 				return start;
 			case C_SUPER :
 			case C_EXTENDS :
-				// need a minimum 3 chars "+[I"
-				if (start >= string.length - 2) {
-					throw new IllegalArgumentException();
-				}
 				break;
 			default :
 				// must start in "+/-"
@@ -1547,6 +1593,9 @@ public class Util implements SuffixConstants {
 	
 		}
 		c = string[++start];
+		if (c != C_STAR && start >= string.length -1) { // unless "-*" we need at least one more char, e.g. after "+[", other variants are even longer
+			throw new IllegalArgumentException();
+		}
 		switch (c) {
 			case C_CAPTURE :
 				return scanCaptureTypeSignature(string, start);

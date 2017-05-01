@@ -94,9 +94,9 @@ public class ForeachStatement extends Statement {
 		int initialComplaintLevel = (flowInfo.reachMode() & FlowInfo.UNREACHABLE) != 0 ? Statement.COMPLAINED_FAKE_REACHABLE : Statement.NOT_COMPLAINED;
 
 		// process the element variable and collection
-		this.collection.checkNPE(currentScope, flowContext, flowInfo, 1);
 		flowInfo = this.elementVariable.analyseCode(this.scope, flowContext, flowInfo);		
 		FlowInfo condInfo = this.collection.analyseCode(this.scope, flowContext, flowInfo.copy());
+		this.collection.checkNPE(currentScope, flowContext, condInfo.copy(), 1);
 		LocalVariableBinding elementVarBinding = this.elementVariable.binding;
 
 		// element variable will be assigned when iterating
@@ -113,7 +113,7 @@ public class ForeachStatement extends Statement {
 			condInfo.nullInfoLessUnconditionalCopy();
 		actionInfo.markAsDefinitelyUnknown(elementVarBinding);
 		if (currentScope.compilerOptions().isAnnotationBasedNullAnalysisEnabled) {
-			int elementNullStatus = FlowInfo.tagBitsToNullStatus(this.collectionElementType.tagBits);
+			int elementNullStatus = NullAnnotationMatching.nullStatusFromExpressionType(this.collectionElementType);
 			int nullStatus = NullAnnotationMatching.checkAssignment(currentScope, flowContext, elementVarBinding, null, // have no useful flowinfo for element var
 																		elementNullStatus, this.collection, this.collectionElementType);
 			if ((elementVarBinding.type.tagBits & TagBits.IsBaseType) == 0) {

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -13,6 +13,8 @@
  *     IBM Corporation - initial API and implementation
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.env;
+
+import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
 
 public class NameEnvironmentAnswer {
 
@@ -30,26 +32,68 @@ public class NameEnvironmentAnswer {
 		this.module = binaryType.getModule();
 	}
 
+	public NameEnvironmentAnswer(IBinaryType binaryType, AccessRestriction accessRestriction, char[] module) {
+		this.binaryType = binaryType;
+		this.accessRestriction = accessRestriction;
+		this.module = module;
+	}
 	public NameEnvironmentAnswer(ICompilationUnit compilationUnit, AccessRestriction accessRestriction) {
+		this(compilationUnit, accessRestriction, compilationUnit.module());
+	}
+	public NameEnvironmentAnswer(ICompilationUnit compilationUnit, AccessRestriction accessRestriction, char[] module) {
 		this.compilationUnit = compilationUnit;
 		this.accessRestriction = accessRestriction;
-		this.module = compilationUnit.module();
+		this.module = module;
 	}
 
 	public NameEnvironmentAnswer(ISourceType[] sourceTypes, AccessRestriction accessRestriction, String externalAnnotationPath) {
+		this(sourceTypes, accessRestriction, externalAnnotationPath, ModuleEnvironment.UNNAMED);
+	}
+
+	public NameEnvironmentAnswer(ISourceType[] sourceTypes, AccessRestriction accessRestriction, String externalAnnotationPath, char[] module) {
 		this.sourceTypes = sourceTypes;
 		this.accessRestriction = accessRestriction;
 		this.externalAnnotationPath = externalAnnotationPath;
+		this.module = module;
 	}
+	
+	@Override
+	public String toString() {
+		String baseString = ""; //$NON-NLS-1$
+		if (this.binaryType != null) {
+			char[] fileNameChars = this.binaryType.getFileName();
+			String fileName = fileNameChars == null ? "" : new String(fileNameChars); //$NON-NLS-1$
+			baseString = "IBinaryType " + fileName; //$NON-NLS-1$
+		}
+		if (this.compilationUnit != null) {
+			baseString = "ICompilationUnit " + this.compilationUnit.toString(); //$NON-NLS-1$
+		}
+		if (this.sourceTypes != null) {
+			baseString = this.sourceTypes.toString();
+		}
+		if (this.accessRestriction != null) {
+			baseString += " " + this.accessRestriction.toString(); //$NON-NLS-1$
+		}
+		if (this.externalAnnotationPath != null) {
+			baseString += " extPath=" + this.externalAnnotationPath.toString(); //$NON-NLS-1$
+		}
+		return baseString;
+	}
+	
 	/**
 	 * Returns the associated access restriction, or null if none.
 	 */
 	public AccessRestriction getAccessRestriction() {
 		return this.accessRestriction;
 	}
+
+	public void setBinaryType(IBinaryType newType) {
+		this.binaryType = newType;
+	}
+
 	/**
-	 * Answer the resolved binary form for the type or null if the
-	 * receiver represents a compilation unit or source type.
+	 * Answer the resolved binary form for the type or null if the receiver represents a compilation unit or source
+	 * type.
 	 */
 	public IBinaryType getBinaryType() {
 		return this.binaryType;

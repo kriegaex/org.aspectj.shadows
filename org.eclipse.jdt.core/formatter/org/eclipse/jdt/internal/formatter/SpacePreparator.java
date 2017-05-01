@@ -363,7 +363,7 @@ public class SpacePreparator extends ASTVisitor {
 
 	@Override
 	public boolean visit(TryStatement node) {
-		List<VariableDeclarationExpression> resources = node.resources();
+		List<Expression> resources = node.resources();
 		if (!resources.isEmpty()) {
 			handleToken(node, TokenNameLPAREN, this.options.insert_space_before_opening_paren_in_try,
 					this.options.insert_space_after_opening_paren_in_try);
@@ -859,10 +859,11 @@ public class SpacePreparator extends ASTVisitor {
 	@Override
 	public boolean visit(ParameterizedType node) {
 		List<Type> typeArguments = node.typeArguments();
-		if (!typeArguments.isEmpty()) {
-			handleTokenAfter(node.getType(), TokenNameLESS,
-					this.options.insert_space_before_opening_angle_bracket_in_parameterized_type_reference,
-					this.options.insert_space_after_opening_angle_bracket_in_parameterized_type_reference);
+		boolean hasArguments = !typeArguments.isEmpty();
+		handleTokenAfter(node.getType(), TokenNameLESS,
+				this.options.insert_space_before_opening_angle_bracket_in_parameterized_type_reference,
+				hasArguments && this.options.insert_space_after_opening_angle_bracket_in_parameterized_type_reference);
+		if (hasArguments) {
 			handleTokenAfter(typeArguments.get(typeArguments.size() - 1), TokenNameGREATER,
 					this.options.insert_space_before_closing_angle_bracket_in_parameterized_type_reference, false);
 			handleCommas(node.typeArguments(),
@@ -974,21 +975,21 @@ public class SpacePreparator extends ASTVisitor {
 	}
 
 	private void handleTokenAfter(ASTNode node, int tokenType, boolean spaceBefore, boolean spaceAfter) {
-		if (spaceBefore || spaceAfter) {
-			if (tokenType == TokenNameGREATER) {
-				// there could be ">>" or ">>>" instead, get rid of them
-				int index = this.tm.lastIndexIn(node, -1);
-				for (int i = index; i < index + 2; i++) {
-					Token token = this.tm.get(i);
-					if (token.tokenType == TokenNameRIGHT_SHIFT || token.tokenType == TokenNameUNSIGNED_RIGHT_SHIFT) {
-						this.tm.remove(i);
-						for (int j = 0; j < (token.tokenType == TokenNameRIGHT_SHIFT ? 2 : 3); j++) {
-							this.tm.insert(i + j, new Token(token.originalStart + j, token.originalStart + j,
-									TokenNameGREATER));
-						}
+		if (tokenType == TokenNameGREATER) {
+			// there could be ">>" or ">>>" instead, get rid of them
+			int index = this.tm.lastIndexIn(node, -1);
+			for (int i = index; i < index + 2; i++) {
+				Token token = this.tm.get(i);
+				if (token.tokenType == TokenNameRIGHT_SHIFT || token.tokenType == TokenNameUNSIGNED_RIGHT_SHIFT) {
+					this.tm.remove(i);
+					for (int j = 0; j < (token.tokenType == TokenNameRIGHT_SHIFT ? 2 : 3); j++) {
+						this.tm.insert(i + j, new Token(token.originalStart + j, token.originalStart + j,
+								TokenNameGREATER));
 					}
 				}
 			}
+		}
+		if (spaceBefore || spaceAfter) {
 			Token token = this.tm.firstTokenAfter(node, tokenType);
 			handleToken(token, spaceBefore, spaceAfter);
 		}

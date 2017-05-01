@@ -21,8 +21,8 @@ import org.eclipse.jdt.internal.compiler.ast.CompilationUnitDeclaration;
 import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
 import org.eclipse.jdt.internal.compiler.env.IModule;
 import org.eclipse.jdt.internal.compiler.env.INameEnvironment;
-import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
 import org.eclipse.jdt.internal.compiler.parser.Parser;
+import org.eclipse.jdt.internal.core.ModuleInfo;
 import org.eclipse.jdt.internal.core.util.Util;
 
 public class ClasspathMultiDirectory extends ClasspathDirectory {
@@ -34,7 +34,7 @@ boolean hasIndependentOutputFolder; // if output folder is not equal to any of t
 public boolean ignoreOptionalProblems;
 
 ClasspathMultiDirectory(IContainer sourceFolder, IContainer binaryFolder, char[][] inclusionPatterns, char[][] exclusionPatterns, boolean ignoreOptionalProblems, INameEnvironment env) {
-	super(binaryFolder, true, null, null, env);
+	super(binaryFolder, true, null, null, env, false /* source never an automatic module*/);
 
 	this.sourceFolder = sourceFolder;
 	this.inclusionPatterns = inclusionPatterns;
@@ -54,9 +54,10 @@ public boolean equals(Object o) {
 	if (!(o instanceof ClasspathMultiDirectory)) return false;
 
 	ClasspathMultiDirectory md = (ClasspathMultiDirectory) o;
-	if (this.module != md.module)
-		if (this.module == null || !this.module.equals(md.module))
-			return false;
+	// TODO: revisit this - is this really required??
+//	if (this.module != md.module)
+//		if (this.module == null || !this.module.equals(md.module))
+//			return false;
 	return this.ignoreOptionalProblems == md.ignoreOptionalProblems 
 		&& this.sourceFolder.equals(md.sourceFolder) && this.binaryFolder.equals(md.binaryFolder)
 		&& CharOperation.equals(this.inclusionPatterns, md.inclusionPatterns)
@@ -80,14 +81,13 @@ public void acceptModuleInfo(ICompilationUnit cu, Parser parser) {
 	CompilationUnitDeclaration unit = parser.parse(cu, compilationResult);
 	// Request could also come in when module-info has changed or removed.
 	if (unit.isModuleInfo() && unit.moduleDeclaration != null) {
-		IModule mod = ModuleEnvironment.createModule(unit.moduleDeclaration);
-		if (mod != null) {
-			this.module = mod;
-			//this.env.acceptModule(mod, this);
+		IModule decl = ModuleInfo.createModule(unit.moduleDeclaration);
+		if (decl != null) {
+			this.module = decl;
 		}
 	}
 }
-public void resetModule(IModule mod) {
+public void setModule(IModule mod) {
 	this.module = mod;
 }
 

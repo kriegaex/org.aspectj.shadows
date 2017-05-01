@@ -816,7 +816,7 @@ public class Factory {
 				repackagedBindings[i] = new AnnotationBinding(containerType, elementValuePairs);
 			}
 		}
-		
+
 		int finalTally = 0;
 		for (int i = 0; i < length; i++) {
 			if (repackagedBindings[i] != null)

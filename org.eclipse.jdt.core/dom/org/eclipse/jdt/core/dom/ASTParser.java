@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2004, 2015 IBM Corporation and others.
+ * Copyright (c) 2004, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -20,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.SubMonitor;
 import org.eclipse.jdt.core.IClassFile;
 import org.eclipse.jdt.core.ICompilationUnit;
 import org.eclipse.jdt.core.IJavaElement;
@@ -262,7 +267,8 @@ public class ASTParser {
 			case AST.JLS2_INTERNAL:
 			case AST.JLS3_INTERNAL:
 			case AST.JLS4_INTERNAL:
-			case AST.JLS8:
+			case AST.JLS8_INTERNAL:
+			case AST.JLS9_INTERNAL:
 				break;
 			default:
 				throw new IllegalArgumentException();
@@ -298,7 +304,7 @@ public class ASTParser {
 				throw new IllegalStateException("invalid environment settings"); //$NON-NLS-1$
 			}
 		} catch (IllegalArgumentException e) {
-			throw new IllegalStateException("invalid environment settings"); //$NON-NLS-1$
+			throw new IllegalStateException("invalid environment settings", e); //$NON-NLS-1$
 		}
 		return allClasspaths;
 	}
@@ -844,17 +850,16 @@ public class ASTParser {
 	 * are insufficient, contradictory, or otherwise unsupported
 	 */
 	public ASTNode createAST(IProgressMonitor monitor) {
+		SubMonitor subMonitor = SubMonitor.convert(monitor, 1);
 		ASTNode result = null;
-		if (monitor != null) monitor.beginTask("", 1); //$NON-NLS-1$
 		try {
 			if (this.rawSource == null && this.typeRoot == null) {
 				throw new IllegalStateException("source not specified"); //$NON-NLS-1$
 			}
-			result = internalCreateAST(monitor);
+			result = internalCreateAST(subMonitor.split(1));
 		} finally {
 			// reset to defaults to allow reuse (and avoid leaking)
 			initializeDefaults();
-			if (monitor != null) monitor.done();
 		}
 		return result;
 	}

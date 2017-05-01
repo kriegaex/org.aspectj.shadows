@@ -20,43 +20,58 @@ import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
-import org.eclipse.jdt.internal.compiler.env.IModuleLocation;
+import org.eclipse.jdt.internal.compiler.env.IModule;
+import org.eclipse.jdt.internal.compiler.env.IModuleEnvironment;
 import org.eclipse.jdt.internal.compiler.env.INameEnvironment;
+import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
 import org.eclipse.jdt.internal.compiler.util.Util;
 
-public abstract class ClasspathLocation implements IModuleLocation {
+public abstract class ClasspathLocation implements IModuleEnvironment {
 
-	protected static final String MODULE_INFO_JAVA = "MODULE-INFO.JAVA"; //$NON-NLS-1$
-	protected static final String MODULE_INFO_CLASS = "module-info.class"; //$NON-NLS-1$
-
+	protected boolean isAutoModule;
+	protected IModule module;
+	abstract public NameEnvironmentAnswer findClass(String typeName, String qualifiedPackageName, String qualifiedBinaryFileName);
+	abstract public NameEnvironmentAnswer findClass(String typeName, String qualifiedPackageName, String qualifiedBinaryFileName, boolean asBinaryOnly);
+	abstract public boolean isPackage(String qualifiedPackageName);
+	public NameEnvironmentAnswer findClass(char[] typeName, String qualifiedPackageName, String qualifiedBinaryFileName, boolean asBinaryOnly) {
+		String fileName = new String(typeName);
+		return findClass(fileName, qualifiedPackageName, qualifiedBinaryFileName, asBinaryOnly);
+	}
+	public void setModule (IModule mod) {
+		this.module = mod;
+	}
 	static ClasspathLocation forSourceFolder(IContainer sourceFolder, IContainer outputFolder,
 			char[][] inclusionPatterns, char[][] exclusionPatterns, boolean ignoreOptionalProblems,
 			INameEnvironment env) {
 		return new ClasspathMultiDirectory(sourceFolder, outputFolder, inclusionPatterns, exclusionPatterns,
-				ignoreOptionalProblems, env).initializeModule();
+				ignoreOptionalProblems, env);
 	}
-public static ClasspathLocation forBinaryFolder(IContainer binaryFolder, boolean isOutputFolder, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, INameEnvironment env) {
-	return new ClasspathDirectory(binaryFolder, isOutputFolder, accessRuleSet, externalAnnotationPath, env).initializeModule();
+public static ClasspathLocation forBinaryFolder(IContainer binaryFolder, boolean isOutputFolder, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, INameEnvironment env, boolean autoModule) {
+	return new ClasspathDirectory(binaryFolder, isOutputFolder, accessRuleSet, externalAnnotationPath, env, autoModule);
 }
 
 static ClasspathLocation forLibrary(String libraryPathname, 
 										long lastModified, 
 										AccessRuleSet accessRuleSet, 
 										IPath annotationsPath,
-										INameEnvironment env) {
+										INameEnvironment env,
+										boolean autoModule) {
 	return Util.isJrt(libraryPathname) ?
 			new ClasspathJrt(libraryPathname, annotationsPath, env) :
-			new ClasspathJar(libraryPathname, lastModified, accessRuleSet, annotationsPath, env);
+				Util.archiveFormat(libraryPathname) == Util.JMOD_FILE ?
+					new ClasspathJMod(libraryPathname, lastModified, accessRuleSet, annotationsPath, env) :
+			new ClasspathJar(libraryPathname, lastModified, accessRuleSet, annotationsPath, env, false);
+
 }
 
 public static ClasspathLocation forLibrary(String libraryPathname, AccessRuleSet accessRuleSet, IPath annotationsPath,
-											INameEnvironment env) {
-	return forLibrary(libraryPathname, 0, accessRuleSet, annotationsPath, env);
+											INameEnvironment env, boolean autoModule) {
+	return forLibrary(libraryPathname, 0, accessRuleSet, annotationsPath, env, autoModule);
 }
 
 static ClasspathLocation forLibrary(IFile library, AccessRuleSet accessRuleSet, IPath annotationsPath,
-										INameEnvironment env) {
-	return new ClasspathJar(library, accessRuleSet, annotationsPath, env);
+										INameEnvironment env, boolean autoModule) {
+	return new ClasspathJar(library, accessRuleSet, annotationsPath, env, autoModule);
 }
 
 public abstract IPath getProjectRelativePath();
@@ -74,4 +89,20 @@ public void reset() {
 
 public abstract String debugPathString();
 
+void acceptModule(IModule mod) {
+	if (mod != null) {
+		this.module = mod;
+	}
+}
+public IModule getModule() {
+	return this.module;
+}
+/**
+ * Specifies whether this entry represents an automatic module.
+ * 
+ * @return true if this is an automatic module, false otherwise
+ */
+public boolean isAutomaticModule() {
+	return this.isAutoModule;
+}
 }

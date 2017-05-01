@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2006, 2016 IBM Corporation and others.
+ * Copyright (c) 2006, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -260,8 +260,8 @@ public class EclipseFileManager implements StandardJavaFileManager {
 			return null;
 		}
 
-		for (String fileName : org.eclipse.jdt.internal.compiler.util.Util.collectFilesNames()) {
-			files.add(new File(fileName));
+		for (FileSystem.Classpath classpath : org.eclipse.jdt.internal.compiler.util.Util.collectFilesNames()) {
+			files.add(new File(classpath.getPath()));
 		}
 		return files;
 	}
@@ -458,7 +458,7 @@ public class EclipseFileManager implements StandardJavaFileManager {
 					}
 					uri2 = new URI(uri.getScheme(), uri.getHost(), path, uri.getFragment());
 				} catch (URISyntaxException e) {
-					throw new IllegalArgumentException("invalid sibling");//$NON-NLS-1$
+					throw new IllegalArgumentException("invalid sibling", e);//$NON-NLS-1$
 				}
 				return new EclipseFileObject(className, uri2, kind, this.charset);
 			} else {

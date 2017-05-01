@@ -20,7 +20,6 @@ import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.env.AccessRestriction;
 import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
 import org.eclipse.jdt.internal.compiler.env.IModule;
-import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
 import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
 
 public abstract class ClasspathLocation implements FileSystem.Classpath,
@@ -32,7 +31,8 @@ public abstract class ClasspathLocation implements FileSystem.Classpath,
 	String path;
 	char[] normalizedPath;
 	public AccessRuleSet accessRuleSet;
-	IModule module = null;
+	IModule module;
+	protected boolean isAutoModule;
 
 	public String destinationPath;
 		// destination path for compilation units that are reached through this
@@ -107,11 +107,16 @@ public abstract class ClasspathLocation implements FileSystem.Classpath,
 	public String getPath() {
 		return this.path;
 	}
-	public boolean servesModule(IModule mod) {
-		if (mod == null) 
-			return false;
-		if (this.module == null || mod == this || mod == ModuleEnvironment.UNNAMED_MODULE)
-			return true;
-		return (CharOperation.equals(this.module.name(), mod.name()));
+	public String getDestinationPath() {
+		return this.destinationPath;
+	}
+	
+	public void acceptModule(IModule mod) {
+		this.module = mod;
+		this.isAutoModule = mod.isAutomatic();
+	}
+	@Override
+	public boolean isAutomaticModule() {
+		return this.isAutoModule;
 	}
 }

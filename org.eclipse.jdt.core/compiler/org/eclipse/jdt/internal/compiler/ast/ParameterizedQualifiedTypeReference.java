@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2015 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -35,6 +35,7 @@ import org.eclipse.jdt.internal.compiler.lookup.*;
 public class ParameterizedQualifiedTypeReference extends ArrayQualifiedTypeReference {
 
 	public TypeReference[][] typeArguments;
+	ReferenceBinding[] typesPerToken;
 
 	/**
 	 * @param tokens
@@ -65,7 +66,7 @@ public class ParameterizedQualifiedTypeReference extends ArrayQualifiedTypeRefer
 		}
 	}
 	public void checkBounds(Scope scope) {
-		if (this.resolvedType == null) return;
+		if (this.resolvedType == null || !this.resolvedType.isValidBinding()) return;
 
 		checkBounds(
 			(ReferenceBinding) this.resolvedType.leafComponentType(),
@@ -74,8 +75,10 @@ public class ParameterizedQualifiedTypeReference extends ArrayQualifiedTypeRefer
 	}
 	public void checkBounds(ReferenceBinding type, Scope scope, int index) {
 		// recurse on enclosing type if any, and assuming explictly  part of the reference (index>0)
-		if (index > 0 &&  type.enclosingType() != null) {
-			checkBounds(type.enclosingType(), scope, index - 1);
+		if (index > 0) {
+			ReferenceBinding enclosingType = this.typesPerToken[index-1];
+			if (enclosingType != null)
+				checkBounds(enclosingType, scope, index - 1);
 		}
 		if (type.isParameterizedTypeWithActualArguments()) {
 			ParameterizedTypeBinding parameterizedType = (ParameterizedTypeBinding) type;
@@ -197,6 +200,10 @@ public class ParameterizedQualifiedTypeReference extends ArrayQualifiedTypeRefer
 		TypeBinding type = internalResolveLeafType(scope, checkBounds);
 		createArrayType(scope);
 		resolveAnnotations(scope, location);
+		if(this.dimensions > 0) {
+			this.resolvedType = ArrayTypeReference.maybeMarkArrayContentsNonNull(scope, this.resolvedType, this.sourceStart, this.dimensions, null);
+		}
+
 		if (this.typeArguments != null)
 			// relevant null annotations are on the inner most type:
 			checkIllegalNullAnnotations(scope, this.typeArguments[this.typeArguments.length-1]);
@@ -231,7 +238,9 @@ public class ParameterizedQualifiedTypeReference extends ArrayQualifiedTypeRefer
 
 		boolean typeIsConsistent = true;
 		ReferenceBinding qualifyingType = null;
-		for (int i = packageBinding == null ? 0 : packageBinding.compoundName.length, max = this.tokens.length; i < max; i++) {
+		int max = this.tokens.length;
+		this.typesPerToken = new ReferenceBinding[max];
+		for (int i = packageBinding == null ? 0 : packageBinding.compoundName.length; i < max; i++) {
 			findNextTypeBinding(i, scope, packageBinding);
 			if (!(this.resolvedType.isValidBinding())) {
 				reportInvalidType(scope);
@@ -255,18 +264,17 @@ public class ParameterizedQualifiedTypeReference extends ArrayQualifiedTypeRefer
 			ReferenceBinding currentType = (ReferenceBinding) this.resolvedType;
 			if (qualifyingType == null) {
 				qualifyingType = currentType.enclosingType(); // if member type
-				if (qualifyingType != null) {
-					qualifyingType = currentType.isStatic()
-						? (ReferenceBinding) scope.environment().convertToRawType(qualifyingType, false /*do not force conversion of enclosing types*/)
-						: scope.environment().convertToParameterizedType(qualifyingType);
+				if (qualifyingType != null && !currentType.isStatic()) {
+					qualifyingType = scope.environment().convertToParameterizedType(qualifyingType);
 				}
 			} else {
 				if (this.annotations != null)
 					rejectAnnotationsOnStaticMemberQualififer(scope, currentType, this.annotations[i-1]);
 				if (typeIsConsistent && currentType.isStatic()
 						&& (qualifyingType.isParameterizedTypeWithActualArguments() || qualifyingType.isGenericType())) {
-					scope.problemReporter().staticMemberOfParameterizedType(this, scope.environment().createParameterizedType((ReferenceBinding)currentType.erasure(), null, qualifyingType), i);
+					scope.problemReporter().staticMemberOfParameterizedType(this, currentType, qualifyingType, i);
 					typeIsConsistent = false;
+					qualifyingType = qualifyingType.actualType(); // avoid raw/parameterized enclosing of static member
 				}
 				ReferenceBinding enclosingType = currentType.enclosingType();
 				if (enclosingType != null && TypeBinding.notEquals(enclosingType.erasure(), qualifyingType.erasure())) { // qualifier != declaring/enclosing
@@ -323,13 +331,18 @@ public class ParameterizedQualifiedTypeReference extends ArrayQualifiedTypeRefer
 						return null;
 					}
 				}
-				// check parameterizing non-static member type of raw type
-				if (typeIsConsistent && !currentType.isStatic()) {
-					ReferenceBinding actualEnclosing = currentType.enclosingType();
-					if (actualEnclosing != null && actualEnclosing.isRawType()) {
-						scope.problemReporter().rawMemberTypeCannotBeParameterized(
-								this, scope.environment().createRawType(currentOriginal, actualEnclosing), argTypes);
-						typeIsConsistent = false;
+				// check parameterizing (non-)static member type of raw type
+				if (typeIsConsistent) {
+					if (currentType.isStatic()) {
+						if (qualifyingType != null && qualifyingType.isRawType())
+							this.typesPerToken[i-1] = qualifyingType = qualifyingType.actualType(); // revert rawification of enclosing, since its generics are inaccessible
+					} else {
+						ReferenceBinding actualEnclosing = currentType.enclosingType();
+						if (actualEnclosing != null && actualEnclosing.isRawType()) {
+							scope.problemReporter().rawMemberTypeCannotBeParameterized(
+									this, scope.environment().createRawType(currentOriginal, actualEnclosing), argTypes);
+							typeIsConsistent = false;
+						}
 					}
 				}
 				ParameterizedTypeBinding parameterizedType = scope.environment().createParameterizedType(currentOriginal, argTypes, qualifyingType);
@@ -355,14 +368,13 @@ public class ParameterizedQualifiedTypeReference extends ArrayQualifiedTypeRefer
 					}
 	   			    qualifyingType = scope.environment().createRawType(currentOriginal, qualifyingType); // raw type
 				} else {
-					qualifyingType = (qualifyingType != null && qualifyingType.isParameterizedType())
-													? scope.environment().createParameterizedType(currentOriginal, null, qualifyingType)
-													: currentType;
+					qualifyingType = scope.environment().maybeCreateParameterizedType(currentOriginal, qualifyingType);
 				}
 			}
 			if (isTypeUseDeprecated(qualifyingType, scope))
 				reportDeprecatedType(qualifyingType, scope, i);
 			this.resolvedType = qualifyingType;
+			this.typesPerToken[i] = qualifyingType;
 			recordResolution(scope.environment(), this.resolvedType);
 		}
 		return this.resolvedType;

@@ -213,7 +213,6 @@ public void acceptResult(CompilationResult result) {
 protected void acceptSecondaryType(ClassFile classFile) {
 	// noop
 }
-
 protected void addAllSourceFiles(final ArrayList sourceFiles) throws CoreException {
 	for (int i = 0, l = this.sourceLocations.length; i < l; i++) {
 		final ClasspathMultiDirectory sourceLocation = this.sourceLocations[i];
@@ -234,11 +233,6 @@ protected void addAllSourceFiles(final ArrayList sourceFiles) throws CoreExcepti
 									if (Util.isExcluded(resource.getFullPath(), inclusionPatterns, exclusionPatterns, false))
 										return false;
 								SourceFile unit = new SourceFile((IFile) resource, sourceLocation);
-								String complianceLevel = AbstractImageBuilder.this.javaBuilder.javaProject.getOption(JavaCore.COMPILER_COMPLIANCE, true);
-								if (CompilerOptions.versionToJdkLevel(complianceLevel) >= ClassFileConstants.JDK9 &&
-										resource.getName().equalsIgnoreCase(ClasspathLocation.MODULE_INFO_JAVA)) {
-									sourceLocation.acceptModuleInfo(unit, AbstractImageBuilder.this.compiler.parser);
-								}
 								sourceFiles.add(unit);
 							}
 							return false;

@@ -75,8 +75,15 @@ public class QualifiedTypeReference extends TypeReference {
 		for (int j = 0; j < i; j++) {
 			Annotation[] qualifierAnnot = this.annotations[j];
 			if (qualifierAnnot != null && qualifierAnnot.length > 0) {
-				scope.problemReporter().misplacedTypeAnnotations(qualifierAnnot[0], qualifierAnnot[qualifierAnnot.length - 1]);
-				this.annotations[j] = null;
+				if (j == 0) {
+					for (int k = 0; k < qualifierAnnot.length; k++) {
+						scope.problemReporter().typeAnnotationAtQualifiedName(qualifierAnnot[k]);
+					}
+				} else {
+					scope.problemReporter().misplacedTypeAnnotations(qualifierAnnot[0],
+							qualifierAnnot[qualifierAnnot.length - 1]);
+					this.annotations[j] = null;
+				}
 			}
 		}
 	}
@@ -131,15 +138,19 @@ public class QualifiedTypeReference extends TypeReference {
 				if (enclosingType != null && TypeBinding.notEquals(enclosingType.erasure(), qualifiedType.erasure())) {
 					qualifiedType = enclosingType; // inherited member type, leave it associated with its enclosing rather than subtype
 				}
-				boolean rawQualified;
 				if (currentType.isGenericType()) {
 					qualifiedType = scope.environment().createRawType(currentType, qualifiedType);
-				} else if ((rawQualified = qualifiedType.isRawType()) && !currentType.isStatic()) {
-					qualifiedType = scope.environment().createRawType((ReferenceBinding)currentType.erasure(), qualifiedType);
-				} else if ((rawQualified || qualifiedType.isParameterizedType()) && TypeBinding.equalsEquals(qualifiedType.erasure(), currentType.enclosingType().erasure())) {
-					qualifiedType = scope.environment().createParameterizedType((ReferenceBinding)currentType.erasure(), null, qualifiedType);
+				} else if (currentType.isStatic()) {
+					qualifiedType = currentType; // parameterization of enclosing is irrelevant in this case
 				} else {
-					qualifiedType = currentType;
+					boolean rawQualified = qualifiedType.isRawType();
+					if (rawQualified) {
+						qualifiedType = scope.environment().createRawType((ReferenceBinding)currentType.erasure(), qualifiedType);
+					} else if (qualifiedType.isParameterizedType() && TypeBinding.equalsEquals(qualifiedType.erasure(), currentType.enclosingType().erasure())) {
+						qualifiedType = scope.environment().createParameterizedType((ReferenceBinding)currentType.erasure(), null, qualifiedType);
+					} else {
+						qualifiedType = currentType;
+					}
 				}
 			} else {
 				qualifiedType = currentType.isGenericType() ? (ReferenceBinding)scope.environment().convertToRawType(currentType, false /*do not force conversion of enclosing types*/) : currentType;

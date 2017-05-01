@@ -1,6 +1,6 @@
 // ASPECTJ
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -49,7 +49,6 @@ import org.eclipse.jdt.internal.compiler.codegen.ConstantPool;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.util.Util;
 
-@SuppressWarnings("rawtypes")
 public class MethodBinding extends Binding {
 
 	public int modifiers;
@@ -572,12 +571,16 @@ protected void fillInDefaultNonNullness(AbstractMethodDeclaration sourceMethod) 
 
 //pre: null annotation analysis is enabled
 protected void fillInDefaultNonNullness18(AbstractMethodDeclaration sourceMethod, LookupEnvironment env) {
-	if (hasNonNullDefaultFor(DefaultLocationParameter, true)) {
+	MethodBinding original = original();
+	if(original == null) {
+		return;
+	}
+	if (hasNonNullDefaultFor(DefaultLocationParameter, true, sourceMethod)) {
 		boolean added = false;
 		int length = this.parameters.length;
 		for (int i = 0; i < length; i++) {
 			TypeBinding parameter = this.parameters[i];
-			if (!parameter.acceptsNonNullDefault())
+			if (!original.parameters[i].acceptsNonNullDefault())
 				continue;
 			long existing = parameter.tagBits & TagBits.AnnotationNullMASK;
 			if (existing == 0L) {
@@ -595,7 +598,7 @@ protected void fillInDefaultNonNullness18(AbstractMethodDeclaration sourceMethod
 		if (added)
 			this.tagBits |= TagBits.HasParameterAnnotations;
 	}
-	if (this.returnType != null && hasNonNullDefaultFor(DefaultLocationReturnType, true) && this.returnType.acceptsNonNullDefault()) {
+	if (original.returnType != null && hasNonNullDefaultFor(DefaultLocationReturnType, true, sourceMethod) && original.returnType.acceptsNonNullDefault()) {
 		if ((this.returnType.tagBits & TagBits.AnnotationNullMASK) == 0) {
 			this.returnType = env.createAnnotatedType(this.returnType, new AnnotationBinding[]{env.getNonNullAnnotation()});
 		} else if (sourceMethod instanceof MethodDeclaration && (this.returnType.tagBits & TagBits.AnnotationNonNull) != 0 
@@ -696,9 +699,16 @@ public long getAnnotationTagBits() {
 				long nullDefaultBits = usesNullTypeAnnotations ? this.defaultNullness
 						: this.tagBits & (TagBits.AnnotationNonNullByDefault|TagBits.AnnotationNullUnspecifiedByDefault);
 				if (nullDefaultBits != 0 && this.declaringClass instanceof SourceTypeBinding) {
-					SourceTypeBinding declaringSourceType = (SourceTypeBinding) this.declaringClass;
-					if (declaringSourceType.checkRedundantNullnessDefaultOne(methodDecl, methodDecl.annotations, nullDefaultBits, usesNullTypeAnnotations)) {
-						declaringSourceType.checkRedundantNullnessDefaultRecurse(methodDecl, methodDecl.annotations, nullDefaultBits, usesNullTypeAnnotations);
+					if (usesNullTypeAnnotations) {
+						Binding target = scope.checkRedundantDefaultNullness(this.defaultNullness, typeDecl.declarationSourceStart);
+						if (target != null) {
+							methodDecl.scope.problemReporter().nullDefaultAnnotationIsRedundant(methodDecl, methodDecl.annotations, target);
+						}
+					} else {
+						SourceTypeBinding declaringSourceType = (SourceTypeBinding) this.declaringClass;
+						if (declaringSourceType.checkRedundantNullnessDefaultOne(methodDecl, methodDecl.annotations, nullDefaultBits, usesNullTypeAnnotations)) {
+							declaringSourceType.checkRedundantNullnessDefaultRecurse(methodDecl, methodDecl.annotations, nullDefaultBits, usesNullTypeAnnotations);
+						}
 					}
 				}
 			}
@@ -1132,7 +1142,7 @@ public final char[] signature() /* (ILjava/lang/Thread;)Ljava/lang/Object; */ {
  *
  * See https://bugs.eclipse.org/bugs/show_bug.cgi?id=171184
  */
-public final char[] signature(ClassFile classFile) {
+public char[] signature(ClassFile classFile) {
 	if (this.signature != null) {
 		if ((this.tagBits & TagBits.ContainsNestedTypeReferences) != 0) {
 			// we need to record inner classes references
@@ -1374,7 +1384,7 @@ public TypeVariableBinding[] typeVariables() {
 	return this.typeVariables;
 }
 //pre: null annotation analysis is enabled
-public boolean hasNonNullDefaultFor(int location, boolean useTypeAnnotations) {
+public boolean hasNonNullDefaultFor(int location, boolean useTypeAnnotations, AbstractMethodDeclaration srcMethod) {
 	if ((this.modifiers & ExtraCompilerModifiers.AccIsDefaultConstructor) != 0)
 		return false;
 	if (useTypeAnnotations) {
@@ -1386,7 +1396,7 @@ public boolean hasNonNullDefaultFor(int location, boolean useTypeAnnotations) {
 		if ((this.tagBits & TagBits.AnnotationNullUnspecifiedByDefault) != 0)
 			return false;
 	}
-	return this.declaringClass.hasNonNullDefaultFor(location, useTypeAnnotations);
+	return this.declaringClass.hasNonNullDefaultFor(location, useTypeAnnotations, srcMethod == null ? -1 : srcMethod.declarationSourceStart);
 }
 
 public boolean redeclaresPublicObjectMethod(Scope scope) {
@@ -1403,5 +1413,19 @@ public boolean redeclaresPublicObjectMethod(Scope scope) {
 }
 public boolean isVoidMethod() {
 	return this.returnType == TypeBinding.VOID;
+}
+public boolean doesParameterLengthMatch(int suggestedParameterLength) {
+	int len = this.parameters.length;
+	return len <= suggestedParameterLength || (isVarargs() && len == suggestedParameterLength + 1);
+}
+public void updateTypeVariableBinding(TypeVariableBinding previousBinding, TypeVariableBinding updatedBinding) {
+	TypeVariableBinding[] bindings = this.typeVariables;
+	if (bindings != null) {
+		for (int i = 0; i < bindings.length; i++) {
+			if (bindings[i] == previousBinding) { //$IDENTITY-COMPARISON$
+				bindings[i] = updatedBinding;
+			}
+		}
+	}
 }
 }

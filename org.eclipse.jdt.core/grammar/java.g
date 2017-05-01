@@ -52,7 +52,7 @@ $Terminals
 	interface long native new null package private
 	protected public return short static strictfp super switch
 	synchronized this throw throws transient true try void
-	volatile while module requires exports to uses provides with
+	volatile while module open requires transitive exports opens to uses provides with
 
 -- AspectJ Extension
 	aspect pointcut around before after declare privileged
@@ -501,6 +501,9 @@ InternalCompilationUnit ::= $empty
 /:$readableName CompilationUnit:/
 
 --1.9 feature
+InternalCompilationUnit ::= ImportDeclarations ReduceImports ModuleDeclaration
+/:$compliance 1.9:/
+/.$putCase consumeInternalCompilationUnitWithModuleDeclaration(); $break ./
 InternalCompilationUnit ::= ModuleDeclaration
 /:$compliance 1.9:/
 /.$putCase consumeInternalCompilationUnitWithModuleDeclaration(); $break ./
@@ -509,21 +512,35 @@ ModuleDeclaration ::= ModuleHeader ModuleBody
 /:$compliance 1.9:/
 /.$putCase consumeModuleDeclaration(); $break ./
 
-ModuleHeader ::= 'module' UnannotatableName
+ModuleHeader ::= ModuleModifieropt 'module' UnannotatableName
 /:$compliance 1.9:/
 /.$putCase consumeModuleHeader(); $break ./
+ModuleModifieropt ::= $empty
+/:$compliance 1.9:/
+/.$putCase consumeDefaultModifiers(); $break ./
+ModuleModifieropt ::= ModuleModifier
+/:$compliance 1.9:/
+/.$putCase consumeModifiers(); $break ./
+ModuleModifier -> 'open'
 
 ModuleBody ::= '{' ModuleStatementsOpt '}'
 /:$compliance 1.9:/
 /:$no_statements_recovery:/
 ModuleStatementsOpt ::= $empty
 /:$compliance 1.9:/
-ModuleStatementsOpt ::= ModuleStatementsOpt ModuleStatement
+/.$putCase consumeEmptyModuleStatementsOpt(); $break ./
+ModuleStatementsOpt -> ModuleStatements
 /:$compliance 1.9:/
+ModuleStatements ::= ModuleStatement
+ModuleStatements ::= ModuleStatements ModuleStatement
+/:$compliance 1.9:/
+/.$putCase consumeModuleStatements(); $break ./
 
 ModuleStatement ::= RequiresStatement
 /:$compliance 1.9:/
 ModuleStatement ::= ExportsStatement
+/:$compliance 1.9:/
+ModuleStatement ::= OpensStatement
 /:$compliance 1.9:/
 ModuleStatement ::= UsesStatement
 /:$compliance 1.9:/
@@ -533,40 +550,67 @@ ModuleStatement ::= ProvidesStatement
 RequiresStatement ::=  SingleRequiresModuleName ';'
 /:$compliance 1.9:/
 /.$putCase consumeRequiresStatement(); $break ./
-SingleRequiresModuleName ::= 'requires' RequiresModifieropt UnannotatableName
+SingleRequiresModuleName ::= 'requires' RequiresModifiersopt UnannotatableName
 /:$compliance 1.9:/
 /.$putCase consumeSingleRequiresModuleName(); $break ./
-RequiresModifieropt ::= PublicModifier
+RequiresModifiersopt ::= RequiresModifiers
 /:$compliance 1.9:/
 /.$putCase consumeModifiers(); $break ./
-RequiresModifieropt ::= $empty
+RequiresModifiersopt ::= $empty
+/:$compliance 1.9:/
 /.$putCase consumeDefaultModifiers(); $break ./
-PublicModifier -> 'public'
-ExportsStatement ::=  SingleExportsPkgName ExportTargetopt ';'
+RequiresModifiers -> RequiresModifier
+RequiresModifiers ::= RequiresModifiers RequiresModifier
+/:$compliance 1.9:/
+/.$putCase consumeModifiers2(); $break ./
+RequiresModifier -> 'transitive'
+RequiresModifier -> 'static'
+ExportsStatement ::=  ExportsHeader TargetModuleListopt ';'
 /:$compliance 1.9:/
 /.$putCase consumeExportsStatement(); $break ./
-ExportTargetopt ::= $empty
-ExportTargetopt ::= 'to' ExportTargetNameList
+ExportsHeader ::= 'exports' SinglePkgName
 /:$compliance 1.9:/
-/.$putCase consumeExportTarget(); $break ./
-ExportTargetNameList ::= UnannotatableName
+/.$putCase consumeExportsHeader(); $break ./
+TargetModuleListopt ::= $empty
+TargetModuleListopt ::= 'to' TargetModuleNameList
 /:$compliance 1.9:/
-/.$putCase consumeSingleExportsTargetName(); $break ./
-ExportTargetNameList ::= ExportTargetNameList ',' UnannotatableName
+/.$putCase consumeTargetModuleList(); $break ./
+TargetModuleName ::= UnannotatableName
 /:$compliance 1.9:/
-/.$putCase consumeExportsTargetNameList(); $break ./
-SingleExportsPkgName ::= 'exports' UnannotatableName
+/.$putCase consumeSingleTargetModuleName(); $break ./
+TargetModuleNameList -> TargetModuleName
+TargetModuleNameList ::= TargetModuleNameList ',' TargetModuleName
 /:$compliance 1.9:/
-/.$putCase consumeSingleExportsPkgName(); $break ./
-
-UsesStatement ::=  'uses' Name ';'
+/.$putCase consumeTargetModuleNameList(); $break ./
+SinglePkgName ::= UnannotatableName
+/:$compliance 1.9:/
+/.$putCase consumeSinglePkgName(); $break ./
+OpensStatement ::=  OpensHeader TargetModuleListopt ';'
+/:$compliance 1.9:/
+/.$putCase consumeOpensStatement(); $break ./
+OpensHeader ::= 'opens' SinglePkgName
+/:$compliance 1.9:/
+/.$putCase consumeOpensHeader(); $break ./
+UsesStatement ::=  UsesHeader ';'
 /:$compliance 1.9:/
 /.$putCase consumeUsesStatement(); $break ./
-
-ProvidesStatement ::= 'provides' Name WithClause ';'
+UsesHeader ::= 'uses' Name
+/.$putCase consumeUsesHeader(); $break ./
+ProvidesStatement ::= ProvidesInterface WithClause ';'
 /:$compliance 1.9:/
 /.$putCase consumeProvidesStatement(); $break ./
-WithClause ::= 'with' Name
+ProvidesInterface ::= 'provides' Name
+/:$compliance 1.9:/
+/.$putCase consumeProvidesInterface(); $break ./
+ServiceImplName ::= Name
+/:$compliance 1.9:/
+/.$putCase consumeSingleServiceImplName(); $break ./
+ServiceImplNameList -> ServiceImplName
+ServiceImplNameList ::= ServiceImplNameList ',' ServiceImplName
+/:$compliance 1.9:/
+/.$putCase consumeServiceImplNameList(); $break ./
+
+WithClause ::= 'with' ServiceImplNameList
 /:$compliance 1.9:/
 /.$putCase consumeWithClause(); $break ./
 
@@ -589,6 +633,12 @@ Header -> RecoveryMethodHeader
 Header -> FieldDeclaration
 Header -> AllocationHeader
 Header -> ArrayCreationHeader
+Header -> ModuleHeader
+Header -> RequiresStatement
+Header -> ExportsStatement
+Header -> UsesStatement
+Header -> ProvidesStatement
+Header -> OpensStatement
 /:$readableName Header:/
 
 Header1 -> Header
@@ -2018,6 +2068,16 @@ Resource ::= Modifiers Type PushRealModifiers VariableDeclaratorId EnterVariable
 /.$putCase consumeResourceAsLocalVariableDeclaration(); $break ./
 /:$readableName Resource:/
 /:$compliance 1.7:/
+
+Resource ::= Name
+/.$putCase consumeResourceAsLocalVariable(); $break ./
+/:$readableName Resource:/
+/:$compliance 1.9:/
+
+Resource ::= FieldAccess
+/.$putCase consumeResourceAsFieldAccess(); $break ./
+/:$readableName Resource:/
+/:$compliance 1.9:/
 
 TryBlock ::= Block ExitTryBlock
 /:$readableName Block:/

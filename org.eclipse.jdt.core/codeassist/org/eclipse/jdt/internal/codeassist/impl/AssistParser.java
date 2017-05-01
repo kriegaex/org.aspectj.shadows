@@ -31,7 +31,6 @@ import org.eclipse.jdt.internal.compiler.ast.Block;
 import org.eclipse.jdt.internal.compiler.ast.CompilationUnitDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ConstructorDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ExplicitConstructorCall;
-import org.eclipse.jdt.internal.compiler.ast.ExportReference;
 import org.eclipse.jdt.internal.compiler.ast.Expression;
 import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ForeachStatement;
@@ -42,7 +41,9 @@ import org.eclipse.jdt.internal.compiler.ast.LocalDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.MessageSend;
 import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.ModuleReference;
 import org.eclipse.jdt.internal.compiler.ast.NameReference;
+import org.eclipse.jdt.internal.compiler.ast.RequiresStatement;
 import org.eclipse.jdt.internal.compiler.ast.Statement;
 import org.eclipse.jdt.internal.compiler.ast.SuperReference;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
@@ -53,11 +54,11 @@ import org.eclipse.jdt.internal.compiler.lookup.ExtraCompilerModifiers;
 import org.eclipse.jdt.internal.compiler.parser.Parser;
 import org.eclipse.jdt.internal.compiler.parser.RecoveredBlock;
 import org.eclipse.jdt.internal.compiler.parser.RecoveredElement;
+import org.eclipse.jdt.internal.compiler.parser.RecoveredExportsStatement;
 import org.eclipse.jdt.internal.compiler.parser.RecoveredField;
 import org.eclipse.jdt.internal.compiler.parser.RecoveredInitializer;
 import org.eclipse.jdt.internal.compiler.parser.RecoveredLocalVariable;
 import org.eclipse.jdt.internal.compiler.parser.RecoveredMethod;
-import org.eclipse.jdt.internal.compiler.parser.RecoveredModule;
 import org.eclipse.jdt.internal.compiler.parser.RecoveredStatement;
 import org.eclipse.jdt.internal.compiler.parser.RecoveredType;
 import org.eclipse.jdt.internal.compiler.parser.RecoveredUnit;
@@ -103,7 +104,7 @@ public abstract class AssistParser extends Parser {
 	protected static final int K_ATTRIBUTE_VALUE_DELIMITER = ASSIST_PARSER + 5; // whether we are inside a annotation attribute valuer
 	protected static final int K_ENUM_CONSTANT_DELIMITER = ASSIST_PARSER + 6; // whether we are inside a field initializer
 	protected static final int K_LAMBDA_EXPRESSION_DELIMITER = ASSIST_PARSER + 7; // whether we are inside a lambda expression
-	protected static final int K_MODULE_INFO_DELIMITER = ASSIST_PARSER + 7; // whether we are inside a module info declaration
+	protected static final int K_MODULE_INFO_DELIMITER = ASSIST_PARSER + 8; // whether we are inside a module info declaration
 
 	// selector constants
 	protected static final int THIS_CONSTRUCTOR = -1;
@@ -112,7 +113,7 @@ public abstract class AssistParser extends Parser {
 	// enum constant constants
 	protected static final int NO_BODY = 0;
 	protected static final int WITH_BODY = 1;
-	
+
 	protected static final int EXPRESSION_BODY = 0;
 	protected static final int BLOCK_BODY = 1;
 
@@ -381,28 +382,13 @@ private void initModuleInfo(RecoveredElement element) {
 		RecoveredUnit unit = (RecoveredUnit) element;
 		if (unit.unitDeclaration.isModuleInfo()) {
 			ASTNode node = null;
-			RecoveredModule module = null;
 			int i = 0;
 			for (; i <= this.astPtr; i++) {
 				if ((node = this.astStack[i]) instanceof ModuleDeclaration) {
-					/*
-					 * Just add this module declaration - let the element
-					 * be the Recovered unit itself. 
-					 * TODO: To check the viabilitiy of making RecoveredModule as the current element
-					 */
-					module = (RecoveredModule) unit.add((ModuleDeclaration) node, this.bracketDepth); 
+					unit.add((ModuleDeclaration) node, this.bracketDepth); 
 					break;
 				}
 			}
-			if (module != null) {
-				for (; i <= this.astPtr; i++) {
-					node = this.astStack[i];
-					if (node instanceof ExportReference) {
-						module.add((ExportReference) node, 0);
-					}
-				}
-			}
-			
 		}
 	}
 }
@@ -989,11 +975,11 @@ protected void consumeSingleStaticImportDeclarationName() {
 		this.restartRecovery = true; // used to avoid branching back into the regular automaton
 	}
 }
-protected void consumeSingleExportsPkgName() {
+protected void consumeSinglePkgName() {
 	int index;
 	/* no need to take action if not inside assist identifiers */
 	if ((index = indexOfAssistIdentifier()) < 0) {
-		super.consumeSingleExportsPkgName();
+		super.consumeSinglePkgName();
 		return;
 	}
 	/* retrieve identifiers subset and whole positions, the assist node positions
@@ -1011,7 +997,7 @@ protected void consumeSingleExportsPkgName() {
 			length);
 
 	/* build specific assist node on import statement */
-	ExportReference reference = createAssistExportReference(subset, positions);
+	ImportReference reference = createAssistPackageVisibilityReference(subset, positions);
 	this.assistNode = reference;
 	this.lastCheckPoint = reference.sourceEnd + 1;
 
@@ -1022,19 +1008,71 @@ protected void consumeSingleExportsPkgName() {
 	} else {
 		reference.declarationSourceEnd = (int) positions[length-1];
 	}
-	//endPosition is just before the ;
-	reference.declarationSourceStart = this.intStack[this.intPtr--];
-	// flush comments defined prior to import statements
-	reference.declarationSourceEnd = flushCommentsDefinedPriorTo(reference.declarationSourceEnd);
-
-	// recovery
-	if (this.currentElement != null){
-		this.lastCheckPoint = reference.declarationSourceEnd+1;
-		this.currentElement = this.currentElement.add(reference, 0);
-		this.lastIgnoredToken = -1;
-		this.restartRecovery = true; // used to avoid branching back into the regular automaton
-	}
 }
+protected void consumeSingleTargetModuleName() {
+	int index;
+	/* no need to take action if not inside assist identifiers */
+	if ((index = indexOfAssistIdentifier()) < 0) {
+		super.consumeSingleTargetModuleName();
+		return;
+	}
+
+	/* build specific assist node on targetted exports statement */
+	ModuleReference reference = createAssistModuleReference(index);
+	this.assistNode = reference;
+	this.lastCheckPoint = reference.sourceEnd + 1;
+	pushOnAstStack(reference);
+
+	// recovery - TBD
+	if (this.currentElement instanceof RecoveredExportsStatement){
+		// TODO
+		this.lastCheckPoint = reference.sourceEnd+1;
+		this.currentElement = ((RecoveredExportsStatement) this.currentElement).add(reference, 0);
+		this.lastIgnoredToken = -1;
+		//this.restartRecovery = true; // used to avoid branching back into the regular automaton
+	}
+
+}
+protected void consumeSingleRequiresModuleName() {
+
+	int index = indexOfAssistIdentifier();
+	/* no need to take action if not inside assist identifiers */
+	if (index < 0) {
+		super.consumeSingleRequiresModuleName();
+		return;
+	}
+
+	/* build specific assist node on requires statement */
+	ModuleReference reference = createAssistModuleReference(index);
+	this.assistNode = reference;
+	this.lastCheckPoint = reference.sourceEnd + 1;
+	RequiresStatement req = new RequiresStatement(reference);
+	if (this.currentToken == TokenNameSEMICOLON){
+		req.declarationSourceEnd = this.scanner.currentPosition - 1;
+	} else {
+		req.declarationSourceEnd = reference.sourceEnd;
+	}
+	req.sourceStart = req.declarationSourceStart;
+	req.declarationEnd = req.declarationSourceEnd;
+	req.modifiersSourceStart = this.intStack[this.intPtr--];
+	req.modifiers |= this.intStack[this.intPtr--];
+	req.declarationSourceStart = this.intStack[this.intPtr--];
+	if (req.modifiersSourceStart >= 0) {
+		req.declarationSourceStart = req.modifiersSourceStart;
+	}
+	req.sourceEnd = reference.sourceEnd;
+	pushOnAstStack(req);
+
+	// recovery TBD
+
+	if (this.currentElement != null){
+		this.lastCheckPoint = req.declarationSourceEnd + 1;
+		this.currentElement = this.currentElement.add(req, 0);
+		this.lastIgnoredToken = -1;
+	}
+
+}
+
 protected void consumeSingleTypeImportDeclarationName() {
 	// SingleTypeImportDeclarationName ::= 'import' Name
 	/* push an ImportRef build from the last name
@@ -1271,8 +1309,11 @@ protected void consumeTypeImportOnDemandDeclarationName() {
 		this.restartRecovery = true; // used to avoid branching back into the regular automaton
 	}
 }
-public abstract ExportReference createAssistExportReference(char[][] tokens, long[] positions);
+
+// TODO : Change to ExportsReference/PackageReference once we have the new compiler ast.node
+public abstract ImportReference createAssistPackageVisibilityReference(char[][] tokens, long[] positions);
 public abstract ImportReference createAssistImportReference(char[][] tokens, long[] positions, int mod);
+public abstract ModuleReference createAssistModuleReference(int index);
 public abstract ImportReference createAssistPackageReference(char[][] tokens, long[] positions);
 public abstract NameReference createQualifiedAssistNameReference(char[][] previousIdentifiers, char[] assistName, long[] positions);
 public abstract TypeReference createQualifiedAssistTypeReference(char[][] previousIdentifiers, char[] assistName, long[] positions);
@@ -2220,6 +2261,12 @@ protected int resumeAfterRecovery() {
 			goForBlockStatementsopt();
 		} else {
 			prepareForHeaders();
+			if (this.referenceContext instanceof CompilationUnitDeclaration) {
+				CompilationUnitDeclaration unit = (CompilationUnitDeclaration) this.referenceContext;
+				if (unit.isModuleInfo()) {
+					pushOnElementStack(K_MODULE_INFO_DELIMITER);
+				}
+			}
 			goForHeaders();
 			this.diet = true; // passed this point, will not consider method bodies
 			this.dietInt = 0;

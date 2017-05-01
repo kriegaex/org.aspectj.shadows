@@ -1,16 +1,23 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2015 IBM Corporation and others.
+ * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
  * 
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ * 
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *     Luiz-Otavio Zorzella <zorzella at gmail dot com> - Improve CamelCase algorithm
  *     Gábor Kövesdán - Contribution for Bug 350000 - [content assist] Include non-prefix matches in auto-complete suggestions
+ *     Stefan Xenos <sxenos@gmail.com> (Google) - Bug 501283 - Lots of hash collisions during indexing
  *******************************************************************************/
 package org.eclipse.jdt.core.compiler;
+
+import java.util.Arrays;
 
 import org.eclipse.jdt.internal.compiler.parser.ScannerHelper;
 
@@ -37,6 +44,18 @@ public final class CharOperation {
 	 * @since 3.1
 	 */
 	public static final String[] NO_STRINGS = new String[0];
+
+	/**
+	 * Constant for all Prefix
+	 * @since 3.13 BETA_JAVA9
+	 */
+	public static final char[] ALL_PREFIX = new char[] {'*'};
+
+	/**
+	 * Constant for comma
+	 * @since 3.13 BETA_JAVA9
+	 */
+	public static final char[] COMMA_SEPARATOR = new char[] {','};
 
 /**
  * Answers a new array with appending the suffix character at the end of the array.
@@ -1162,6 +1181,77 @@ public static final char[] concat(
 }
 
 /**
+ * Answers the concatenation of the two arrays inserting the separator character between the two arrays. Differs from
+ * {@link CharOperation#contains(char, char[])} in case second array is a zero length array.
+ * It answers null if the two arrays are null.
+ * If the first array is null, then the second array is returned.
+ * If the second array is null, then the first array is returned.
+ * if the second array is zero length array, the separator is appended.
+ * <br>
+ * <br>
+ * For example:
+ * <ol>
+ * <li><pre>
+ *    first = null
+ *    second = { 'a' }
+ *    separator = '/'
+ *    => result = { ' a' }
+ * </pre>
+ * </li>
+ * <li><pre>
+ *    first = { ' a' }
+ *    second = null
+ *    separator = '/'
+ *    => result = { ' a' }
+ * </pre>
+ * </li>
+ * <li><pre>
+ *    first = { ' a' }
+ *    second = { ' b' }
+ *    separator = '/'
+ *    => result = { ' a' , '/', 'b' }
+ * </pre>
+ * </li>
+ * <li><pre>
+ *    first = { ' a' }
+ *    second = { '' }
+ *    separator = '.'
+ *    => result = { ' a' , '.', }
+ * </pre>
+ * </li>
+ * </ol>
+ *
+ * @param first the first array to concatenate
+ * @param second the second array to concatenate
+ * @param separator the character to insert
+ * @return the concatenation of the two arrays inserting the separator character
+ * between the two arrays , or null if the two arrays are null. If second array
+ * is of zero length, the separator is appended to the first array and returned.
+ * @since 3.13 BETA_JAVA9
+ */
+public static final char[] concatAll(
+	char[] first,
+	char[] second,
+	char separator) {
+	if (first == null)
+		return second;
+	if (second == null)
+		return first;
+
+	int length1 = first.length;
+	if (length1 == 0)
+		return second;
+	int length2 = second.length;
+
+	char[] result = new char[length1 + length2 + 1];
+	System.arraycopy(first, 0, result, 0, length1);
+	result[length1] = separator;
+	if (length2 > 0)
+		System.arraycopy(second, 0, result, length1 + 1, length2);
+	return result;
+}
+
+/**
  * Answers the concatenation of the three arrays inserting the sep1 character between the
  * first two arrays and sep2 between the last two.
  * It answers null if the three arrays are null.
@@ -2281,19 +2371,9 @@ public static final boolean fragmentEquals(
  *
  * @param array the array for which a hashcode is required
  * @return the hashcode
- * @throws NullPointerException if array is null
  */
 public static final int hashCode(char[] array) {
-	int length = array.length;
-	int hash = length == 0 ? 31 : array[0];
-	if (length < 8) {
-		for (int i = length; --i > 0;)
-			hash = (hash * 31) + array[i];
-	} else {
-		// 8 characters is enough to compute a decent hash code, don't waste time examining every character
-		for (int i = length - 1, last = i > 16 ? i - 16 : 0; i > last; i -= 2)
-			hash = (hash * 31) + array[i];
-	}
+	int hash = Arrays.hashCode(array);
 	return hash & 0x7FFFFFFF;
 }
 

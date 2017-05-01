@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -22,17 +22,21 @@ import org.eclipse.core.resources.IResource;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.Path;
-import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileReader;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFormatException;
+import org.eclipse.jdt.internal.compiler.classfmt.ExternalAnnotationDecorator;
 import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
-import org.eclipse.jdt.internal.compiler.env.IModule;
+import org.eclipse.jdt.internal.compiler.env.IBinaryType;
+import org.eclipse.jdt.internal.compiler.env.IModuleEnvironment;
 import org.eclipse.jdt.internal.compiler.env.INameEnvironment;
+import org.eclipse.jdt.internal.compiler.env.IPackageLookup;
+import org.eclipse.jdt.internal.compiler.env.ITypeLookup;
 import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
-import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
+import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment.AutoModule;
 import org.eclipse.jdt.internal.compiler.util.SimpleLookupTable;
 import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
 import org.eclipse.jdt.internal.core.util.Util;
+
 
 public class ClasspathDirectory extends ClasspathLocation {
 
@@ -44,9 +48,8 @@ AccessRuleSet accessRuleSet;
 ZipFile annotationZipFile;
 String externalAnnotationPath;
 INameEnvironment env;
-IModule module;
 
-ClasspathDirectory(IContainer binaryFolder, boolean isOutputFolder, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, INameEnvironment env) {
+ClasspathDirectory(IContainer binaryFolder, boolean isOutputFolder, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, INameEnvironment env, boolean isAutomodule) {
 	this.binaryFolder = binaryFolder;
 	this.isOutputFolder = isOutputFolder || binaryFolder.getProjectRelativePath().isEmpty(); // if binaryFolder == project, then treat it as an outputFolder
 	this.directoryCache = new SimpleLookupTable(5);
@@ -54,6 +57,14 @@ ClasspathDirectory(IContainer binaryFolder, boolean isOutputFolder, AccessRuleSe
 	this.env = env;
 	if (externalAnnotationPath != null)
 		this.externalAnnotationPath = externalAnnotationPath.toOSString();
+	if (isAutomodule) {
+		setAutomaticModule();
+	}
+}
+
+void setAutomaticModule() {
+	this.isAutoModule = true;
+	acceptModule(new AutoModule(this.binaryFolder.getName().toCharArray()));
 }
 
 public void cleanup() {
@@ -77,9 +88,10 @@ ClasspathDirectory initializeModule() {
 				String name = m.getName();
 				// Note: Look only inside the default package.
 				if (m.getType() == IResource.FILE && org.eclipse.jdt.internal.compiler.util.Util.isClassFileName(name)) {
-					if (name.equalsIgnoreCase(MODULE_INFO_CLASS)) {
+					if (name.equalsIgnoreCase(IModuleEnvironment.MODULE_INFO_CLASS)) {
 						try {
 							this.acceptModule( Util.newClassFileReader(m));
+							this.isAutoModule = false;
 						} catch (ClassFormatException | IOException e) {
 							// TODO BETA_JAVA9 Auto-generated catch block
 							e.printStackTrace();
@@ -110,14 +122,6 @@ String[] directoryList(String qualifiedPackageName) {
 				if (m.getType() == IResource.FILE && org.eclipse.jdt.internal.compiler.util.Util.isClassFileName(name)) {
 					// add exclusion pattern check here if we want to hide .class files
 					dirList[index++] = name;
-					if (name.equalsIgnoreCase(MODULE_INFO_CLASS)) {
-						try {
-							this.acceptModule( Util.newClassFileReader(m));
-						} catch (ClassFormatException | IOException e) {
-							// TODO BETA_JAVA9 Auto-generated catch block
-							e.printStackTrace();
-						}
-					}
 				}
 			}
 			if (index < dirList.length)
@@ -133,10 +137,7 @@ String[] directoryList(String qualifiedPackageName) {
 }
 void acceptModule(ClassFileReader classfile) {
 	if (classfile != null) {
-//		if ((this.module = classfile.getModuleDeclaration()) != null) {
-//			this.env.acceptModule(this.module, this);
-//		}
-		this.module = classfile.getModuleDeclaration();
+		acceptModule(classfile.getModuleDeclaration());
 	}
 }
 boolean doesFileExist(String fileName, String qualifiedPackageName, String qualifiedFullName) {
@@ -162,17 +163,10 @@ public boolean equals(Object o) {
 			return false;
 	return this.binaryFolder.equals(dir.binaryFolder);
 }
-
-public NameEnvironmentAnswer findClass(String typeName, String qualifiedPackageName, String qualifiedBinaryFileName, boolean asBinaryOnly, IModule mod) {
-	return findClass(typeName, qualifiedPackageName, qualifiedBinaryFileName, false, mod); 
-}
-
-public NameEnvironmentAnswer findClass(String binaryFileName, String qualifiedPackageName, String qualifiedBinaryFileName, IModule mod) {
+public NameEnvironmentAnswer findClass(String binaryFileName, String qualifiedPackageName, String qualifiedBinaryFileName, boolean asBinaryOnly) {
 	if (!doesFileExist(binaryFileName, qualifiedPackageName, qualifiedBinaryFileName)) return null; // most common case
-//	if (!this.env.isPackageVisible(qualifiedPackageName.toCharArray(), this.module != null ? this.module.name() : null, mod != null ? mod.name() : null)) {
-//		return null;
-//	}
-	ClassFileReader reader = null;
+
+	IBinaryType reader = null;
 	try {
 		reader = Util.newClassFileReader(this.binaryFolder.getFile(new Path(qualifiedBinaryFileName)));
 	} catch (CoreException e) {
@@ -183,18 +177,26 @@ public NameEnvironmentAnswer findClass(String binaryFileName, String qualifiedPa
 		return null;
 	}
 	if (reader != null) {
-		reader.moduleName = this.module == null ? null : this.module.name();
+		char[] modName = this.module == null ? null : this.module.name();
+		if (reader instanceof ClassFileReader) {
+			((ClassFileReader) reader).moduleName = modName;
+		}
 		String fileNameWithoutExtension = qualifiedBinaryFileName.substring(0, qualifiedBinaryFileName.length() - SuffixConstants.SUFFIX_CLASS.length);
 		if (this.externalAnnotationPath != null) {
 			try {
-				this.annotationZipFile = reader.setExternalAnnotationProvider(this.externalAnnotationPath, fileNameWithoutExtension, this.annotationZipFile, null);
+				if (this.annotationZipFile == null) {
+					this.annotationZipFile = ExternalAnnotationDecorator
+							.getAnnotationZipFile(this.externalAnnotationPath, null);
+				}
+				reader = ExternalAnnotationDecorator.create(reader, this.externalAnnotationPath,
+						fileNameWithoutExtension, this.annotationZipFile);
 			} catch (IOException e) {
 				// don't let error on annotations fail class reading
 			}
 		}
 		if (this.accessRuleSet == null)
-			return new NameEnvironmentAnswer(reader, null);
-		return new NameEnvironmentAnswer(reader, this.accessRuleSet.getViolatedRestriction(fileNameWithoutExtension.toCharArray()));
+			return this.module == null ? new NameEnvironmentAnswer(reader, null) : new NameEnvironmentAnswer(reader, null, modName);
+		return new NameEnvironmentAnswer(reader, this.accessRuleSet.getViolatedRestriction(fileNameWithoutExtension.toCharArray()), modName);
 	}
 	return null;
 }
@@ -235,19 +237,20 @@ public String debugPathString() {
 }
 
 @Override
-public boolean servesModule(IModule mod) {
-	if (mod == null) 
-		return false;
-	if (this.module == null || mod == this || mod == ModuleEnvironment.UNNAMED_MODULE)
-		return true;
-	return this.module.equals(mod);
+public ITypeLookup typeLookup() {
+	//
+	return this::findClass;
 }
 
 @Override
-public IModule getModule(char[] moduleName) {
-	// 
-	if (this.module == null)
-		return null;
-	return CharOperation.equals(this.module.name(), moduleName) ? this.module : null;
+public IPackageLookup packageLookup() {
+	return this::isPackage;
 }
+
+@Override
+public NameEnvironmentAnswer findClass(String typeName, String qualifiedPackageName, String qualifiedBinaryFileName) {
+	// 
+	return findClass(typeName, qualifiedPackageName, qualifiedBinaryFileName, false);
+}
+
 }

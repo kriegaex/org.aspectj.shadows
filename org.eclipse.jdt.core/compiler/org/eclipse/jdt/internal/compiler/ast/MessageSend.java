@@ -1,6 +1,6 @@
 // ASPECTJ
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -55,6 +55,7 @@
  *								Bug 407414 - [compiler][null] Incorrect warning on a primitive type being null
  *								Bug 472618 - [compiler][null] assertNotNull vs. Assert.assertNotNull
  *								Bug 470958 - [1.8] Unable to convert lambda 
+ *								Bug 410218 - Optional warning for arguments of "unexpected" types to Map#get(Object), Collection#remove(Object) et al.
  *     Jesper S Moller - Contributions for
  *								Bug 378674 - "The method can be declared as static" is wrong
  *        Andy Clement (GoPivotal, Inc) aclement@gopivotal.com - Contributions for
@@ -77,7 +78,9 @@ import org.eclipse.jdt.internal.compiler.flow.FlowInfo;
 import org.eclipse.jdt.internal.compiler.flow.UnconditionalFlowInfo;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.impl.Constant;
+import org.eclipse.jdt.internal.compiler.impl.IrritantSet;
 import org.eclipse.jdt.internal.compiler.impl.ReferenceContext;
+import org.eclipse.jdt.internal.compiler.lookup.ArrayBinding;
 import org.eclipse.jdt.internal.compiler.lookup.Binding;
 import org.eclipse.jdt.internal.compiler.lookup.BlockScope;
 import org.eclipse.jdt.internal.compiler.lookup.ExtraCompilerModifiers;
@@ -128,7 +131,7 @@ public class MessageSend extends Expression implements IPolyExpression, Invocati
 	public TypeBinding valueCast; // extra reference type cast to perform on method returned value
 	public TypeReference[] typeArguments;
 	public TypeBinding[] genericTypeArguments;
-	private ExpressionContext expressionContext = VANILLA_CONTEXT;
+	public ExpressionContext expressionContext = VANILLA_CONTEXT;
 
 	 // hold on to this context from invocation applicability inference until invocation type inference (per method candidate):
 	private SimpleLookupTable/*<PGMB,InferenceContext18>*/ inferenceContexts;
@@ -169,6 +172,27 @@ public FlowInfo analyseCode(BlockScope currentScope, FlowContext flowContext, Fl
 				}
 			}
 		}
+	}
+	if (compilerOptions.isAnyEnabled(IrritantSet.UNLIKELY_ARGUMENT_TYPE) && this.binding.isValidBinding()
+			&& this.arguments != null) {
+		if (this.arguments.length == 1 && !this.binding.isStatic()) {
+			UnlikelyArgumentCheck argumentChecks = UnlikelyArgumentCheck.determineCheckForNonStaticSingleArgumentMethod(
+				this.argumentTypes[0], currentScope, this.selector, this.actualReceiverType, this.binding.parameters);
+
+			if (argumentChecks != null && argumentChecks.isDangerous(currentScope)) {
+				currentScope.problemReporter().unlikelyArgumentType(this.arguments[0], this.binding,
+						this.argumentTypes[0], argumentChecks.typeToReport, argumentChecks.dangerousMethod);
+			}
+ 		} else if (this.arguments.length == 2 && this.binding.isStatic()) {
+			UnlikelyArgumentCheck argumentChecks = UnlikelyArgumentCheck.determineCheckForStaticTwoArgumentMethod(
+				this.argumentTypes[1], currentScope, this.selector, this.argumentTypes[0],
+				this.binding.parameters, this.actualReceiverType);
+
+			if (argumentChecks != null && argumentChecks.isDangerous(currentScope)) {
+				currentScope.problemReporter().unlikelyArgumentType(this.arguments[1], this.binding,
+						this.argumentTypes[1], argumentChecks.typeToReport, argumentChecks.dangerousMethod);
+			}
+ 		}
 	}
 
 	if (nonStatic) {
@@ -407,16 +431,16 @@ public void computeConversion(Scope scope, TypeBinding runtimeTimeType, TypeBind
 		MethodBinding originalBinding = this.binding.original();
 		TypeBinding originalType = originalBinding.returnType;
 	    // extra cast needed if method return type is type variable
-		if (originalType.leafComponentType().isTypeVariable()) {
-	    	TypeBinding targetType = (!compileTimeType.isBaseType() && runtimeTimeType.isBaseType())
-	    		? compileTimeType  // unboxing: checkcast before conversion
-	    		: runtimeTimeType;
-	        this.valueCast = originalType.genericCast(targetType);
-		} 	else if (this.binding == scope.environment().arrayClone
+		if (ArrayBinding.isArrayClone(this.actualReceiverType, this.binding)
 				&& runtimeTimeType.id != TypeIds.T_JavaLangObject
 				&& scope.compilerOptions().sourceLevel >= ClassFileConstants.JDK1_5) {
 					// from 1.5 source level on, array#clone() resolves to array type, but codegen to #clone()Object - thus require extra inserted cast
 			this.valueCast = runtimeTimeType;
+		} else if (originalType.leafComponentType().isTypeVariable()) {
+	    	TypeBinding targetType = (!compileTimeType.isBaseType() && runtimeTimeType.isBaseType())
+	    		? compileTimeType  // unboxing: checkcast before conversion
+	    		: runtimeTimeType;
+	        this.valueCast = originalType.genericCast(targetType);
 		}
         if (this.valueCast instanceof ReferenceBinding) {
 			ReferenceBinding referenceCast = (ReferenceBinding) this.valueCast;
@@ -683,9 +707,12 @@ public TypeBinding resolveType(BlockScope scope) {
 		this.receiverIsType = this.receiver instanceof NameReference && (((NameReference) this.receiver).bits & Binding.TYPE) != 0;
 	if (receiverCast && this.actualReceiverType != null) {
 		 // due to change of declaring class with receiver type, only identity cast should be notified
-		if (TypeBinding.equalsEquals(((CastExpression)this.receiver).expression.resolvedType, this.actualReceiverType)) {
-			scope.problemReporter().unnecessaryCast((CastExpression)this.receiver);
-		}
+			TypeBinding resolvedType2 = ((CastExpression)this.receiver).expression.resolvedType;
+			if (TypeBinding.equalsEquals(resolvedType2, this.actualReceiverType)) {
+				if (!scope.environment().usesNullTypeAnnotations() || !NullAnnotationMatching.analyse(this.actualReceiverType, resolvedType2, -1).isAnyMismatch()) {
+					scope.problemReporter().unnecessaryCast((CastExpression)this.receiver);
+				}
+			}
 		}
 		// resolve type arguments (for generic constructor call)
 		if (this.typeArguments != null) {
@@ -694,7 +721,7 @@ public TypeBinding resolveType(BlockScope scope) {
 			this.genericTypeArguments = new TypeBinding[length];
 			for (int i = 0; i < length; i++) {
 				TypeReference typeReference = this.typeArguments[i];
-				if ((this.genericTypeArguments[i] = typeReference.resolveType(scope, true /* check bounds*/)) == null) {
+				if ((this.genericTypeArguments[i] = typeReference.resolveType(scope, true /* check bounds*/, Binding.DefaultLocationTypeArgument)) == null) {
 					this.argumentsHaveErrors = true;
 				}
 				if (this.argumentsHaveErrors && typeReference instanceof Wildcard) {
@@ -843,11 +870,7 @@ public TypeBinding resolveType(BlockScope scope) {
 	}
 
 	if (compilerOptions.isAnnotationBasedNullAnalysisEnabled) {
-		if ((this.binding.tagBits & TagBits.IsNullnessKnown) == 0) {
-			// not interested in reporting problems against this.binding:
-			new ImplicitNullAnnotationVerifier(scope.environment(), compilerOptions.inheritNullAnnotations)
-					.checkImplicitNullAnnotations(this.binding, null/*srcMethod*/, false, scope);
-		}
+		ImplicitNullAnnotationVerifier.ensureNullnessIsKnown(this.binding, scope);
 		if (compilerOptions.sourceLevel >= ClassFileConstants.JDK1_8) {
 			if (this.binding instanceof ParameterizedGenericMethodBinding && this.typeArguments != null) {
 				TypeVariableBinding[] typeVariables = this.binding.original().typeVariables();
@@ -907,10 +930,6 @@ public TypeBinding resolveType(BlockScope scope) {
 	if (isMethodUseDeprecated(this.binding, scope, true))
 		scope.problemReporter().deprecatedMethod(this.binding, this);
 
-	// from 1.5 source level on, array#clone() returns the array type (but binding still shows Object)
-	if (this.binding == scope.environment().arrayClone && compilerOptions.sourceLevel >= ClassFileConstants.JDK1_5) {
-		this.resolvedType = this.actualReceiverType;
-	} else {
 		TypeBinding returnType;
 		if ((this.bits & ASTNode.Unchecked) != 0 && this.genericTypeArguments == null) {
 			// https://bugs.eclipse.org/bugs/show_bug.cgi?id=277643, align with javac on JLS 15.12.2.6
@@ -925,7 +944,6 @@ public TypeBinding resolveType(BlockScope scope) {
 			}
 		}
 		this.resolvedType = returnType;
-	}
 	if (this.receiver.isSuper() && compilerOptions.getSeverity(CompilerOptions.OverridingMethodWithoutSuperInvocation) != ProblemSeverities.Ignore) {
 		final ReferenceContext referenceContext = scope.methodScope().referenceContext;
 		if (referenceContext instanceof AbstractMethodDeclaration) {
@@ -1044,9 +1062,7 @@ public boolean isCompatibleWith(TypeBinding targetType, final Scope scope) {
 		TypeBinding returnType;
 		if (method == null || !method.isValidBinding() || (returnType = method.returnType) == null || !returnType.isValidBinding())
 			return false;
-		if (method == scope.environment().arrayClone)
-			returnType = this.actualReceiverType;
-		return returnType != null && returnType.capture(scope, this.sourceStart, this.sourceEnd).isCompatibleWith(targetType, scope);
+		return returnType.capture(scope, this.sourceStart, this.sourceEnd).isCompatibleWith(targetType, scope);
 	} finally {
 		this.expectedType = originalExpectedType;
 	}

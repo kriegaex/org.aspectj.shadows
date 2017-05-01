@@ -36,7 +36,7 @@ public class Archive {
 	
 	ZipFile zipFile;
 	File file;
-	
+
 	protected Hashtable<String, ArrayList<String[]>> packagesCache;
 	
 	protected Archive() {
@@ -46,7 +46,7 @@ public class Archive {
 	public Archive(File file) throws ZipException, IOException {
 		this.file = file;
 		this.zipFile = new ZipFile(file);
-		initialize();		
+		initialize();
 	}
 
 	private void initialize() {

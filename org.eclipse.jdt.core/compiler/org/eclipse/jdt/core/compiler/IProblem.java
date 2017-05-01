@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -196,6 +200,8 @@
  *									IllegalParameterNullityRedefinition
  *									ContradictoryNullAnnotationsInferredFunctionType
  *									IllegalReturnNullityRedefinitionFreeTypeVariable
+ *									UnlikelyCollectionMethodArgumentType
+ *									UnlikelyEqualsArgumentType
  *      Jesper S Moller  - added the following constants
  *									TargetTypeNotAFunctionalInterface
  *									OuterLocalMustBeEffectivelyFinal
@@ -380,9 +386,14 @@ void setSourceStart(int sourceStart);
 	 */
 	int IgnoreCategoriesMask = 0xFFFFFF;
 
-	/**
+	/*
 	 * Below are listed all available problem IDs. Note that this list could be augmented in the future,
 	 * as new features are added to the Java core implementation.
+	 *
+	 * Problem IDs must be kept unique even when their mask is stripped, since
+	 * the bare integer literal is used for message lookup in
+	 * /org.eclipse.jdt.core/compiler/org/eclipse/jdt/internal/compiler/problem/messages.properties.
+	 * Use this regex to find duplicates: (?s)(\+ \d+)\b.*\1\b
 	 */
 
 	/**
@@ -1496,6 +1507,12 @@ void setSourceStart(int sourceStart);
 	int ConstructionTypeMismatch = Internal + TypeRelated + 665;
     /** @since 3.10 */
     int ToleratedMisplacedTypeAnnotations = Syntax + Internal + 666;
+    /** @since 3.13*/
+    int InterfaceSuperInvocationNotBelow18 = Internal + Syntax + 667;
+    /** @since 3.13*/
+    int InterfaceStaticMethodInvocationNotBelow18 = Internal + Syntax + 668;
+	/** @since 3.13 */
+	int FieldMustBeFinal = Internal + 669;
 
 
 	/**
@@ -1693,6 +1710,8 @@ void setSourceStart(int sourceStart);
 	/** @since 3.10 */
 	int RepeatedAnnotationWithContainerAnnotation = TypeRelated + 899;
 	
+	/** @since 3.13 BETA_JAVA9 */
+	int AutoManagedVariableResourceNotBelow9 = Syntax + Internal + 876;
 	/**
 	 * External problems -- These are problems defined by other plugins
 	 */
@@ -1888,24 +1907,77 @@ void setSourceStart(int sourceStart);
 	int IllegalStrictfpForAbstractInterfaceMethod = MethodRelated + 1057;
 	/** @since 3.10 */
 	int IllegalDefaultModifierSpecification = MethodRelated + 1058;
+	/** @since 3.13 */
+	int CannotInferInvocationType = TypeRelated + 1059;
 
-	/** @since 3.12 */
-	int UndefinedModule = TypeRelated + 1200;
-	/** @since 3.12 */
-	int DuplicateRequires = TypeRelated + 1201;
-	/** @since 3.12 */
-	int DuplicateExports = TypeRelated + 1202;
-	/** @since 3.12 */
-	int DuplicateUses = TypeRelated + 1203;
-	/** @since 3.12 */
-	int DuplicateServices = TypeRelated + 1204;
-	/** @since 3.12 */
-	int CyclicModuleDependency = TypeRelated + 1205;
 
+	/** @since 3.13 */
+	int TypeAnnotationAtQualifiedName = Internal + Syntax + 1060;
+
+	/** @since 3.13 */
+	int NullAnnotationAtQualifyingType = Internal + Syntax + 1061;
+	
+	/** @since 3.13 BETA_JAVA9*/
+	int IllegalModifierForInterfaceMethod9 = MethodRelated + 1071;
+	/** @since 3.13 BETA_JAVA9*/
+	int IllegalModifierCombinationForPrivateInterfaceMethod9 = MethodRelated + 1070;
+	/** @since 3.13 BETA_JAVA9 */
+	int UndefinedModule = TypeRelated + 1300;
+	/** @since 3.13 BETA_JAVA9 */
+	int DuplicateRequires = TypeRelated + 1301;
+	/** @since 3.13 BETA_JAVA9 */
+	int DuplicateExports = TypeRelated + 1302;
+	/** @since 3.13 BETA_JAVA9 */
+	int DuplicateUses = TypeRelated + 1303;
+	/** @since 3.13 BETA_JAVA9 */
+	int DuplicateServices = TypeRelated + 1304;
+	/** @since 3.13 BETA_JAVA9 */
+	int CyclicModuleDependency = TypeRelated + 1305;
+	/** @since 3.13 BETA_JAVA9 */
+	int AbstractServiceImplementation = TypeRelated + 1306;
+	/** @since 3.13 BETA_JAVA9 */
+	int ProviderMethodOrConstructorRequiredForServiceImpl = TypeRelated + 1307;
+	/** @since 3.13 BETA_JAVA9 */
+	int ServiceImplDefaultConstructorNotPublic = TypeRelated + 1308;
+	/** @since 3.13 BETA_JAVA9 */
+	int NestedServiceImpl = TypeRelated + 1309;
+	/** @since 3.13 BETA_JAVA9 */
+	int ServiceImplNotDefinedByModule = TypeRelated + 1310;
+	/** @since 3.13 BETA_JAVA9 */
+	int PackageDoesNotExistOrIsEmpty = TypeRelated + 1311;
+	/** @since 3.13 BETA_JAVA9 */
+	int NonDenotableTypeArgumentForAnonymousDiamond = TypeRelated + 1312;
+	/** @since 3.13 BETA_JAVA9 */
+	int DuplicateOpens = TypeRelated + 1313;
+	/** @since 3.13 BETA_JAVA9 */
+	int DuplicateModuleRef = TypeRelated + 1314;
+	/** @since 3.13 BETA_JAVA9 */
+	int InvalidOpensStatement = TypeRelated + 1315;
+	/** @since 3.13 BETA_JAVA9 */
+	int InvalidServiceIntfType = TypeRelated + 1316;
+	/** @since 3.13 BETA_JAVA9 */
+	int InvalidServiceImplType = TypeRelated + 1317;
+
+	/** @since 3.13 BETA_JAVA9 */
+	int DuplicateResource = Internal + 1251;
+
+	/** @since 3.13 */
+	int RedundantNullDefaultAnnotationLocal = Internal + 1062;
+	
+	/** @since 3.13 */
+	int RedundantNullDefaultAnnotationField = Internal + 1063;
+	
 	/** @since 3.10 */
 	int GenericInferenceError = 1100; 	// FIXME: This is just a stop-gap measure, be more specific via https://bugs.eclipse.org/404675
 	
 	/** @deprecated - problem is no longer generated (implementation issue has been resolved)
 	 * @since 3.10 */
 	int LambdaShapeComputationError = 1101;
+	/** @since 3.13 */
+	int ProblemNotAnalysed = 1102;
+	
+	/** @since 3.13 */
+	int UnlikelyCollectionMethodArgumentType = 1200;
+	/** @since 3.13 */
+	int UnlikelyEqualsArgumentType = 1201;
 }

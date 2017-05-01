@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2015 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -390,28 +390,35 @@ public abstract class Annotation extends Expression {
 				break;
 		}
 		if (annotationType.hasNullBit(TypeIds.BitNullableAnnotation)) {
-				tagBits |= TagBits.AnnotationNullable;
+			tagBits |= TagBits.AnnotationNullable;
 		} else if (annotationType.hasNullBit(TypeIds.BitNonNullAnnotation)) {
-				tagBits |= TagBits.AnnotationNonNull;
+			tagBits |= TagBits.AnnotationNonNull;
 		} else if (annotationType.hasNullBit(TypeIds.BitNonNullByDefaultAnnotation)) {
-				Object value = null;
-				if (valueAttribute != null) {
-				if (valueAttribute.compilerElementPair != null)
-						value = valueAttribute.compilerElementPair.value;
-			} else { // fetch default value  - TODO: cache it?
-					MethodBinding[] methods = annotationType.methods();
-				if (methods != null && methods.length == 1)
-					value = methods[0].getDefaultValue();
-				else
-					tagBits |= TagBits.AnnotationNonNullByDefault; // custom unconfigurable NNBD
-				}
-			if (value instanceof BooleanConstant) {
-				// boolean value is used for declaration annotations, signal using the annotation tag bit:
-				tagBits |= ((BooleanConstant)value).booleanValue() ? TagBits.AnnotationNonNullByDefault : TagBits.AnnotationNullUnspecifiedByDefault;
-			} else if (value != null) {
-				// non-boolean value signals type annotations, evaluate from DefaultLocation[] to bitvector a la Binding#NullnessDefaultMASK:
-				tagBits |= nullLocationBitsFromAnnotationValue(value);
-				}
+			tagBits |= determineNonNullByDefaultTagBits(annotationType, valueAttribute);
+		}
+		
+		return tagBits;
+	}
+
+	private long determineNonNullByDefaultTagBits(ReferenceBinding annotationType, MemberValuePair valueAttribute) {
+		long tagBits = 0;
+		Object value = null;
+		if (valueAttribute != null) {
+			if (valueAttribute.compilerElementPair != null)
+				value = valueAttribute.compilerElementPair.value;
+		} else { // fetch default value  - TODO: cache it?
+			MethodBinding[] methods = annotationType.methods();
+			if (methods != null && methods.length == 1)
+				value = methods[0].getDefaultValue();
+			else
+				tagBits |= TagBits.AnnotationNonNullByDefault; // custom unconfigurable NNBD
+		}
+		if (value instanceof BooleanConstant) {
+			// boolean value is used for declaration annotations, signal using the annotation tag bit:
+			tagBits |= ((BooleanConstant)value).booleanValue() ? TagBits.AnnotationNonNullByDefault : TagBits.AnnotationNullUnspecifiedByDefault;
+		} else if (value != null) {
+			// non-boolean value signals type annotations, evaluate from DefaultLocation[] to bitvector a la Binding#NullnessDefaultMASK:
+			tagBits |= nullLocationBitsFromAnnotationValue(value);
 		}
 		return tagBits;
 	}
@@ -641,7 +648,7 @@ public abstract class Annotation extends Expression {
 			// no need to check annotation usage if missing
 			return;
 		}
-		if (! isAnnotationTargetAllowed(repeatingAnnotation, scope, containerAnnotationType, repeatingAnnotation.recipient.kind())) {
+		if (isAnnotationTargetAllowed(repeatingAnnotation, scope, containerAnnotationType, repeatingAnnotation.recipient.kind()) != AnnotationTargetAllowed.YES) {
 			scope.problemReporter().disallowedTargetForContainerAnnotation(repeatingAnnotation, containerAnnotationType);
 		}
 	}
@@ -788,11 +795,16 @@ public abstract class Annotation extends Expression {
 			return this.resolvedType;
 		this.constant = Constant.NotAConstant;
 
-		TypeBinding typeBinding = this.type.resolveType(scope);
-		if (typeBinding == null) {
-			return null;
+		TypeBinding typeBinding;
+		if (this.resolvedType == null) {
+			typeBinding = this.type.resolveType(scope);
+			if (typeBinding == null) {
+				return null;
+			}
+			this.resolvedType = typeBinding;
+		} else {
+			typeBinding = this.resolvedType;
 		}
-		this.resolvedType = typeBinding;
 		// ensure type refers to an annotation type
 		if (!typeBinding.isAnnotationType() && typeBinding.isValidBinding()) {
 			scope.problemReporter().notAnnotationType(typeBinding, this.type);
@@ -927,6 +939,15 @@ public abstract class Annotation extends Expression {
 							FieldDeclaration fieldDeclaration = sourceType.scope.referenceContext.declarationOf(sourceField);
 							recordSuppressWarnings(scope, fieldDeclaration.declarationSourceStart, fieldDeclaration.declarationSourceEnd, scope.compilerOptions().suppressWarnings);
 						}
+						if (defaultNullness != 0) {
+							sourceType = (SourceTypeBinding) sourceField.declaringClass;
+							FieldDeclaration fieldDeclaration = sourceType.scope.referenceContext.declarationOf(sourceField);
+							Binding target = scope.checkRedundantDefaultNullness(defaultNullness, fieldDeclaration.sourceStart);
+							scope.recordNonNullByDefault(fieldDeclaration.binding, defaultNullness, this, fieldDeclaration.declarationSourceStart, fieldDeclaration.declarationSourceEnd);
+							if (target != null) {
+								scope.problemReporter().nullDefaultAnnotationIsRedundant(fieldDeclaration, new Annotation[]{this}, target);
+							}
+						}
 						// fields don't yet have their type resolved, in 1.8 null annotations
 						// will be transfered from the field to its type during STB.resolveTypeFor().
 						if ((sourceField.tagBits & TagBits.AnnotationNullMASK) == TagBits.AnnotationNullMASK) {
@@ -945,76 +966,143 @@ public abstract class Annotation extends Expression {
 							LocalDeclaration localDeclaration = variable.declaration;
 							recordSuppressWarnings(scope, localDeclaration.declarationSourceStart, localDeclaration.declarationSourceEnd, scope.compilerOptions().suppressWarnings);
 						}
+						// note: defaultNullness for local declarations has been already been handled earlier by handleNonNullByDefault() 
 						break;
 				}
-			}
+			} 
 			if (kind == Binding.TYPE) {
 				SourceTypeBinding sourceType = (SourceTypeBinding) this.recipient;
 				if (CharOperation.equals(sourceType.sourceName, TypeConstants.PACKAGE_INFO_NAME))
 					kind = Binding.PACKAGE;
-	}
-			checkAnnotationTarget(this, scope, annotationType, kind, this.recipient, tagBits & TagBits.AnnotationNullMASK);
 			}
+			checkAnnotationTarget(this, scope, annotationType, kind, this.recipient, tagBits & TagBits.AnnotationNullMASK);
+		}
 		return this.resolvedType;
+	}
+
+	public void handleNonNullByDefault(BlockScope scope, LocalDeclaration localDeclaration) {
+		TypeBinding typeBinding = this.resolvedType;
+		if (typeBinding == null) {
+			typeBinding = this.type.resolveType(scope);
+			if (typeBinding == null) {
+				return;
+			}
+			this.resolvedType = typeBinding;
+		}
+		if (!typeBinding.isAnnotationType()) {
+			return;
 		}
 
-	private static boolean isAnnotationTargetAllowed(Binding recipient, BlockScope scope, TypeBinding annotationType, int kind, long metaTagBits) {
+		ReferenceBinding annotationType = (ReferenceBinding) typeBinding;
+		
+		if (!annotationType.hasNullBit(TypeIds.BitNonNullByDefaultAnnotation)) {
+			return;
+		}
+
+		MethodBinding[] methods = annotationType.methods();
+		// clone valuePairs to keep track of unused ones
+		MemberValuePair[] pairs = memberValuePairs();
+		MemberValuePair valueAttribute = null; // remember the first 'value' pair
+		int pairsLength = pairs.length;
+
+		for (int i = 0, requiredLength = methods.length; i < requiredLength; i++) {
+			MethodBinding method = methods[i];
+			char[] selector = method.selector;
+			nextPair: for (int j = 0; j < pairsLength; j++) {
+				MemberValuePair pair = pairs[j];
+				if (pair == null) continue nextPair;
+				char[] name = pair.name;
+				if (CharOperation.equals(name, selector)) {
+					if (valueAttribute == null && CharOperation.equals(name, TypeConstants.VALUE)) {
+						valueAttribute = pair;
+						pair.binding = method;
+						pair.resolveTypeExpecting(scope, method.returnType);
+					}
+				}
+			}
+		}
+		// recognize standard annotations ?
+		long tagBits = determineNonNullByDefaultTagBits(annotationType, valueAttribute);
+		int defaultNullness = (int)(tagBits & Binding.NullnessDefaultMASK);
+
+		if (defaultNullness != 0) {
+			// the actual localDeclaration.binding is not set yet. fake one for problemreporter.			
+			LocalVariableBinding binding = new LocalVariableBinding(localDeclaration, null, 0, false);
+			Binding target = scope.checkRedundantDefaultNullness(defaultNullness, localDeclaration.sourceStart);
+			boolean recorded = scope.recordNonNullByDefault(binding, defaultNullness, this, this.sourceStart, localDeclaration.declarationSourceEnd);
+			 if (recorded) {
+				if (target != null) {
+					scope.problemReporter().nullDefaultAnnotationIsRedundant(localDeclaration, new Annotation[]{this}, target);
+				}
+			}
+		} 
+	}
+	
+	public enum AnnotationTargetAllowed {
+		YES, TYPE_ANNOTATION_ON_QUALIFIED_NAME, NO;
+	}
+	
+	private static AnnotationTargetAllowed isAnnotationTargetAllowed(Binding recipient, BlockScope scope, TypeBinding annotationType, int kind, long metaTagBits) {
 		switch (kind) {
 			case Binding.PACKAGE :
 				if ((metaTagBits & TagBits.AnnotationForPackage) != 0)
-					return true;
+					return AnnotationTargetAllowed.YES;
 				else if (scope.compilerOptions().sourceLevel <= ClassFileConstants.JDK1_6) {
 					SourceTypeBinding sourceType = (SourceTypeBinding) recipient;
 					if (CharOperation.equals(sourceType.sourceName, TypeConstants.PACKAGE_INFO_NAME))
-						return true;
+						return AnnotationTargetAllowed.YES;
 				}
 				break;
 			case Binding.TYPE_USE :
 				if ((metaTagBits & TagBits.AnnotationForTypeUse) != 0) {
 					// jsr 308
-					return true;
+					return AnnotationTargetAllowed.YES;
 				}
 				if (scope.compilerOptions().sourceLevel < ClassFileConstants.JDK1_8) {
 					// already reported as syntax error; don't report secondary problems
-					return true;
+					return AnnotationTargetAllowed.YES;
 				}
 				break;
 			case Binding.TYPE :
 			case Binding.GENERIC_TYPE :
 				if (((ReferenceBinding)recipient).isAnnotationType()) {
 					if ((metaTagBits & (TagBits.AnnotationForAnnotationType | TagBits.AnnotationForType | TagBits.AnnotationForTypeUse)) != 0)
-					return true;
+					return AnnotationTargetAllowed.YES;
 				} else if ((metaTagBits & (TagBits.AnnotationForType | TagBits.AnnotationForTypeUse)) != 0) {
-					return true;
+					return AnnotationTargetAllowed.YES;
 				} else if ((metaTagBits & TagBits.AnnotationForPackage) != 0) {
 					if (CharOperation.equals(((ReferenceBinding) recipient).sourceName, TypeConstants.PACKAGE_INFO_NAME))
-						return true;
+						return AnnotationTargetAllowed.YES;
 				}
 				break;
 			case Binding.METHOD :
 				MethodBinding methodBinding = (MethodBinding) recipient;
 				if (methodBinding.isConstructor()) {
 					if ((metaTagBits & (TagBits.AnnotationForConstructor | TagBits.AnnotationForTypeUse)) != 0)
-						return true;
+						return AnnotationTargetAllowed.YES;
 				} else if ((metaTagBits & TagBits.AnnotationForMethod) != 0) {
-					return true;
+					return AnnotationTargetAllowed.YES;
 				} else if ((metaTagBits & TagBits.AnnotationForTypeUse) != 0) {
 					SourceTypeBinding sourceType = (SourceTypeBinding) methodBinding.declaringClass;
 					MethodDeclaration methodDecl = (MethodDeclaration) sourceType.scope.referenceContext.declarationOf(methodBinding);
 					if (isTypeUseCompatible(methodDecl.returnType, scope)) {
-						return true;
+						return AnnotationTargetAllowed.YES;
+					} else {
+						return AnnotationTargetAllowed.TYPE_ANNOTATION_ON_QUALIFIED_NAME;
 					}
 				}
 				break;
 			case Binding.FIELD :
 				if ((metaTagBits & TagBits.AnnotationForField) != 0) {
-					return true;
+					return AnnotationTargetAllowed.YES;
 				} else if ((metaTagBits & TagBits.AnnotationForTypeUse) != 0) {
 					FieldBinding sourceField = (FieldBinding) recipient;
 					SourceTypeBinding sourceType = (SourceTypeBinding) sourceField.declaringClass;
 					FieldDeclaration fieldDeclaration = sourceType.scope.referenceContext.declarationOf(sourceField);
 					if (isTypeUseCompatible(fieldDeclaration.type, scope)) {
-						return true;
+						return AnnotationTargetAllowed.YES;
+					} else {
+						return AnnotationTargetAllowed.TYPE_ANNOTATION_ON_QUALIFIED_NAME;
 					}
 				}
 				break;
@@ -1022,27 +1110,31 @@ public abstract class Annotation extends Expression {
 				LocalVariableBinding localVariableBinding = (LocalVariableBinding) recipient;
 				if ((localVariableBinding.tagBits & TagBits.IsArgument) != 0) {
 					if ((metaTagBits & TagBits.AnnotationForParameter) != 0) {
-						return true;
+						return AnnotationTargetAllowed.YES;
 					} else if ((metaTagBits & TagBits.AnnotationForTypeUse) != 0) {
 						if (isTypeUseCompatible(localVariableBinding.declaration.type, scope)) {
-							return true;
+							return AnnotationTargetAllowed.YES;
+						} else {
+							return AnnotationTargetAllowed.TYPE_ANNOTATION_ON_QUALIFIED_NAME;
 						}
 					}
 				} else if ((annotationType.tagBits & TagBits.AnnotationForLocalVariable) != 0) {
-					return true;
+					return AnnotationTargetAllowed.YES;
 				} else if ((metaTagBits & TagBits.AnnotationForTypeUse) != 0) {
 					if (isTypeUseCompatible(localVariableBinding.declaration.type, scope)) {
-						return true;
+						return AnnotationTargetAllowed.YES;
+					} else {
+						return AnnotationTargetAllowed.TYPE_ANNOTATION_ON_QUALIFIED_NAME;
 					}
 				}
 				break;
 			case Binding.TYPE_PARAMETER : // jsr308
 				// https://bugs.eclipse.org/bugs/show_bug.cgi?id=391196
 				if ((metaTagBits & (TagBits.AnnotationForTypeParameter | TagBits.AnnotationForTypeUse)) != 0) {
-					return true;
+					return AnnotationTargetAllowed.YES;
 				}
 		}
-		return false;
+		return AnnotationTargetAllowed.NO;
 	}
 
 	public static boolean isAnnotationTargetAllowed(BlockScope scope, TypeBinding annotationType, Binding recipient) {
@@ -1050,10 +1142,10 @@ public abstract class Annotation extends Expression {
 		if ((metaTagBits & TagBits.AnnotationTargetMASK) == 0) {
 			return true;
 		}
-		return isAnnotationTargetAllowed(recipient, scope, annotationType, recipient.kind(), metaTagBits);
+		return isAnnotationTargetAllowed(recipient, scope, annotationType, recipient.kind(), metaTagBits)==AnnotationTargetAllowed.YES;
 	}
 
-	static boolean isAnnotationTargetAllowed(Annotation annotation, BlockScope scope, TypeBinding annotationType, int kind) {
+	static AnnotationTargetAllowed isAnnotationTargetAllowed(Annotation annotation, BlockScope scope, TypeBinding annotationType, int kind) {
 
 		long metaTagBits = annotationType.getAnnotationTagBits(); // could be forward reference
 		if ((metaTagBits & TagBits.AnnotationTargetMASK) == 0) {
@@ -1061,7 +1153,7 @@ public abstract class Annotation extends Expression {
 			if (kind == Binding.TYPE_PARAMETER || kind == Binding.TYPE_USE) {
 				scope.problemReporter().explitAnnotationTargetRequired(annotation);
 			}
-			return true;
+			return AnnotationTargetAllowed.YES;
 		}
 
 		// https://bugs.eclipse.org/bugs/show_bug.cgi?id=391201
@@ -1088,8 +1180,13 @@ public abstract class Annotation extends Expression {
 			// no need to check annotation usage if missing
 			return;
 		}
-		if (! isAnnotationTargetAllowed(annotation, scope, annotationType, kind)) {
+	AnnotationTargetAllowed annotationTargetAllowed = isAnnotationTargetAllowed(annotation, scope, annotationType, kind);
+	if (annotationTargetAllowed != AnnotationTargetAllowed.YES) {
+		if(annotationTargetAllowed == AnnotationTargetAllowed.TYPE_ANNOTATION_ON_QUALIFIED_NAME) {
+			scope.problemReporter().typeAnnotationAtQualifiedName(annotation);			
+		} else {
 			scope.problemReporter().disallowedTargetForAnnotation(annotation);
+		}
 			if (recipient instanceof TypeBinding)
 				((TypeBinding)recipient).tagBits &= ~tagBitsToRevert;
 		}
@@ -1158,7 +1255,7 @@ public abstract class Annotation extends Expression {
 							continue nextAnnotation;
 						} else {
 							if (annotation.hasNullBit(TypeIds.BitNonNullAnnotation|TypeIds.BitNullableAnnotation)) {
-								scope.problemReporter().nullAnnotationUnsupportedLocation(annotation);
+								scope.problemReporter().nullAnnotationAtQualifyingType(annotation);
 								continue nextAnnotation;
 							}
 						}

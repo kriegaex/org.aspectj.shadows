@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2004, 2012 IBM Corporation and others.
+ * Copyright (c) 2004, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -16,6 +20,7 @@ import org.eclipse.jdt.core.IField;
 import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.IMember;
 import org.eclipse.jdt.core.IMethod;
+import org.eclipse.jdt.core.IModuleDescription;
 import org.eclipse.jdt.core.IPackageFragment;
 import org.eclipse.jdt.core.IType;
 import org.eclipse.jdt.core.ITypeParameter;
@@ -157,6 +162,14 @@ public abstract class NamedMember extends Member {
 		key.append(';');
 		return key.toString();
 	}
+	protected String getKey(IModuleDescription module, boolean forceOpen) throws JavaModelException {
+		StringBuffer key = new StringBuffer();
+		key.append('L');
+		String modName = module.getElementName();
+		key.append(modName);
+		key.append(';');
+		return key.toString();
+	}
 
 	protected String getFullyQualifiedParameterizedName(String fullyQualifiedName, String uniqueKey) throws JavaModelException {
 		String[] typeArguments = new BindingKey(uniqueKey).getTypeArguments();
@@ -289,6 +302,10 @@ public abstract class NamedMember extends Member {
 				// ignore
 			}
 			public void acceptMethodTypeParameter(char[] declaringTypePackageName, char[] declaringTypeName, char[] selector, int selectorStart, int selcetorEnd, char[] typeParameterName, boolean isDeclaration, int start, int end) {
+				// ignore
+			}
+			@Override
+			public void acceptModule(char[] moduleName, char[] uniqueKey, int start, int end) {
 				// ignore
 			}
 

@@ -1,6 +1,6 @@
 // ASPECTJ
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -473,6 +473,7 @@ public class ClassScope extends Scope {
 		}
 
 		SourceTypeBinding sourceType = this.referenceContext.binding;
+		sourceType.module = environment().getModule(module());
 		environment().setAccessRestriction(sourceType, accessRestriction);
 		
 		TypeParameter[] typeParameters = this.referenceContext.typeParameters;
@@ -516,7 +517,9 @@ public class ClassScope extends Scope {
 		ReferenceBinding enclosingType = sourceType.enclosingType();
 		boolean isMemberType = sourceType.isMemberType();
 		if (isMemberType) {
-			modifiers |= (enclosingType.modifiers & (ExtraCompilerModifiers.AccGenericSignature|ClassFileConstants.AccStrictfp));
+			if (!sourceType.isStatic())
+				modifiers |= (enclosingType.modifiers & ExtraCompilerModifiers.AccGenericSignature);
+			modifiers |= (enclosingType.modifiers & ClassFileConstants.AccStrictfp);
 			// checks for member types before local types to catch local members
 			if (enclosingType.isInterface())
 				modifiers |= ClassFileConstants.AccPublic;
@@ -695,6 +698,9 @@ public class ClassScope extends Scope {
 			if (sourceType.sourceName == TypeConstants.MODULE_INFO_NAME) {
 				// TBD - allowed only at source level 9 or above
 				modifiers = ClassFileConstants.AccModule;
+				if ((realModifiers & ClassFileConstants.ACC_OPEN) != 0) {
+					modifiers |= ClassFileConstants.ACC_OPEN;
+				}
 			} else
 			// detect abnormal cases for classes
 			if (isMemberType) { // includes member types defined inside local types
@@ -1414,16 +1420,37 @@ public class ClassScope extends Scope {
 	}
 
 	@Override
-	public boolean hasDefaultNullnessFor(int location) {
+	public boolean hasDefaultNullnessFor(int location, int sourceStart) {
+		int nonNullByDefaultValue = localNonNullByDefaultValue(sourceStart);
+		if (nonNullByDefaultValue != 0) {
+			return (nonNullByDefaultValue & location) != 0;
+		}
 		SourceTypeBinding binding = this.referenceContext.binding;
 		if (binding != null) {
 			int nullDefault = binding.getNullDefault();
-			if (nullDefault != 0)
+			if (nullDefault != 0) {
 				return (nullDefault & location) != 0;
 		}
-		return this.parent.hasDefaultNullnessFor(location);
+	}
+		return this.parent.hasDefaultNullnessFor(location, sourceStart);
 	}
 
+	@Override
+	public /* @Nullable */ Binding checkRedundantDefaultNullness(int nullBits, int sourceStart) {
+		Binding target = localCheckRedundantDefaultNullness(nullBits, sourceStart);
+		if (target != null) {
+			return target;
+		}
+		SourceTypeBinding binding = this.referenceContext.binding;
+		if (binding != null) {
+			int nullDefault = binding.getNullDefault();
+			if (nullDefault != 0) {
+				return (nullDefault == nullBits) ? binding : null;
+			}
+		}
+		return this.parent.checkRedundantDefaultNullness(nullBits, sourceStart);
+	}
+	
 	public String toString() {
 		if (this.referenceContext != null)
 			return "--- Class Scope ---\n\n"  //$NON-NLS-1$

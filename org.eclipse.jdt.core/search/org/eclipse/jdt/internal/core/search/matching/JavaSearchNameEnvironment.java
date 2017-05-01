@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -16,27 +16,41 @@
  *******************************************************************************/
 package org.eclipse.jdt.internal.core.search.matching;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.jdt.core.IJavaProject;
+import org.eclipse.jdt.core.IModuleDescription;
 import org.eclipse.jdt.core.IPackageDeclaration;
 import org.eclipse.jdt.core.IPackageFragmentRoot;
 import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
 import org.eclipse.jdt.internal.compiler.env.IModule;
+import org.eclipse.jdt.internal.compiler.env.IModuleAwareNameEnvironment;
+import org.eclipse.jdt.internal.compiler.env.IModuleContext;
+import org.eclipse.jdt.internal.compiler.env.IModuleEnvironment;
+import org.eclipse.jdt.internal.compiler.env.IModulePathEntry;
 import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
-import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
 import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
 import org.eclipse.jdt.internal.core.ClasspathEntry;
+import org.eclipse.jdt.internal.core.JavaElement;
+import org.eclipse.jdt.internal.core.JavaElementRequestor;
 import org.eclipse.jdt.internal.core.JavaModel;
 import org.eclipse.jdt.internal.core.JavaModelManager;
 import org.eclipse.jdt.internal.core.JavaProject;
+import org.eclipse.jdt.internal.core.ModuleDescriptionInfo;
+import org.eclipse.jdt.internal.core.NameLookup;
 import org.eclipse.jdt.internal.core.PackageFragmentRoot;
 import org.eclipse.jdt.internal.core.builder.ClasspathJar;
 import org.eclipse.jdt.internal.core.builder.ClasspathJrt;
@@ -46,21 +60,30 @@ import org.eclipse.jdt.internal.core.util.Util;
 /*
  * A name environment based on the classpath of a Java project.
  */
-@SuppressWarnings({"rawtypes", "unchecked"})
-public class JavaSearchNameEnvironment extends ModuleEnvironment implements SuffixConstants {
+public class JavaSearchNameEnvironment implements IModuleAwareNameEnvironment, SuffixConstants {
 
-	LinkedHashSet<ClasspathLocation> locationSet;
+	LinkedHashSet<IModuleEnvironment> locationSet;
+	Map<String, IModuleDescription> modules;
+	private boolean modulesComputed = false;
+	List<IModulePathEntry> modulePathEntries;
 
 	/*
 	 * A map from the fully qualified slash-separated name of the main type (String) to the working copy
 	 */
-	HashMap workingCopies;
+	Map<String, org.eclipse.jdt.core.ICompilationUnit> workingCopies;
 
 public JavaSearchNameEnvironment(IJavaProject javaProject, org.eclipse.jdt.core.ICompilationUnit[] copies) {
+	this.modulePathEntries = new ArrayList<>();
+	this.modules = new HashMap<>();
 	this.locationSet = computeClasspathLocations((JavaProject) javaProject);
+	this.workingCopies = getWorkingCopyMap(copies);
+}
+
+public static Map<String, org.eclipse.jdt.core.ICompilationUnit> getWorkingCopyMap(
+		org.eclipse.jdt.core.ICompilationUnit[] copies) {
+	int length = copies == null ? 0 : copies.length;
+	HashMap<String, org.eclipse.jdt.core.ICompilationUnit> result = new HashMap<>(length);
 	try {
-		int length = copies == null ? 0 : copies.length;
-		this.workingCopies = new HashMap(length);
 		if (copies != null) {
 			for (int i = 0; i < length; i++) {
 				org.eclipse.jdt.core.ICompilationUnit workingCopy = copies[i];
@@ -69,12 +92,14 @@ public JavaSearchNameEnvironment(IJavaProject javaProject, org.eclipse.jdt.core.
 				String cuName = workingCopy.getElementName();
 				String mainTypeName = Util.getNameWithoutJavaLikeExtension(cuName);
 				String qualifiedMainTypeName = pkg.length() == 0 ? mainTypeName : pkg.replace('.', '/') + '/' + mainTypeName;
-				this.workingCopies.put(qualifiedMainTypeName, workingCopy);
+				result.put(qualifiedMainTypeName, workingCopy);
+				// TODO : JAVA 9 - module-info.java has the same name across modules - Any issues here?
 			}
 		}
 	} catch (JavaModelException e) {
 		// working copy doesn't exist: cannot happen
 	}
+	return result;
 }
 
 public void cleanup() {
@@ -82,11 +107,11 @@ public void cleanup() {
 }
 
 void addProjectClassPath(JavaProject javaProject) {
-	LinkedHashSet<ClasspathLocation> locations = computeClasspathLocations(javaProject);
+	LinkedHashSet<IModuleEnvironment> locations = computeClasspathLocations(javaProject);
 	if (locations != null) this.locationSet.addAll(locations);
 }
 
-private LinkedHashSet<ClasspathLocation> computeClasspathLocations(JavaProject javaProject) {
+private LinkedHashSet<IModuleEnvironment> computeClasspathLocations(JavaProject javaProject) {
 
 	IPackageFragmentRoot[] roots = null;
 	try {
@@ -94,7 +119,7 @@ private LinkedHashSet<ClasspathLocation> computeClasspathLocations(JavaProject j
 	} catch (JavaModelException e) {
 		return null;// project doesn't exist
 	}
-	LinkedHashSet<ClasspathLocation> locations = new LinkedHashSet<ClasspathLocation>();
+	LinkedHashSet<IModuleEnvironment> locations = new LinkedHashSet<>();
 	int length = roots.length;
 	JavaModelManager manager = JavaModelManager.getJavaModelManager();
 	for (int i = 0; i < length; i++) {
@@ -104,28 +129,58 @@ private LinkedHashSet<ClasspathLocation> computeClasspathLocations(JavaProject j
 	return locations;
 }
 
-private ClasspathLocation mapToClassPathLocation( JavaModelManager manager, PackageFragmentRoot root) {
+private void computeModules() {
+	if (!this.modulesComputed) {
+		this.modulesComputed = true;
+		JavaElementRequestor requestor = new JavaElementRequestor();
+		try {
+			JavaModelManager.getModulePathManager().seekModule(CharOperation.ALL_PREFIX, true, requestor);
+			IModuleDescription[] mods = requestor.getModules();
+			for (IModuleDescription mod : mods) {
+				this.modules.putIfAbsent(mod.getElementName(), mod);
+			}
+		} catch (JavaModelException e) {
+			// do nothing
+		}
+	}
+}
+private ClasspathLocation mapToClassPathLocation(JavaModelManager manager, PackageFragmentRoot root) {
 	ClasspathLocation cp = null;
 	IPath path = root.getPath();
+	IModuleDescription imd = root.getModuleDescription();
+	IModule mod = NameLookup.getModuleDescriptionInfo(imd);
+	this.modules.put(new String(mod.name()), imd);
+	IModulePathEntry ime = null;
 	try {
 		if (root.isArchive()) {
 			ClasspathEntry rawClasspathEntry = (ClasspathEntry) root.getRawClasspathEntry();
 			cp = JavaModelManager.isJrt(path) ? 
 					new ClasspathJrt(path.toOSString(), 
 							ClasspathEntry.getExternalAnnotationPath(rawClasspathEntry, ((IJavaProject)root.getParent()).getProject(), true), this) :
-			new ClasspathJar(manager.getZipFile(path), rawClasspathEntry.getAccessRuleSet(), ClasspathEntry.getExternalAnnotationPath(rawClasspathEntry, ((IJavaProject)root.getParent()).getProject(), true), this);
+						new ClasspathJar(manager.getZipFile(path), rawClasspathEntry.getAccessRuleSet(),
+								ClasspathEntry.getExternalAnnotationPath(rawClasspathEntry,
+										((IJavaProject) root.getParent()).getProject(), true),
+								this, rawClasspathEntry.isAutomaticModule());		
+			ime = (IModulePathEntry) cp;
 		} else {
 			Object target = JavaModel.getTarget(path, true);
 			if (target != null) {
 				if (root.getKind() == IPackageFragmentRoot.K_SOURCE) {
 					cp = new ClasspathSourceDirectory((IContainer)target, root.fullExclusionPatternChars(), root.fullInclusionPatternChars());
+					ime = (IModulePathEntry) cp;
 				} else {
 					ClasspathEntry rawClasspathEntry = (ClasspathEntry) root.getRawClasspathEntry();
 					cp = ClasspathLocation.forBinaryFolder((IContainer) target, false, rawClasspathEntry.getAccessRuleSet(), 
-							ClasspathEntry.getExternalAnnotationPath(rawClasspathEntry, ((IJavaProject)root.getParent()).getProject(), true), this);
+							ClasspathEntry.getExternalAnnotationPath(rawClasspathEntry, ((IJavaProject)root.getParent()).getProject(), true), this, rawClasspathEntry.isAutomaticModule());
+					if (cp instanceof IModulePathEntry && ((IModulePathEntry) cp).getModule() != null) {
+						ime = (IModulePathEntry) cp;
+					}
 				}
 			}
 		}
+		cp.setModule(mod);
+		if (ime != null)
+			this.modulePathEntries.add(ime);
 	} catch (CoreException e1) {
 		// problem opening zip file or getting root kind
 		// consider root corrupt and ignore
@@ -133,17 +188,29 @@ private ClasspathLocation mapToClassPathLocation( JavaModelManager manager, Pack
 	return cp;
 }
 
-private NameEnvironmentAnswer findClass(String qualifiedTypeName, char[] typeName, IModule[] modules) {
+private NameEnvironmentAnswer findClass(String qualifiedTypeName, char[] typeName, IModuleContext moduleContext) {
+	if (moduleContext == IModuleContext.UNNAMED_MODULE_CONTEXT)
+		return findClass(qualifiedTypeName, typeName);
+
+	IModuleEnvironment[] envs = moduleContext.getEnvironment().toArray(IModuleEnvironment[] :: new);
+	LinkedHashSet<IModuleEnvironment> cLocs = new LinkedHashSet<>();
+	for  (IModuleEnvironment e : envs) {
+		cLocs.add(e);
+	}
+	return findClass(qualifiedTypeName, typeName, cLocs);
+}
+private NameEnvironmentAnswer findClass(String qualifiedTypeName, char[] typeName, LinkedHashSet<IModuleEnvironment> locSets) {
 	String
 		binaryFileName = null, qBinaryFileName = null,
 		sourceFileName = null, qSourceFileName = null,
 		qPackageName = null;
 	NameEnvironmentAnswer suggestedAnswer = null;
-	Iterator <ClasspathLocation> iter = this.locationSet.iterator();
+	Iterator <IModuleEnvironment> iter = locSets.iterator();
 	while (iter.hasNext()) {
-		ClasspathLocation location = iter.next();
+		IModuleEnvironment location = iter.next();
 		NameEnvironmentAnswer answer = null;
 		if (location instanceof ClasspathSourceDirectory) {
+			ClasspathSourceDirectory csd = (ClasspathSourceDirectory) location;
 			if (sourceFileName == null) {
 				qSourceFileName = qualifiedTypeName; // doesn't include the file extension
 				sourceFileName = qSourceFileName;
@@ -158,15 +225,12 @@ private NameEnvironmentAnswer findClass(String qualifiedTypeName, char[] typeNam
 			if (workingCopy != null) {
 				answer = new NameEnvironmentAnswer(workingCopy, null /*no access restriction*/);
 			} else {
-				mods: for (IModule iModule : modules) {
-					answer = location.findClass(
+					answer = csd.findClass(
 							sourceFileName, // doesn't include the file extension
 							qPackageName,
-							qSourceFileName, iModule);  // doesn't include the file extension
-					if (answer != null) break mods;
-				}
+							qSourceFileName);  // doesn't include the file extension
 			}
-		} else {
+		} else if (location instanceof ClasspathLocation){
 			if (binaryFileName == null) {
 				qBinaryFileName = qualifiedTypeName + SUFFIX_STRING_class;
 				binaryFileName = qBinaryFileName;
@@ -177,14 +241,13 @@ private NameEnvironmentAnswer findClass(String qualifiedTypeName, char[] typeNam
 					binaryFileName = qBinaryFileName.substring(typeNameStart);
 				}
 			}
-			mods: for (IModule iModule : modules) {
-				answer =
-						location.findClass(
-								binaryFileName,
-								qPackageName,
-								qBinaryFileName, iModule);
-				if (answer != null) break mods;
-			}
+			answer =
+					((ClasspathLocation) location).findClass(
+							binaryFileName,
+							qPackageName,
+							qBinaryFileName);
+		} else {
+			// TODO: handle anything other than ClassPathLocation, if any.
 		}
 		if (answer != null) {
 			if (!answer.ignoreIfBetter()) {
@@ -201,28 +264,36 @@ private NameEnvironmentAnswer findClass(String qualifiedTypeName, char[] typeNam
 	return null;
 }
 
-public NameEnvironmentAnswer findType(char[] typeName, char[][] packageName, IModule[] modules) {
+private NameEnvironmentAnswer findClass(String qualifiedTypeName, char[] typeName) {
+	return findClass(qualifiedTypeName, typeName, this.locationSet);
+}
+
+@Override
+public NameEnvironmentAnswer findType(char[] typeName, char[][] packageName, IModuleContext context) {
 	if (typeName != null)
 		return findClass(
 			new String(CharOperation.concatWith(packageName, typeName, '/')),
-			typeName, modules);
+			typeName, context);
 	return null;
 }
 
-public NameEnvironmentAnswer findType(char[][] compoundName, IModule[] modules) {
-	if (compoundName != null)
-		return findClass(
-			new String(CharOperation.concatWith(compoundName, '/')),
-			compoundName[compoundName.length - 1], modules);
-	return null;
+@Override
+public NameEnvironmentAnswer findType(char[] typeName, char[][] packageName) {
+	return findType(typeName, 
+			packageName,
+			IModuleContext.UNNAMED_MODULE_CONTEXT);
 }
 
-public boolean isPackage(char[][] compoundName, char[] packageName, IModule[] modules) {
-	return isPackage(new String(CharOperation.concatWith(compoundName, packageName, '/')), modules);
+public NameEnvironmentAnswer findType(char[][] compoundName) {
+	return findType(compoundName, IModuleContext.UNNAMED_MODULE_CONTEXT);
 }
 
-public boolean isPackage(String qualifiedPackageName, IModule[] modules) {
-	Iterator<ClasspathLocation> iter = this.locationSet.iterator();
+public boolean isPackage(char[][] compoundName, char[] packageName) {
+	return isPackage(new String(CharOperation.concatWith(compoundName, packageName, '/')));
+}
+
+public boolean isPackage(String qualifiedPackageName) {
+	Iterator<IModuleEnvironment> iter = this.locationSet.iterator();
 	while (iter.hasNext()) {
 		if (iter.next().isPackage(qualifiedPackageName)) return true;
 	}
@@ -230,9 +301,59 @@ public boolean isPackage(String qualifiedPackageName, IModule[] modules) {
 }
 
 @Override
-public IModule getModule(char[] name) {
-	// TODO Auto-generated method stub
+public NameEnvironmentAnswer findType(char[][] compoundName, IModuleContext moduleContext) {
+	if (compoundName != null)
+		return findClass(
+			new String(CharOperation.concatWith(compoundName, '/')),
+			compoundName[compoundName.length - 1],
+			moduleContext);
 	return null;
 }
 
+@Override
+public boolean isPackage(char[][] parentPackageName, char[] packageName, IModuleContext moduleContext) {
+	if (moduleContext == IModuleContext.UNNAMED_MODULE_CONTEXT)
+		return isPackage(parentPackageName, packageName);
+	String qualifiedPackageName = new String(CharOperation.concatWith(parentPackageName, packageName, '/'));
+	Stream<IModuleEnvironment> env = moduleContext.getEnvironment();
+	List<IModuleEnvironment> envs = env.collect(Collectors.toList());
+	for (IModuleEnvironment e : envs) {
+		if (e.isPackage(qualifiedPackageName)) 
+			return true;
+	}
+	return false;
+}
+
+@Override
+public IModule getModule(char[] moduleName) {
+	computeModules();
+	IModuleDescription moduleDesc = this.modules.get(new String(moduleName));
+	IModule module = null;
+	try {
+		if (moduleDesc != null)
+			module =  ((ModuleDescriptionInfo)((JavaElement) moduleDesc).getElementInfo());
+	} catch (JavaModelException e) {
+		// do nothing
+	}
+	return module;
+}
+
+@Override
+public IModuleEnvironment getModuleEnvironmentFor(char[] moduleName) {
+	IModule module = null;
+	for (IModulePathEntry mpe : this.modulePathEntries) {
+		if ((module = mpe.getModule(moduleName)) != null)
+			return mpe.getLookupEnvironmentFor(module);
+	}
+	return null;
+}
+
+@Override
+public IModule[] getAllAutomaticModules() {
+	if (this.modulePathEntries == null || this.modulePathEntries.size() == 0)
+		return IModule.NO_MODULES;
+	Set<IModule> set = this.modulePathEntries.stream().map(e -> e.getModule()).filter(m -> m.isAutomatic())
+			.collect(Collectors.toSet());
+	return set.toArray(new IModule[set.size()]);
+}
 }

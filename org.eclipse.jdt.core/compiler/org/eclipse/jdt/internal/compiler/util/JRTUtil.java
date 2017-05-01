@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2015, 2016 IBM Corporation.
+ * Copyright (c) 2015, 2017 IBM Corporation.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -30,10 +30,14 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
+import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileReader;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFormatException;
 import org.eclipse.jdt.internal.compiler.env.IModule;
@@ -41,7 +45,6 @@ import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
 
 public class JRTUtil {
 
-	public static final String JAVA_DOT = "java."; //$NON-NLS-1$
 	public static final String JAVA_BASE = "java.base"; //$NON-NLS-1$
 	public static final char[] JAVA_BASE_CHAR = JAVA_BASE.toCharArray();
 	static final String MODULES_SUBDIR = "/modules"; //$NON-NLS-1$
@@ -153,6 +156,12 @@ public class JRTUtil {
 	public static ClassFileReader getClassfile(File jrt, String fileName, IModule module) throws IOException, ClassFormatException {
 		return getJrtSystem(jrt).getClassfile(fileName, module);
 	}
+	public static ClassFileReader getClassfile(File jrt, String fileName, Optional<Collection<char[]>> modules) throws IOException, ClassFormatException {
+		return getJrtSystem(jrt).getClassfile(fileName, modules);
+	}
+	public static boolean isPackage(File jrt, String qName, Optional<char[]> module) {
+		return getJrtSystem(jrt).isPackage(qName, module);
+	}
 }
 class JrtFileSystem {
 	private final Map<String, String> packageToModule = new HashMap<String, String>();
@@ -172,22 +181,46 @@ class JrtFileSystem {
 		initialize(jrt);
 	}
 	void initialize(File jrt) throws IOException {
-		URL url = null;
+		URL jrtPath = null;
+		String jdkHome = null;
 		if (jrt.toString().endsWith(JRTUtil.JRT_FS_JAR)) {
-			url = jrt.toPath().toUri().toURL();
-		} else if (jrt.isDirectory()) {
-			url = jrt.toPath().toUri().toURL();
+			jrtPath = jrt.toPath().toUri().toURL();
+			jdkHome = jrt.getParentFile().getParent();
 		} else {
-			String jdkHome = jrt.getParentFile().getParentFile().getParent();
-			url = Paths.get(jdkHome, JRTUtil.JRT_FS_JAR).toUri().toURL();
+			jdkHome = jrt.toPath().toString();
+			jrtPath = Paths.get(jdkHome, "lib", JRTUtil.JRT_FS_JAR).toUri().toURL(); //$NON-NLS-1$
+
 		}
 		JRTUtil.MODULE_TO_LOAD = System.getProperty("modules.to.load"); //$NON-NLS-1$
-		URLClassLoader loader = new URLClassLoader(new URL[] { url });
-		HashMap<String, ?> env = new HashMap<>();
-		this.jrtSystem = FileSystems.newFileSystem(JRTUtil.JRT_URI, env, loader);
+		String javaVersion = System.getProperty("java.version"); //$NON-NLS-1$
+		if (javaVersion != null && javaVersion.startsWith("1.8")) { //$NON-NLS-1$
+			JRTUtil.MODULE_TO_LOAD = System.getProperty("modules.to.load"); //$NON-NLS-1$
+			URLClassLoader loader = new URLClassLoader(new URL[] { jrtPath });
+			HashMap<String, ?> env = new HashMap<>();
+			this.jrtSystem = FileSystems.newFileSystem(JRTUtil.JRT_URI, env, loader);
+		} else {
+			HashMap<String, String> env = new HashMap<>();
+			env.put("java.home", jdkHome); //$NON-NLS-1$
+			this.jrtSystem = FileSystems.newFileSystem(JRTUtil.JRT_URI, env);
+		}
 		walkModuleImage(null, true, 0 /* doesn't matter */);
 	}
 
+	public boolean isPackage(String qualifiedPackageName, Optional<char[]> moduleName) {
+		qualifiedPackageName = qualifiedPackageName.replace('.', '/');
+		String module = this.packageToModule.get(qualifiedPackageName);
+		if (!moduleName.isPresent())
+			return module != null;
+		if (module != null) {
+			if (module == JRTUtil.MULTIPLE) {
+				List<String> list = this.packageToModules.get(qualifiedPackageName);
+				return list.contains(new String(moduleName.get()));
+			} else {
+				return CharOperation.equals(module.toCharArray(), moduleName.get());
+			}
+		}
+		return false;
+	}
 	public String[] getModules(String fileName) {
 		int idx = fileName.lastIndexOf('/');
 		String pack = null;
@@ -267,7 +300,23 @@ class JrtFileSystem {
 		}
 		return content;
 	}
-	
+	public ClassFileReader getClassfile(String fileName, Optional<Collection<char[]>> modules) throws IOException, ClassFormatException {
+		ClassFileReader reader = null;
+		if (!modules.isPresent()) {
+			reader = getClassfile(fileName);
+		} else {
+			Iterator<char[]> modIterator = modules.get().iterator();
+			while(modIterator.hasNext()) {
+				char[] mod = modIterator.next();
+				byte[] content = getClassfile(fileName, new String(mod));
+				if (content != null) {
+					reader = new ClassFileReader(content, fileName.toCharArray(), mod);
+					break;
+				}
+			}
+		}
+		return reader;
+	}
 	public ClassFileReader getClassfile(String fileName, IModule module) throws IOException, ClassFormatException {
 		ClassFileReader reader = null;
 		if (module == null || module == ModuleEnvironment.UNNAMED_MODULE) {
@@ -295,8 +344,7 @@ class JrtFileSystem {
 								if (count == 2) {
 									// e.g. /modules/java.base
 									java.nio.file.Path mod = dir.getName(1);
-									if (!mod.toString().startsWith(JRTUtil.JAVA_DOT) ||
-											(JRTUtil.MODULE_TO_LOAD != null && JRTUtil.MODULE_TO_LOAD.length() > 0 &&
+									if ((JRTUtil.MODULE_TO_LOAD != null && JRTUtil.MODULE_TO_LOAD.length() > 0 &&
 											JRTUtil.MODULE_TO_LOAD.indexOf(mod.toString()) == -1)) {
 										return FileVisitResult.SKIP_SUBTREE;
 									}
@@ -327,10 +375,6 @@ class JrtFileSystem {
 							@Override
 							public FileVisitResult visitFile(java.nio.file.Path file, BasicFileAttributes attrs) throws IOException {
 								// e.g. /modules/java.base
-								java.nio.file.Path mod = file.getName(file.getNameCount() - 1);
-								if (!mod.toString().startsWith(JRTUtil.JAVA_DOT)) {
-									return FileVisitResult.CONTINUE;
-								}
 								java.nio.file.Path relative = subdir.relativize(file);
 								cachePackage(relative.getParent().toString(), relative.getFileName().toString());
 								return FileVisitResult.CONTINUE;

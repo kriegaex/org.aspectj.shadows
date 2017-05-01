@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -26,10 +26,12 @@ import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.IType;
 import org.eclipse.jdt.core.JavaCore;
-import org.eclipse.jdt.core.compiler.CharOperation;
-import org.eclipse.jdt.internal.compiler.env.IModule;
 import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
-import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
+import org.eclipse.jdt.internal.compiler.env.IModule;
+import org.eclipse.jdt.internal.compiler.env.IModuleEnvironment;
+import org.eclipse.jdt.internal.compiler.env.IModulePathEntry;
+import org.eclipse.jdt.internal.compiler.env.IPackageLookup;
+import org.eclipse.jdt.internal.compiler.env.ITypeLookup;
 import org.eclipse.jdt.internal.compiler.util.SimpleLookupTable;
 import org.eclipse.jdt.internal.core.JavaModelManager;
 import org.eclipse.jdt.internal.core.builder.ClasspathLocation;
@@ -37,14 +39,13 @@ import org.eclipse.jdt.internal.core.util.ResourceCompilationUnit;
 import org.eclipse.jdt.internal.core.util.Util;
 
 @SuppressWarnings("rawtypes")
-public class ClasspathSourceDirectory extends ClasspathLocation {
+public class ClasspathSourceDirectory extends ClasspathLocation implements IModulePathEntry {
 
 	IContainer sourceFolder;
 	SimpleLookupTable directoryCache;
 	SimpleLookupTable missingPackageHolder = new SimpleLookupTable();
 	char[][] fullExclusionPatternChars;
 	char[][] fulInclusionPatternChars;
-	IModule module = null;
 
 ClasspathSourceDirectory(IContainer sourceFolder, char[][] fullExclusionPatternChars, char[][] fulInclusionPatternChars) {
 	this.sourceFolder = sourceFolder;
@@ -114,16 +115,16 @@ public boolean equals(Object o) {
 	return this.sourceFolder.equals(((ClasspathSourceDirectory) o).sourceFolder);
 }
 
-public NameEnvironmentAnswer findClass(String typeName, String qualifiedPackageName, String qualifiedBinaryFileName, boolean asBinaryOnly, IModule mod) {
-	return findClass(typeName, qualifiedPackageName, qualifiedBinaryFileName, mod);
+public NameEnvironmentAnswer findClass(String typeName, String qualifiedPackageName, String qualifiedBinaryFileName, boolean asBinaryOnly) {
+	return findClass(typeName, qualifiedPackageName, qualifiedBinaryFileName);
 }
-public NameEnvironmentAnswer findClass(String sourceFileWithoutExtension, String qualifiedPackageName, String qualifiedSourceFileWithoutExtension, IModule mod) {
+public NameEnvironmentAnswer findClass(String sourceFileWithoutExtension, String qualifiedPackageName, String qualifiedSourceFileWithoutExtension) {
 	SimpleLookupTable dirTable = directoryTable(qualifiedPackageName);
 	if (dirTable != null && dirTable.elementSize > 0) {
 		IFile file = (IFile) dirTable.get(sourceFileWithoutExtension);
 		if (file != null) {
 			return new NameEnvironmentAnswer(new ResourceCompilationUnit(file, 
-					(mod != null ? mod.name() : null)), null /* no access restriction */);
+					this.module == null ? null : this.module.name()), null /* no access restriction */);
 		}
 	}
 	return null;
@@ -154,20 +155,24 @@ public String debugPathString() {
 }
 
 @Override
-public boolean servesModule(IModule mod) {
-	if (mod == null) 
-		return false;
-	if (this.module == null || mod == this || mod == ModuleEnvironment.UNNAMED_MODULE)
-		return true;
-	return CharOperation.equals(this.module.name(), mod.name());
+public ITypeLookup typeLookup() {
+	//
+	return this::findClass;
 }
 
 @Override
-public IModule getModule(char[] moduleName) {
-	// 
-	if (this.module != null && CharOperation.equals(this.module.name(), moduleName)) {
-		return this.module;
-	}
-	return null;
+public IPackageLookup packageLookup() {
+	//
+	return this::isPackage;
+}
+
+@Override
+public IModuleEnvironment getLookupEnvironment() {
+	return this;
+}
+
+@Override
+public IModuleEnvironment getLookupEnvironmentFor(IModule mod) {
+	return this.module == mod ? this : null;
 }
 }

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -17,27 +17,37 @@
  *******************************************************************************/
 package org.eclipse.jdt.internal.core.builder;
 
+import java.io.File;
+import java.io.IOException;
+import java.util.Date;
+import java.util.Enumeration;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+
 import org.eclipse.core.resources.IFile;
-import org.eclipse.core.runtime.*;
-import org.eclipse.jdt.core.compiler.CharOperation;
+import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.IPath;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileReader;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFormatException;
+import org.eclipse.jdt.internal.compiler.classfmt.ExternalAnnotationDecorator;
 import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
+import org.eclipse.jdt.internal.compiler.env.IBinaryType;
 import org.eclipse.jdt.internal.compiler.env.IModule;
+import org.eclipse.jdt.internal.compiler.env.IModuleEnvironment;
+import org.eclipse.jdt.internal.compiler.env.IModulePathEntry;
 import org.eclipse.jdt.internal.compiler.env.INameEnvironment;
+import org.eclipse.jdt.internal.compiler.env.IPackageLookup;
+import org.eclipse.jdt.internal.compiler.env.ITypeLookup;
 import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
-import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
+import org.eclipse.jdt.internal.compiler.lookup.BinaryTypeBinding.ExternalAnnotationStatus;
+import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment.AutoModule;
 import org.eclipse.jdt.internal.compiler.util.SimpleLookupTable;
 import org.eclipse.jdt.internal.compiler.util.SimpleSet;
 import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
 import org.eclipse.jdt.internal.core.util.Util;
 
-import java.io.*;
-import java.util.*;
-import java.util.zip.*;
-
 @SuppressWarnings("rawtypes")
-public class ClasspathJar extends ClasspathLocation {
+public class ClasspathJar extends ClasspathLocation implements IModulePathEntry {
 
 static class PackageCacheEntry {
 	long lastModified;
@@ -51,9 +61,9 @@ static class PackageCacheEntry {
 	}
 }
 
-private static SimpleLookupTable PackageCache = new SimpleLookupTable();
+protected static SimpleLookupTable PackageCache = new SimpleLookupTable();
+protected static SimpleLookupTable ModuleCache = new SimpleLookupTable();
 INameEnvironment env = null;
-IModule module = null;
 
 protected static void addToPackageSet(SimpleSet packageSet, String fileName, boolean endsWithSep) {
 	int last = endsWithSep ? fileName.length() : fileName.lastIndexOf('/');
@@ -68,33 +78,24 @@ protected static void addToPackageSet(SimpleSet packageSet, String fileName, boo
 
 /**
  * Calculate and cache the package list available in the zipFile.
- * @param jar The ClasspathJar to use
  * @return A SimpleSet with the all the package names in the zipFile.
  */
-static SimpleSet findPackageSet(final ClasspathJar jar) {
-	String zipFileName = jar.zipFilename;
+protected SimpleSet findPackageSet() {
+	String zipFileName = this.zipFilename;
 	PackageCacheEntry cacheEntry = (PackageCacheEntry) PackageCache.get(zipFileName);
-	long lastModified = jar.lastModified();
+	long timestamp = this.lastModified();
 	long fileSize = new File(zipFileName).length();
-	if (cacheEntry != null && cacheEntry.lastModified == lastModified && cacheEntry.fileSize == fileSize)
+	if (cacheEntry != null && cacheEntry.lastModified == timestamp && cacheEntry.fileSize == fileSize) {
+		this.module = (IModule) ModuleCache.get(zipFileName);
 		return cacheEntry.packageSet;
+	}
 	final SimpleSet packageSet = new SimpleSet(41);
 	packageSet.add(""); //$NON-NLS-1$
-	String modInfo = null;
-	for (Enumeration e = jar.zipFile.entries(); e.hasMoreElements(); ) {
-		String fileName = ((ZipEntry) e.nextElement()).getName();
-		int folderEnd = fileName.lastIndexOf('/');
-		folderEnd += 1;
-		String className = fileName.substring(folderEnd, fileName.length());
-		if (className.equalsIgnoreCase(MODULE_INFO_CLASS)) {
-			modInfo = fileName;
-		}
-		addToPackageSet(packageSet, fileName, false);
-	}
-	PackageCache.put(zipFileName, new PackageCacheEntry(lastModified, fileSize, packageSet));
+	String modInfo = readJarContent(packageSet);
+	PackageCache.put(zipFileName, new PackageCacheEntry(timestamp, fileSize, packageSet));
 	if (modInfo != null) {
 		try {
-			jar.acceptModule(ClassFileReader.read(jar.zipFile, modInfo));
+			this.acceptModule(ClassFileReader.read(this.zipFile, modInfo));
 		} catch (ClassFormatException | IOException e) {
 			// TODO BETA_JAVA9 Auto-generated catch block
 			e.printStackTrace();
@@ -102,12 +103,27 @@ static SimpleSet findPackageSet(final ClasspathJar jar) {
 	}
 	return packageSet;
 }
+protected String readJarContent(final SimpleSet packageSet) {
+	String modInfo = null;
+	for (Enumeration e = this.zipFile.entries(); e.hasMoreElements(); ) {
+		String fileName = ((ZipEntry) e.nextElement()).getName();
+		if (modInfo == null) {
+			int folderEnd = fileName.lastIndexOf('/');
+			folderEnd += 1;
+			String className = fileName.substring(folderEnd, fileName.length());
+			if (className.equalsIgnoreCase(MODULE_INFO_CLASS)) {
+				modInfo = fileName;
+			}
+		}
+		addToPackageSet(packageSet, fileName, false);
+	}
+	return modInfo;
+}
 void acceptModule(ClassFileReader classfile) {
 	if (classfile != null) {
-//		if ((this.module = classfile.getModuleDeclaration()) != null) {
-//			this.env.acceptModule(this.module, this);
-//		}
-		this.module = classfile.getModuleDeclaration();
+		IModule mod = classfile.getModuleDeclaration();
+		ModuleCache.put(this.zipFilename, mod);
+		acceptModule(mod);
 	}
 }
 
@@ -122,7 +138,7 @@ private SimpleSet knownPackageNames;
 AccessRuleSet accessRuleSet;
 String externalAnnotationPath;
 
-ClasspathJar(IFile resource, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, INameEnvironment env) {
+ClasspathJar(IFile resource, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, INameEnvironment env, boolean isAutomodule) {
 	this.resource = resource;
 	try {
 		java.net.URI location = resource.getLocationURI();
@@ -140,9 +156,11 @@ ClasspathJar(IFile resource, AccessRuleSet accessRuleSet, IPath externalAnnotati
 	this.accessRuleSet = accessRuleSet;
 	if (externalAnnotationPath != null)
 		this.externalAnnotationPath = externalAnnotationPath.toString();
+	if (isAutomodule)
+		setAutomaticModule();
 }
 
-ClasspathJar(String zipFilename, long lastModified, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, INameEnvironment env) {
+ClasspathJar(String zipFilename, long lastModified, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, INameEnvironment env, boolean isAutomodule) {
 	this.zipFilename = zipFilename;
 	this.lastModified = lastModified;
 	this.zipFile = null;
@@ -151,20 +169,37 @@ ClasspathJar(String zipFilename, long lastModified, AccessRuleSet accessRuleSet,
 	this.env = env;
 	if (externalAnnotationPath != null)
 		this.externalAnnotationPath = externalAnnotationPath.toString();
+	if (isAutomodule)
+		setAutomaticModule();
 }
 
-public ClasspathJar(ZipFile zipFile, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, INameEnvironment env) {
-	this(zipFile.getName(), accessRuleSet, externalAnnotationPath, env);
+public ClasspathJar(ZipFile zipFile, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, INameEnvironment env, boolean isAutomodule) {
+	this(zipFile.getName(), accessRuleSet, externalAnnotationPath, env, isAutomodule);
 	this.zipFile = zipFile;
+	this.closeZipFileAtEnd = true;
 }
 
-public ClasspathJar(String fileName, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, INameEnvironment env) {
-	this(fileName, 0, accessRuleSet, externalAnnotationPath, env);
+public ClasspathJar(String fileName, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, INameEnvironment env, boolean isAutomodule) {
+	this(fileName, 0, accessRuleSet, externalAnnotationPath, env, isAutomodule);
 	if (externalAnnotationPath != null)
 		this.externalAnnotationPath = externalAnnotationPath.toString();
-
+	if (isAutomodule)
+		setAutomaticModule();
 }
 
+void setAutomaticModule() {
+	this.isAutoModule = true;
+	acceptModule(new AutoModule(getFileName(this.zipFilename).toCharArray()));
+}
+private static String getFileName(String name) {
+	int index = name.lastIndexOf('.');
+	if (index != -1)
+		name = name.substring(0, index);
+	index = name.lastIndexOf(File.separatorChar);
+	if (index == -1)
+		return name;
+	return name.substring(index + 1);
+}
 public void cleanup() {
 	if (this.closeZipFileAtEnd) {
 		if (this.zipFile != null) {
@@ -192,32 +227,48 @@ public boolean equals(Object o) {
 	if (this.accessRuleSet != jar.accessRuleSet)
 		if (this.accessRuleSet == null || !this.accessRuleSet.equals(jar.accessRuleSet))
 			return false;
-	return this.zipFilename.equals(jar.zipFilename) && lastModified() == jar.lastModified();
+	return this.zipFilename.equals(jar.zipFilename) 
+			&& lastModified() == jar.lastModified()
+			&& this.isAutoModule == jar.isAutoModule;
 }
 
-public NameEnvironmentAnswer findClass(String typeName, String qualifiedPackageName, String qualifiedBinaryFileName, boolean asBinaryOnly, IModule mod) {
-	return findClass(typeName, qualifiedPackageName, qualifiedBinaryFileName, false, mod);
-}
-
-public NameEnvironmentAnswer findClass(String binaryFileName, String qualifiedPackageName, String qualifiedBinaryFileName, IModule mod) {
+public NameEnvironmentAnswer findClass(String binaryFileName, String qualifiedPackageName, String qualifiedBinaryFileName, boolean asBinaryOnly) {
 	// TOOD: BETA_JAVA9 - Should really check for packages with the module context
 	if (!isPackage(qualifiedPackageName)) return null; // most common case
 
 	try {
-		ClassFileReader reader = ClassFileReader.read(this.zipFile, qualifiedBinaryFileName);
+		IBinaryType reader = ClassFileReader.read(this.zipFile, qualifiedBinaryFileName);
 		if (reader != null) {
-			reader.moduleName = this.module != null ? this.module.name() : null;
+			char[] modName = this.module == null ? null : this.module.name();
+			if (reader instanceof ClassFileReader) {
+				ClassFileReader classReader = (ClassFileReader) reader;
+				if (classReader.moduleName == null) {
+					classReader.moduleName = modName;
+				}
+			}
 			String fileNameWithoutExtension = qualifiedBinaryFileName.substring(0, qualifiedBinaryFileName.length() - SuffixConstants.SUFFIX_CLASS.length);
 			if (this.externalAnnotationPath != null) {
 				try {
-					this.annotationZipFile = reader.setExternalAnnotationProvider(this.externalAnnotationPath, fileNameWithoutExtension, this.annotationZipFile, null);
+					if (this.annotationZipFile == null) {
+						this.annotationZipFile = ExternalAnnotationDecorator
+								.getAnnotationZipFile(this.externalAnnotationPath, null);
+					}
+
+					reader = ExternalAnnotationDecorator.create(reader, this.externalAnnotationPath,
+							fileNameWithoutExtension, this.annotationZipFile);
 				} catch (IOException e) {
 					// don't let error on annotations fail class reading
+				}
+				if (reader.getExternalAnnotationStatus() == ExternalAnnotationStatus.NOT_EEA_CONFIGURED) {
+					// ensure a reader that answers NO_EEA_FILE
+					reader = new ExternalAnnotationDecorator(reader, null);
 				}
 			}
 			if (this.accessRuleSet == null)
 				return new NameEnvironmentAnswer(reader, null);
-			return new NameEnvironmentAnswer(reader, this.accessRuleSet.getViolatedRestriction(fileNameWithoutExtension.toCharArray()));
+			return new NameEnvironmentAnswer(reader, 
+					this.accessRuleSet.getViolatedRestriction(fileNameWithoutExtension.toCharArray()), 
+					modName);
 		}
 	} catch (IOException e) { // treat as if class file is missing
 	} catch (ClassFormatException e) { // treat as if class file is missing
@@ -245,9 +296,9 @@ public boolean isPackage(String qualifiedPackageName) {
 			}
 			this.zipFile = new ZipFile(this.zipFilename);
 			this.closeZipFileAtEnd = true;
-			this.knownPackageNames = findPackageSet(this);
+			this.knownPackageNames = findPackageSet();
 		} else {
-			this.knownPackageNames = findPackageSet(this);
+			this.knownPackageNames = findPackageSet();
 		}
 	} catch(Exception e) {
 		this.knownPackageNames = new SimpleSet(); // assume for this build the zipFile is empty
@@ -276,19 +327,38 @@ public String debugPathString() {
 }
 
 @Override
-public boolean servesModule(IModule mod) {
-	if (mod == null) 
-		return false;
-	if (this.module == null || mod == this || mod == ModuleEnvironment.UNNAMED_MODULE) 
-		return true;
-	return this.module.equals(mod);
+public IModule getModule() {
+	//
+	return this.module;
 }
 
 @Override
-public IModule getModule(char[] moduleName) {
+public IModuleEnvironment getLookupEnvironment() {
+	//
+	return this;
+}
+
+@Override
+public ITypeLookup typeLookup() {
 	// 
-	if (this.module != null && CharOperation.equals(moduleName, this.module.name()))
-		return this.module;
-	return null;
+	return this::findClass;
+}
+
+@Override
+public IPackageLookup packageLookup() {
+	//
+	return this::isPackage;
+}
+
+@Override
+public IModuleEnvironment getLookupEnvironmentFor(IModule mod) {
+	//
+	return this.module == mod ? this : null;
+}
+
+@Override
+public NameEnvironmentAnswer findClass(String typeName, String qualifiedPackageName, String qualifiedBinaryFileName) {
+	// 
+	return findClass(typeName, qualifiedPackageName, qualifiedBinaryFileName, false);
 }
 }

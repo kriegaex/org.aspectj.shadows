@@ -58,7 +58,7 @@ public class RoundDispatcher {
 		_provider = provider;
 		_processors = provider.getDiscoveredProcessors();
 		_roundEnv = env;
-		_unclaimedAnnotations = new HashSet<TypeElement>(rootAnnotations);
+		_unclaimedAnnotations = new HashSet<>(rootAnnotations);
 		_traceProcessorInfo = traceProcessorInfo;
 		_traceRounds = traceRounds;
 	}
@@ -107,10 +107,9 @@ public class RoundDispatcher {
 		// annotations. If a processor is called at all, it is called on every subsequent round 
 		// including the final round, but it may be called with an empty set of annotations.
 		for (ProcessorInfo pi : _processors) {
-
 			handleProcessor(pi);
 		}
-
+		
 		// If there are any unclaimed annotations, or if there were no root annotations and
 		// we have not yet run into a processor that claimed "*", continue discovery.
 		while (_searchForStar || !_unclaimedAnnotations.isEmpty()) {

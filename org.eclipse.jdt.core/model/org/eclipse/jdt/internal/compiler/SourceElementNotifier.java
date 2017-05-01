@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2008, 2015 IBM Corporation and others.
+ * Copyright (c) 2008, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -32,6 +36,7 @@ import org.eclipse.jdt.internal.compiler.ast.ClassLiteralAccess;
 import org.eclipse.jdt.internal.compiler.ast.CompilationUnitDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ConstructorDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ExplicitConstructorCall;
+import org.eclipse.jdt.internal.compiler.ast.ExportsStatement;
 import org.eclipse.jdt.internal.compiler.ast.Expression;
 import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ImportReference;
@@ -39,6 +44,7 @@ import org.eclipse.jdt.internal.compiler.ast.Initializer;
 import org.eclipse.jdt.internal.compiler.ast.MessageSend;
 import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.OpensStatement;
 import org.eclipse.jdt.internal.compiler.ast.QualifiedAllocationExpression;
 import org.eclipse.jdt.internal.compiler.ast.ThisReference;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
@@ -637,6 +643,7 @@ protected void notifySourceElementRequestor(TypeDeclaration typeDeclaration, boo
 			typeInfo.annotations = typeDeclaration.annotations;
 			typeInfo.extraFlags = ExtraFlags.getExtraFlags(typeDeclaration);
 			typeInfo.node = typeDeclaration;
+			fillModuleInfo(typeDeclaration, typeInfo, kind);
 			this.requestor.enterType(typeInfo);
 			switch (kind) {
 				case TypeDeclaration.CLASS_DECL :
@@ -651,28 +658,6 @@ protected void notifySourceElementRequestor(TypeDeclaration typeDeclaration, boo
 					break;
 				case TypeDeclaration.ANNOTATION_TYPE_DECL :
 					implicitSuperclassName = TypeConstants.CharArray_JAVA_LANG_ANNOTATION_ANNOTATION;
-					break;
-				case TypeDeclaration.MODULE_DECL:
-					ModuleDeclaration mod = (ModuleDeclaration)typeDeclaration;
-					ModuleInfo modInfo = (ModuleInfo)typeInfo;
-					modInfo.moduleName = mod.moduleName;
-					if (mod.requiresCount > 0) {
-						ISourceElementRequestor.RequiresInfo reqs[] = new ISourceElementRequestor.RequiresInfo[mod.requiresCount];
-						for (int i = 0; i < mod.requiresCount; i++) {
-							ISourceElementRequestor.RequiresInfo req = new ISourceElementRequestor.RequiresInfo();
-							req.moduleName = mod.requires[i].tokens;
-							req.modifiers = mod.requires[i].modifiers;
-						}
-						modInfo.requires = reqs;
-					}
-					if (mod.exportsCount > 0) {
-						ISourceElementRequestor.PackageExportInfo exports[] = new ISourceElementRequestor.PackageExportInfo[mod.exportsCount];
-						for (int i = 0; i < mod.exportsCount; i++) {
-							ISourceElementRequestor.PackageExportInfo exp = new ISourceElementRequestor.PackageExportInfo();
-							exp.pkgName = mod.exports[i].pkgName;
-							modInfo.exports = exports;
-						}					
-					}
 					break;
 			}
 		}
@@ -733,6 +718,78 @@ protected void notifySourceElementRequestor(TypeDeclaration typeDeclaration, boo
 			this.requestor.exitType(typeDeclaration.declarationSourceEnd);
 		}
 		this.nestedTypeIndex--;
+	}
+}
+private void fillModuleInfo(TypeDeclaration typeDeclaration, ISourceElementRequestor.TypeInfo typeInfo, int kind) {
+	if (kind != TypeDeclaration.MODULE_DECL) return;
+	ModuleDeclaration mod = (ModuleDeclaration)typeDeclaration;
+	ModuleInfo modInfo = (ModuleInfo)typeInfo;
+	modInfo.moduleName = mod.moduleName;
+	if (mod.requiresCount > 0) {
+		ISourceElementRequestor.RequiresInfo reqs[] = new ISourceElementRequestor.RequiresInfo[mod.requiresCount];
+		for (int i = 0; i < mod.requiresCount; i++) {
+			ISourceElementRequestor.RequiresInfo req = new ISourceElementRequestor.RequiresInfo();
+			req.moduleName = CharOperation.concatWith(mod.requires[i].module.tokens, '.');
+			req.modifiers = mod.requires[i].modifiers;
+			reqs[i] = req;
+		}
+		modInfo.requires = reqs;
+	}
+	if (mod.exportsCount > 0) {
+		ISourceElementRequestor.PackageExportInfo exps[] = new ISourceElementRequestor.PackageExportInfo[mod.exportsCount];
+		for (int i = 0; i < mod.exportsCount; i++) {
+			ISourceElementRequestor.PackageExportInfo exp = new ISourceElementRequestor.PackageExportInfo();
+			ExportsStatement exportsStatement = mod.exports[i];
+			exp.pkgName = exportsStatement.pkgName;
+			if (exportsStatement.targets == null) {
+				exp.targets = CharOperation.NO_CHAR_CHAR;
+			} else {
+				exp.targets = new char[exportsStatement.targets.length][];
+				for(int j = 0; j < exp.targets.length; j++) {
+					exp.targets[j] = CharOperation.concatWith(exportsStatement.targets[j].tokens, '.');
+				}
+			}
+			exps[i] = exp;
+		}					
+		modInfo.exports = exps;
+	}
+	if (mod.servicesCount > 0) {
+		ISourceElementRequestor.ServicesInfo[] services = new ISourceElementRequestor.ServicesInfo[mod.servicesCount];
+		for (int i = 0; i < services.length; i++) {
+			ISourceElementRequestor.ServicesInfo ser = new ISourceElementRequestor.ServicesInfo();
+			ser.serviceName = CharOperation.concatWith(mod.services[i].serviceInterface.getParameterizedTypeName(), '.');
+			ser.implNames = new char[mod.services[i].implementations.length][];
+			for (int j = 0; j < ser.implNames.length; j++) {
+				ser.implNames[j] = CharOperation.concatWith(mod.services[i].implementations[j].getParameterizedTypeName(), '.');
+			}
+			services[i] = ser;
+		}
+		modInfo.services = services;
+	}
+	if (mod.usesCount > 0) {
+		char[][] uses = new char[mod.usesCount][];
+		for (int i = 0; i < uses.length; i++) {
+			uses[i] = CharOperation.concatWith(mod.uses[i].serviceInterface.getParameterizedTypeName(), '.');
+		}
+		modInfo.usedServices = uses;
+	}
+	if (mod.opensCount > 0) {
+		ISourceElementRequestor.PackageExportInfo opens[] = new ISourceElementRequestor.PackageExportInfo[mod.opensCount];
+		for (int i = 0; i < mod.opensCount; i++) {
+			ISourceElementRequestor.PackageExportInfo op = new ISourceElementRequestor.PackageExportInfo();
+			OpensStatement openStmt = mod.opens[i];
+			op.pkgName = openStmt.pkgName;
+			if (openStmt.targets == null) {
+				op.targets = CharOperation.NO_CHAR_CHAR;
+			} else {
+				op.targets = new char[openStmt.targets.length][];
+				for(int j = 0; j < op.targets.length; j++) {
+					op.targets[j] = CharOperation.concatWith(openStmt.targets[j].tokens, '.');
+				}
+			}
+			opens[i] = op;
+		}
+		modInfo.opens = opens;
 	}
 }
 /*
