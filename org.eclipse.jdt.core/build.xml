@@ -1,6 +1,6 @@
 <project name="ShadowJdtCore" basedir="." default="make.jdtcore.jar">
 
-	<property name="eclipse.home" value="/Users/aclement/eclipses/e432/eclipse"/>
+	<property name="eclipse.home" value="/Users/aclement/eclipses/i20170423-pde/Eclipse.app/Contents/Eclipse"/>
     <property name="plugins.dir" value="${eclipse.home}/plugins"/>
     <property name="plugins.src.dir" value="${plugins.dir}/org.eclipse.platform.source_${eclipse.version}/src"/>
     <property name="aspectjtools.jar" value=""/>
@@ -12,19 +12,21 @@
         <jar destfile="lib/jdtDepends.jar">
 
         	<!-- updated to Java8 in KeplerSR2 timeframe -->
-        	<zipfileset src="${plugins.dir}/org.eclipse.equinox.registry_3.5.301.v20130717-1549.jar"/>
-        	<zipfileset src="${plugins.dir}/org.eclipse.equinox.common_3.6.200.v20130402-1505.jar"/>
-        	<zipfileset src="${plugins.dir}/org.eclipse.osgi_3.9.1.v20140110-1610.jar"/>
-        	<zipfileset src="${plugins.dir}/org.eclipse.core.jobs_3.5.300.v20130429-1813.jar"/>
-        	<zipfileset src="${plugins.dir}/org.eclipse.core.resources_3.8.101.v20130717-0806.jar"/>
-        	<zipfileset src="${plugins.dir}/org.eclipse.core.runtime_3.9.100.v20131218-1515.jar"/>
-        	<zipfileset src="${plugins.dir}/org.eclipse.equinox.preferences_3.5.100.v20130422-1538.jar"/>
-        	<zipfileset src="${plugins.dir}/org.eclipse.equinox.app_1.3.100.v20130327-1442.jar"/>
-        	<zipfileset src="${plugins.dir}/org.eclipse.text_3.5.300.v20130515-1451.jar"/>
-        	<zipfileset src="${plugins.dir}/org.eclipse.core.filesystem_1.4.0.v20130514-1240.jar"/>
-        	<zipfileset src="${plugins.dir}/org.eclipse.core.contenttype_3.4.200.v20130326-1255.jar"/>
-        	<zipfileset src="${plugins.dir}/org.eclipse.core.runtime.compatibility.registry_3.5.200.v20130514-1256/runtime_registry_compatibility.jar"/>
+        	<zipfileset src="${plugins.dir}/org.eclipse.equinox.registry_3.7.0.v20170222-1344.jar"/>
+        	<zipfileset src="${plugins.dir}/org.eclipse.equinox.common_3.9.0.v20170207-1454.jar"/>
+        	<zipfileset src="${plugins.dir}/org.eclipse.osgi_3.12.0.v20170414-1308.jar"/>
+        	<zipfileset src="${plugins.dir}/org.eclipse.core.jobs_3.9.0.v20170322-0013.jar"/>
+        	<zipfileset src="${plugins.dir}/org.eclipse.core.resources_3.12.0.v20170417-1558.jar"/>
+        	<zipfileset src="${plugins.dir}/org.eclipse.core.runtime_3.13.0.v20170207-1030.jar"/>
+        	<zipfileset src="${plugins.dir}/org.eclipse.equinox.preferences_3.7.0.v20170126-2132.jar"/>
+        	<zipfileset src="${plugins.dir}/org.eclipse.equinox.app_1.3.400.v20150715-1528.jar"/>
+        	<zipfileset src="${plugins.dir}/org.eclipse.text_3.6.100.v20170203-0814.jar"/>
+        	<zipfileset src="${plugins.dir}/org.eclipse.core.filesystem_1.7.0.v20170406-1337.jar"/>
+        	<zipfileset src="${plugins.dir}/org.eclipse.core.contenttype_3.6.0.v20170207-1037.jar"/>
 
+        	<!-- gone in 4.7
+        	<zipfileset src="${plugins.dir}/org.eclipse.core.runtime.compatibility.registry_3.5.200.v20130514-1256/runtime_registry_compatibility.jar"/>
+        	-->
      	    <!-- These are dependencies the original version 785 compiler had but we do not need because of how we use it -->
         	<!--
         	<zipfileset src="${plugins.dir}/org.eclipse.team.core_3.3.1.r33x_20070807.jar"/>
@@ -51,7 +53,10 @@
         </jar>
         <jar destfile="${aj}/jdtcore-for-aspectj.jar" update="true">
         	<!-- with the AST code now activated, we need text and jface... -->
+            <zipfileset src="lib/jdtDepends.jar" excludes="org/apache/**,org/w3c/**,org/xml/**,org/xml/**,org/eclipse/jface/**,META-INF/**"/>
+        	<!--
             <zipfileset src="lib/jdtDepends.jar" excludes="org/apache/**,org/w3c/**,org/xml/**,org/xml/**,org/eclipse/jface/**,org/eclipse/osgi/**,META-INF/**"/>
+            -->
         </jar>
         <delete file="${aj}/jdtcore-for-aspectj-src.zip"/>
         <jar destfile="${aj}/jdtcore-for-aspectj-src.zip">

@@ -49,10 +49,11 @@ $Terminals
 	abstract assert boolean break byte case catch char class 
 	continue const default do double else enum extends false final finally float
 	for goto if implements import instanceof int
+opens
 	interface long native new null package private
 	protected public return short static strictfp super switch
 	synchronized this throw throws transient true try void
-	volatile while module open requires transitive exports opens to uses provides with
+	volatile while module open requires transitive exports to uses provides with
 
 -- AspectJ Extension
 	aspect pointcut around before after declare privileged
@@ -507,7 +508,6 @@ InternalCompilationUnit ::= ImportDeclarations ReduceImports ModuleDeclaration
 InternalCompilationUnit ::= ModuleDeclaration
 /:$compliance 1.9:/
 /.$putCase consumeInternalCompilationUnitWithModuleDeclaration(); $break ./
-
 ModuleDeclaration ::= ModuleHeader ModuleBody
 /:$compliance 1.9:/
 /.$putCase consumeModuleDeclaration(); $break ./
