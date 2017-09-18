@@ -85,7 +85,8 @@ int findCompatibleEnclosing(ReferenceBinding enclosingType, TypeBinding type, Bl
 				// keep looking to ensure we always find the referenced type (even if illegal) 
 			}
 		}
-		if (!isLegal || !isJava8) {
+		// AspectJ
+		if (!isLegal || (!isJava8 && !isWithinInterTypeScope(scope))) {
 			this.currentCompatibleType = null;
 			// Please note the slightly unconventional use of the ProblemReferenceBinding:
 			// we use the problem's compoundName to report the type being illegally bypassed,
@@ -101,6 +102,24 @@ int findCompatibleEnclosing(ReferenceBinding enclosingType, TypeBinding type, Bl
 	}
 	return super.findCompatibleEnclosing(enclosingType, type, scope);
 }
+
+// AspectJ - start
+/**
+ * @param scope the scope to check
+ * @return true if the specified scope is nested within an inter type declaration scope
+ */
+private boolean isWithinInterTypeScope(Scope scope) {
+	Scope s = scope;
+	while (s != null) {
+		if (s.isInterTypeScope()) {
+			return true;
+		}
+		s = s.parent;
+	}
+	return false;
+}
+//AspectJ - end
+
 
 public void traverse(
 	ASTVisitor visitor,

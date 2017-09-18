@@ -5350,6 +5350,11 @@ public abstract class Scope {
 	public TypeVariableBinding findTypeVariable(char[] name, SourceTypeBinding sourceType) {
 		return sourceType.getTypeVariable(name);
 	}
+
+	public boolean isInterTypeScope() {
+		return false;
+	}
+
 	// End AspectJ Extension
 	
 }
