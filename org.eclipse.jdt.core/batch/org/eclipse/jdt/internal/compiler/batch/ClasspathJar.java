@@ -42,14 +42,10 @@ import org.eclipse.jdt.internal.compiler.classfmt.ExternalAnnotationDecorator;
 import org.eclipse.jdt.internal.compiler.classfmt.ExternalAnnotationProvider;
 import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
 import org.eclipse.jdt.internal.compiler.env.IModule;
-import org.eclipse.jdt.internal.compiler.env.IModuleEnvironment;
 import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
-import org.eclipse.jdt.internal.compiler.env.IPackageLookup;
-import org.eclipse.jdt.internal.compiler.env.ITypeLookup;
 import org.eclipse.jdt.internal.compiler.env.IBinaryType;
 import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.compiler.lookup.BinaryTypeBinding.ExternalAnnotationStatus;
-import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment.AutoModule;
 import org.eclipse.jdt.internal.compiler.util.ManifestAnalyzer;
 import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
 import org.eclipse.jdt.internal.compiler.util.Util;
@@ -203,8 +199,6 @@ public char[][][] findTypeNames(final String qualifiedPackageName, String module
 		return null; // most common case
 	final char[] packageArray = qualifiedPackageName.toCharArray();
 	final ArrayList answers = new ArrayList();
-	nextEntry : for (Enumeration e = this.zipFile.entries(); e.hasMoreElements(); ) {
-		String fileName = ((ZipEntry) e.nextElement()).getName();
 
 	// AspectJ Extension
 	try {
@@ -230,7 +224,6 @@ public char[][][] findTypeNames(final String qualifiedPackageName, String module
 				addTypeName(answers, fileName, last, packageArray);
 			}
 		}
-	}
 	int size = answers.size();
 	if (size != 0) {
 		char[][][] result = new char[size][][];
@@ -295,7 +288,7 @@ public synchronized char[][] getModulesDeclaringPackage(String qualifiedPackageN
 		// Doesn't normally occur - probably means since starting the compile 
 		// you have removed one of the jars.
 		ioe.printStackTrace();
-		return false;
+		return singletonModuleNameIf(false);
 	}
 	// End AspectJ Extension
 	this.packageCache = new HashSet<>(41);

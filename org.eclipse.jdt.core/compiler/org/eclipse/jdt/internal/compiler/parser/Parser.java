@@ -1177,16 +1177,12 @@ public class Parser extends TheOriginalJDTParserClass {
 			    consumeModuleDeclaration();  
 				break;
 	 
-	    case 121 : if (DEBUG) { System.out.println("ModuleHeader ::= ModuleModifieropt module..."); }  //$NON-NLS-1$
+	    case 121 : if (DEBUG) { System.out.println("ModuleHeader ::= Modifiersopt ModuleModifieropt module"); }  //$NON-NLS-1$
 			    consumeModuleHeader();  
 				break;
 	 
-	    case 122 : if (DEBUG) { System.out.println("ModuleModifieropt ::="); }  //$NON-NLS-1$
-			    consumeDefaultModifiers();  
-				break;
-	 
 	    case 123 : if (DEBUG) { System.out.println("ModuleModifieropt ::= ModuleModifier"); }  //$NON-NLS-1$
-			    consumeModifiers();  
+			    consumeModuleModifiers();  
 				break;
 	 
 	    case 126 : if (DEBUG) { System.out.println("ModuleStatementsOpt ::="); }  //$NON-NLS-1$

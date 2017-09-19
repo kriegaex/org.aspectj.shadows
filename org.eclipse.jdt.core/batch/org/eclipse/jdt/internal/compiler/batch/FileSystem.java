@@ -40,9 +40,6 @@ import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
 import org.eclipse.jdt.internal.compiler.env.IModulePathEntry;
 import org.eclipse.jdt.internal.compiler.env.IModule;
 import org.eclipse.jdt.internal.compiler.env.IModuleAwareNameEnvironment;
-import org.eclipse.jdt.internal.compiler.env.IModuleContext;
-import org.eclipse.jdt.internal.compiler.env.IModuleEnvironment;
-import org.eclipse.jdt.internal.compiler.env.IModule.IPackageExport;
 import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
 import org.eclipse.jdt.internal.compiler.lookup.ModuleBinding;
 import org.eclipse.jdt.internal.compiler.parser.Parser;
@@ -177,12 +174,12 @@ public class FileSystem implements IModuleAwareNameEnvironment, SuffixConstants 
 	classPathNames is a collection is Strings representing the full path of each class path
 	initialFileNames is a collection is Strings, the trailing '.java' will be removed if its not already.
 */
-public FileSystem(String[] classpathNames, String[] initialFileNames, String encoding) {
+public FileSystem(String[] classpathNames, String[] initialFileNames, String encoding, int mode) { // New AspectJ Extension - extra int flag for mode, was 'public FileSystem(String[] classpathNames, String[] initialFileNames, String encoding) {'
 	final int classpathSize = classpathNames.length;
 	this.classpaths = new Classpath[classpathSize];
 	int counter = 0;
 	for (int i = 0; i < classpathSize; i++) {
-		Classpath classpath = getClasspath(classpathNames[i], encoding, null,mode); // New AspectJ Extension - pass extra mode
+		Classpath classpath = getClasspath(classpathNames[i], encoding, null, mode); // New AspectJ Extension - pass extra mode
 		if (classpath==null) continue; // AspectJ Extension
 		try {
 			classpath.initialize();

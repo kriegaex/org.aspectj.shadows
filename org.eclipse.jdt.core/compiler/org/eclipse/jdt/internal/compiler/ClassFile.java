@@ -454,15 +454,16 @@ public class ClassFile implements TypeConstants, TypeIds {
 		
 		// AspectJ Extension
 	    // write any "extraAttributes"
-	    if (extraAttributes != null) {
-	        for (int i=0, len=extraAttributes.size(); i < len; i++) {
-	            IAttribute attribute = (IAttribute)extraAttributes.get(i);
+	    if (this.extraAttributes != null) {
+	        for (int i=0, len=this.extraAttributes.size(); i < len; i++) {
+	            IAttribute attribute = (IAttribute)this.extraAttributes.get(i);
 	            short nameIndex = (short)constantPool.literalIndex(attribute.getNameChars());
 	            writeToContents(attribute.getAllBytes(nameIndex,constantPool));
 	            attributesNumber++;
 	        }
 	    }
 	    //  End AspectJ Extension
+	}
 		
 	/**
 	 * INTERNAL USE-ONLY
