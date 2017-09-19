@@ -37,17 +37,24 @@ public class RequiresStatement extends ModuleStatement {
 	}
 	@Override
 	public StringBuffer print(int indent, StringBuffer output) {
+		output.append("requires "); //$NON-NLS-1$
 		if (isTransitive())
 			output.append("transitive "); //$NON-NLS-1$
 		if (isStatic())
 			output.append("static "); //$NON-NLS-1$
 		this.module.print(indent, output);
-		return output;
+		output.append(";"); //$NON-NLS-1$
+	return output;
 	}
 	public ModuleBinding resolve(Scope scope) {
 		if (this.resolvedBinding != null)
 			return this.resolvedBinding;
-		return this.resolvedBinding = this.module.resolve(scope);
+		this.resolvedBinding = this.module.resolve(scope);
+		if (this.resolvedBinding == null) {
+			if (scope != null)
+				scope.problemReporter().invalidModule(this.module);
+		}
+		return this.resolvedBinding;
 	}
 
 }

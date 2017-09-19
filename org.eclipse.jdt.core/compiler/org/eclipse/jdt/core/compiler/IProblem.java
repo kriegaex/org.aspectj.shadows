@@ -380,11 +380,13 @@ void setSourceStart(int sourceStart);
 	int Syntax = 0x40000000;
 	/** @since 3.0 */
 	int Javadoc = 0x80000000;
+	/** @since 3.13 BETA_JAVA9 */
+	int ModuleRelated = 0x00800000;
 
 	/**
 	 * Mask to use in order to filter out the category portion of the problem ID.
 	 */
-	int IgnoreCategoriesMask = 0xFFFFFF;
+	int IgnoreCategoriesMask = 0x7FFFFF;
 
 	/*
 	 * Below are listed all available problem IDs. Note that this list could be augmented in the future,
@@ -1922,17 +1924,17 @@ void setSourceStart(int sourceStart);
 	/** @since 3.13 BETA_JAVA9*/
 	int IllegalModifierCombinationForPrivateInterfaceMethod9 = MethodRelated + 1070;
 	/** @since 3.13 BETA_JAVA9 */
-	int UndefinedModule = TypeRelated + 1300;
+	int UndefinedModule = ModuleRelated + 1300;
 	/** @since 3.13 BETA_JAVA9 */
-	int DuplicateRequires = TypeRelated + 1301;
+	int DuplicateRequires = ModuleRelated + 1301;
 	/** @since 3.13 BETA_JAVA9 */
-	int DuplicateExports = TypeRelated + 1302;
+	int DuplicateExports = ModuleRelated + 1302;
 	/** @since 3.13 BETA_JAVA9 */
-	int DuplicateUses = TypeRelated + 1303;
+	int DuplicateUses = ModuleRelated + 1303;
 	/** @since 3.13 BETA_JAVA9 */
-	int DuplicateServices = TypeRelated + 1304;
+	int DuplicateServices = ModuleRelated + 1304;
 	/** @since 3.13 BETA_JAVA9 */
-	int CyclicModuleDependency = TypeRelated + 1305;
+	int CyclicModuleDependency = ModuleRelated + 1305;
 	/** @since 3.13 BETA_JAVA9 */
 	int AbstractServiceImplementation = TypeRelated + 1306;
 	/** @since 3.13 BETA_JAVA9 */
@@ -1944,22 +1946,58 @@ void setSourceStart(int sourceStart);
 	/** @since 3.13 BETA_JAVA9 */
 	int ServiceImplNotDefinedByModule = TypeRelated + 1310;
 	/** @since 3.13 BETA_JAVA9 */
-	int PackageDoesNotExistOrIsEmpty = TypeRelated + 1311;
+	int PackageDoesNotExistOrIsEmpty = ModuleRelated + 1311;
 	/** @since 3.13 BETA_JAVA9 */
 	int NonDenotableTypeArgumentForAnonymousDiamond = TypeRelated + 1312;
 	/** @since 3.13 BETA_JAVA9 */
-	int DuplicateOpens = TypeRelated + 1313;
+	int DuplicateOpens = ModuleRelated + 1313;
 	/** @since 3.13 BETA_JAVA9 */
-	int DuplicateModuleRef = TypeRelated + 1314;
+	int DuplicateModuleRef = ModuleRelated + 1314;
 	/** @since 3.13 BETA_JAVA9 */
-	int InvalidOpensStatement = TypeRelated + 1315;
+	int InvalidOpensStatement = ModuleRelated + 1315;
 	/** @since 3.13 BETA_JAVA9 */
-	int InvalidServiceIntfType = TypeRelated + 1316;
+	int InvalidServiceIntfType = ModuleRelated + 1316;
 	/** @since 3.13 BETA_JAVA9 */
-	int InvalidServiceImplType = TypeRelated + 1317;
+	int InvalidServiceImplType = ModuleRelated + 1317;
+	/** @since 3.13 BETA_JAVA9 */
+	int IllegalModifierForModule = ModuleRelated + 1318;
 
 	/** @since 3.13 BETA_JAVA9 */
 	int DuplicateResource = Internal + 1251;
+
+	/** @since 3.13 BETA_JAVA9 */
+	int UsingTerminallyDeprecatedType = TypeRelated + 1400;
+	/** @since 3.13 BETA_JAVA9 */
+	int UsingTerminallyDeprecatedMethod = MethodRelated + 1401;
+	/** @since 3.13 BETA_JAVA9 */
+	int UsingTerminallyDeprecatedConstructor = MethodRelated + 1402;
+	/** @since 3.13 BETA_JAVA9 */
+	int UsingTerminallyDeprecatedField = FieldRelated + 1403;
+	/** @since 3.13 BETA_JAVA9 */
+	int OverridingTerminallyDeprecatedMethod = MethodRelated + 1404;
+
+	/** @since 3.13 BETA_JAVA9 */
+	int NotAccessibleType = TypeRelated + 1450;
+	/** @since 3.13 BETA_JAVA9 */
+	int NotAccessibleField = FieldRelated + 1451;
+	/** @since 3.13 BETA_JAVA9 */
+	int NotAccessibleMethod = MethodRelated + 1452;
+	/** @since 3.13 BETA_JAVA9 */
+	int NotAccessibleConstructor = MethodRelated + 1453;
+	/** @since 3.13 BETA_JAVA9 */
+	int NotAccessiblePackage = ImportRelated + 1454;
+	/** @since 3.13 BETA_JAVA9 */
+	int ConflictingPackageFromModules = ModuleRelated + 1455;
+	/** @since 3.13 BETA_JAVA9 */
+	int ConflictingPackageFromOtherModules = ModuleRelated + 1456;
+	/** @since 3.13 BETA_JAVA9 */
+	int NonPublicTypeInAPI = ModuleRelated + 1457;
+	/** @since 3.13 BETA_JAVA9 */
+	int NotExportedTypeInAPI = ModuleRelated + 1458;
+	/** @since 3.13 BETA_JAVA9 */
+	int MissingRequiresTransitiveForTypeInAPI = ModuleRelated + 1459;
+	/** @since  3.13 BETA_JAVA9 */
+	int UnnamedPackageInNamedModule = ModuleRelated + 1460;
 
 	/** @since 3.13 */
 	int RedundantNullDefaultAnnotationLocal = Internal + 1062;

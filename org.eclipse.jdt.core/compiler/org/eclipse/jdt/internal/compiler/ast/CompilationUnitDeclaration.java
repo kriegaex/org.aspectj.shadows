@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -26,6 +26,7 @@ import org.eclipse.jdt.internal.compiler.ASTVisitor;
 import org.eclipse.jdt.internal.compiler.ClassFile;
 import org.eclipse.jdt.internal.compiler.CompilationResult;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
+import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.impl.Constant;
 import org.eclipse.jdt.internal.compiler.impl.IrritantSet;
@@ -33,8 +34,9 @@ import org.eclipse.jdt.internal.compiler.impl.ReferenceContext;
 import org.eclipse.jdt.internal.compiler.lookup.CompilationUnitScope;
 import org.eclipse.jdt.internal.compiler.lookup.ImportBinding;
 import org.eclipse.jdt.internal.compiler.lookup.LocalTypeBinding;
+import org.eclipse.jdt.internal.compiler.lookup.LookupEnvironment;
 import org.eclipse.jdt.internal.compiler.lookup.MethodScope;
-import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
+import org.eclipse.jdt.internal.compiler.lookup.ModuleBinding;
 import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.compiler.lookup.TypeIds;
 import org.eclipse.jdt.internal.compiler.parser.NLSTag;
@@ -89,12 +91,6 @@ public class CompilationUnitDeclaration extends ASTNode implements ProblemSeveri
 	int suppressWarningsCount;
 	public int functionalExpressionsCount;
 	public FunctionalExpression[] functionalExpressions;
-	/*
-	 * Name of the module this compilation unit belongs to. Not to be confused with 
-	 * moduleDeclaration, which represents the module this compilation unit may
-	 * define, i.e. if this unit represents module-info.java.
-	 */
-//	public char[] module;
 
 public CompilationUnitDeclaration(ProblemReporter problemReporter, CompilationResult compilationResult, int sourceLength) {
 	this.problemReporter = problemReporter;
@@ -129,6 +125,9 @@ public void analyseCode() {
 			for (int i = 0, count = this.types.length; i < count; i++) {
 				this.types[i].analyseCode(this.scope);
 			}
+		}
+		if (this.moduleDeclaration != null) {
+			this.moduleDeclaration.analyseCode(this.scope);
 		}
 		// request inner emulation propagation
 		propagateInnerEmulationForAllLocalTypes();
@@ -209,14 +208,6 @@ public void createPackageInfoType() {
 	TypeDeclaration declaration = new TypeDeclaration(this.compilationResult);
 	declaration.name = TypeConstants.PACKAGE_INFO_NAME;
 	declaration.modifiers = ClassFileConstants.AccDefault | ClassFileConstants.AccInterface;
-	declaration.javadoc = this.javadoc;
-	this.types[0] = declaration; // Assumes the first slot is meant for this type
-}
-
-public void createModuleInfoType(ModuleDeclaration declaration) {
-	//TypeDeclaration declaration = new TypeDeclaration(this.compilationResult);
-	declaration.name = TypeConstants.MODULE_INFO_NAME;
-	declaration.modifiers |= ClassFileConstants.AccModule;
 	declaration.javadoc = this.javadoc;
 	this.types[0] = declaration; // Assumes the first slot is meant for this type
 }
@@ -402,6 +393,9 @@ public void generateCode() {
 			for (int i = 0, count = this.types.length; i < count; i++)
 				this.types[i].generateCode(this.scope);
 		}
+		if (this.moduleDeclaration != null) {
+			this.moduleDeclaration.generateCode();
+		}
 	} catch (AbortCompilationUnit e) {
 		// ignore
 	}
@@ -485,8 +479,9 @@ public StringBuffer print(int indent, StringBuffer output) {
 			}
 			currentImport.print(0, output).append(";\n"); //$NON-NLS-1$
 		}
-
-	if (this.types != null) {
+	if (this.moduleDeclaration != null) {
+		this.moduleDeclaration.print(indent, output).append("\n"); //$NON-NLS-1$
+	} else if (this.types != null) {
 		for (int i = 0; i < this.types.length; i++) {
 			this.types[i].print(indent, output).append("\n"); //$NON-NLS-1$
 		}
@@ -793,12 +788,17 @@ public void traverse(ASTVisitor visitor, CompilationUnitScope unitScope, boolean
 		// ignore
 	}
 }
-public char[] module() {
-	if (this.isModuleInfo()) {
-		return this.moduleDeclaration != null ? this.moduleDeclaration.moduleName : ModuleEnvironment.UNNAMED;
-	} else if (this.compilationResult != null && this.compilationResult.compilationUnit != null) {
-		return this.compilationResult.compilationUnit.module();
+public ModuleBinding module(LookupEnvironment environment) {
+	if (this.moduleDeclaration != null) {
+		ModuleBinding binding = this.moduleDeclaration.binding;
+		if (binding != null)
+			return binding;
 	}
-	return ModuleEnvironment.UNNAMED;
+	if (this.compilationResult != null) {
+		ICompilationUnit compilationUnit = this.compilationResult.compilationUnit;
+		if (compilationUnit != null)
+			return compilationUnit.module(environment);
+	}
+	return environment.module;
 }
 }

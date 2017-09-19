@@ -153,11 +153,28 @@ import org.eclipse.jdt.core.search.IJavaSearchScope;
 import org.eclipse.jdt.core.search.SearchEngine;
 import org.eclipse.jdt.core.search.SearchPattern;
 import org.eclipse.jdt.core.search.TypeNameRequestor;
+import org.eclipse.jdt.core.util.IAttributeNamesConstants;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.problem.ProblemReporter;
-import org.eclipse.jdt.internal.core.*;
+import org.eclipse.jdt.internal.core.BatchOperation;
+import org.eclipse.jdt.internal.core.BufferManager;
+import org.eclipse.jdt.internal.core.ClasspathAccessRule;
+import org.eclipse.jdt.internal.core.ClasspathAttribute;
+import org.eclipse.jdt.internal.core.ClasspathEntry;
+import org.eclipse.jdt.internal.core.ClasspathValidation;
+import org.eclipse.jdt.internal.core.CreateTypeHierarchyOperation;
+import org.eclipse.jdt.internal.core.DefaultWorkingCopyOwner;
+import org.eclipse.jdt.internal.core.ExternalFoldersManager;
+import org.eclipse.jdt.internal.core.JavaCorePreferenceInitializer;
+import org.eclipse.jdt.internal.core.JavaModel;
+import org.eclipse.jdt.internal.core.JavaModelManager;
+import org.eclipse.jdt.internal.core.JavaProject;
+import org.eclipse.jdt.internal.core.Region;
+import org.eclipse.jdt.internal.core.SetContainerOperation;
+import org.eclipse.jdt.internal.core.SetVariablesOperation;
 import org.eclipse.jdt.internal.core.builder.JavaBuilder;
+import org.eclipse.jdt.internal.core.builder.ModuleInfoBuilder;
 import org.eclipse.jdt.internal.core.builder.State;
 import org.eclipse.jdt.internal.core.nd.indexer.Indexer;
 import org.eclipse.jdt.internal.core.search.indexing.IndexManager;
@@ -400,6 +417,19 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 	 * @category CompilerOptionID
 	 */
 	public static final String COMPILER_PB_DEPRECATION = PLUGIN_ID + ".compiler.problem.deprecation"; //$NON-NLS-1$
+	/**
+	 * Compiler option ID: Reporting Terminal Deprecation.
+	 * <p>When enabled, the compiler will signal use of terminally deprecated API either as an
+	 *    error or a warning.</p>
+	 * <dl>
+	 * <dt>Option id:</dt><dd><code>"org.eclipse.jdt.core.compiler.problem.terminalDeprecation"</code></dd>
+	 * <dt>Possible values:</dt><dd><code>{ "error", "warning", "info", "ignore" }</code></dd>
+	 * <dt>Default:</dt><dd><code>"warning"</code></dd>
+	 * </dl>
+	 * @since 3.13 BETA_JAVA9
+	 * @category CompilerOptionID
+	 */
+	public static final String COMPILER_PB_TERMINAL_DEPRECATION = PLUGIN_ID + ".compiler.problem.terminalDeprecation"; //$NON-NLS-1$
 	/**
 	 * Compiler option ID: Reporting Deprecation Inside Deprecated Code.
 	 * <p>When enabled, the compiler will signal use of deprecated API inside deprecated code.</p>
@@ -1565,6 +1595,30 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 	 */
 	public static final String COMPILER_PB_UNLIKELY_EQUALS_ARGUMENT_TYPE = PLUGIN_ID + ".compiler.problem.unlikelyEqualsArgumentType"; //$NON-NLS-1$
 
+	/**
+	 * Compiler option ID: Reporting when public API uses a non-API type.
+	 * <p>
+	 * This option is relevant only when compiling code in a named module (at compliance 9 or greater).
+	 * <p>
+	 * When enabled, the compiler will issue an error or warning when public API mentions a type that is not
+	 * accessible to clients. Here, public API refers to signatures of public fields and methods declared
+	 * by a public type in an exported package.
+	 * In these positions types are complained against that are either not public or not in an exported package.
+	 * Export qualification is not taken into account.
+	 * If a type in one of these positions is declared in another module that is required by the current module,
+	 * but without the {@code transitive} modifier, this is reported as a problem, too.
+	 * <dl>
+	 * <dt>Option id:</dt><dd><code>"org.eclipse.jdt.core.compiler.problem.APILeak"</code></dd>
+	 * <dt>Possible values:</dt>
+	 * <dd><code>{ "error", "warning", "info", "ignore" }</code></dd>
+	 * <dt>Default:</dt><dd><code>"warning"</code></dd>
+	 * </dl>
+	 * 
+	 * @since 3.13 BETA_JAVA9
+	 * @category CompilerOptionID
+	 */
+	public static final String COMPILER_PB_API_LEAKS = PLUGIN_ID + ".compiler.problem.APILeak"; //$NON-NLS-1$
+	
 	/**
 	 * Compiler option ID: Annotation-based Null Analysis.
 	 * <p>This option controls whether the compiler will use null annotations for
@@ -4474,8 +4528,8 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 			if (element.equals(markerElement)) return true; // external elements may still be equal with different handleIDs.
 
 			// cycle through enclosing types in case marker is associated with a classfile (15568)
-			if (markerElement instanceof IClassFile){
-				IType enclosingType = ((IClassFile)markerElement).getType().getDeclaringType();
+			if (markerElement instanceof IOrdinaryClassFile){
+				IType enclosingType = ((IOrdinaryClassFile)markerElement).getType().getDeclaringType();
 				if (enclosingType != null){
 					markerElement = enclosingType.getClassFile(); // retry with immediate enclosing classfile
 					continue;
@@ -4517,8 +4571,8 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 			if (element.equals(markerElement)) return true; // external elements may still be equal with different handleIDs.
 
 			// cycle through enclosing types in case marker is associated with a classfile (15568)
-			if (markerElement instanceof IClassFile){
-				IType enclosingType = ((IClassFile)markerElement).getType().getDeclaringType();
+			if (markerElement instanceof IOrdinaryClassFile){
+				IType enclosingType = ((IOrdinaryClassFile)markerElement).getType().getDeclaringType();
 				if (enclosingType != null){
 					markerElement = enclosingType.getClassFile(); // retry with immediate enclosing classfile
 					continue;
@@ -4692,10 +4746,10 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 		} else if (containerPath.segmentCount() < 1) {
 			throw new ClasspathEntry.AssertionFailedException("Illegal classpath container path: \'" + containerPath.makeRelative().toString() + "\', must have at least one segment (containerID+hints)"); //$NON-NLS-1$//$NON-NLS-2$
 		}
-		if (accessRules == null) {
+		if (accessRules == null || accessRules.length == 0) {
 			accessRules = ClasspathEntry.NO_ACCESS_RULES;
 		}
-		if (extraAttributes == null) {
+		if (extraAttributes == null || extraAttributes.length == 0) {
 			extraAttributes = ClasspathEntry.NO_EXTRA_ATTRIBUTES;
 		}
 		return new ClasspathEntry(
@@ -4891,10 +4945,10 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 			boolean isExported) {
 
 		if (path == null) throw new ClasspathEntry.AssertionFailedException("Library path cannot be null"); //$NON-NLS-1$
-		if (accessRules == null) {
+		if (accessRules == null || accessRules.length==0) {
 			accessRules = ClasspathEntry.NO_ACCESS_RULES;
 		}
-		if (extraAttributes == null) {
+		if (extraAttributes == null || extraAttributes.length==0) {
 			extraAttributes = ClasspathEntry.NO_EXTRA_ATTRIBUTES;
 		}
 		boolean hasDotDot = ClasspathEntry.hasDotDot(path);
@@ -5022,10 +5076,10 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 			boolean isExported) {
 
 		if (!path.isAbsolute()) throw new ClasspathEntry.AssertionFailedException("Path for IClasspathEntry must be absolute"); //$NON-NLS-1$
-		if (accessRules == null) {
+		if (accessRules == null || accessRules.length == 0) {
 			accessRules = ClasspathEntry.NO_ACCESS_RULES;
 		}
-		if (extraAttributes == null) {
+		if (extraAttributes == null || extraAttributes.length == 0) {
 			extraAttributes = ClasspathEntry.NO_EXTRA_ATTRIBUTES;
 		}
 		return new ClasspathEntry(
@@ -5386,10 +5440,10 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 		if (variablePath.segmentCount() < 1) {
 			throw new ClasspathEntry.AssertionFailedException("Illegal classpath variable path: \'" + variablePath.makeRelative().toString() + "\', must have at least one segment"); //$NON-NLS-1$//$NON-NLS-2$
 		}
-		if (accessRules == null) {
+		if (accessRules == null || accessRules.length == 0) {
 			accessRules = ClasspathEntry.NO_ACCESS_RULES;
 		}
-		if (extraAttributes == null) {
+		if (extraAttributes == null || extraAttributes.length == 0) {
 			extraAttributes = ClasspathEntry.NO_EXTRA_ATTRIBUTES;
 		}
 
@@ -5518,7 +5572,8 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 	}
 
 	/**
-	 * Deletes and rebuilds the java index.
+	 * Deletes the index, then rebuilds any portions of the index that are
+	 * currently needed by the workspace.
 	 * 
 	 * @param monitor a progress monitor, or <code>null</code> if progress
 	 *    reporting and cancellation are not desired
@@ -5898,25 +5953,59 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 		return Long.compare(CompilerOptions.versionToJdkLevel(first), CompilerOptions.versionToJdkLevel(second));
 	}
 	/**
-	 * Creates a corresponding module-info as a String for the given source package fragment root and with
-	 * the given name. The module name is optional and a null argument can be passed to indicate that the
-	 * package fragment root's element name to be used as the module name.
+	 * Returns an array of module names referenced by this project indirectly. 
+	 * This is a helper method that can be used to construct a Java module 
+	 * description of an existing project. The referenced modules can either be 
+	 * system modules or user modules found in project build path in the form of 
+	 * libraries.
+	 * The prerequisites for this to be effective are:
+	 * <ul>
+	 * <li>the project is already in compliance level 9 or above.
+	 * <li>the system library on the build path of the project is a modularized Java Runtime.
+	 * </ul>
 	 *
-	 * This is a utility method and computes a module configuration by looking at the source files inside
-	 * the package fragment root and what modules within the project's build path are needed in order to 
-	 * successfully compile the source files. For non-source package fragment roots
-	 * (i.e., {@link IPackageFragmentRoot#isArchive()} returns true), this method returns null.
-	 *
-	 * Note this is a long-running operation and it is preferable that clients run this in a background thread.
-	 *
-	 * @param moduleName name to be used for the new module. A null indicates that the package fragment root element's name to be used
-	 * @param root the package fragment root for which the module is sought
-	 * @return the module-info content as a String
+	 * @param project
+	 *            the project whose referenced modules to be computed
+	 * @return an array of String containing module names
 	 * @throws CoreException
 	 * @since 3.13 BETA_JAVA9
 	 */
-	public static String createModuleFromPackageRoot(String moduleName, IPackageFragmentRoot root) throws CoreException {
-		return ModuleUtil.createModuleFromPackageRoot(moduleName, root);
+	public static String[] getReferencedModules(IJavaProject project) throws CoreException {
+		return ModuleUtil.getReferencedModules(project);
+	}
+
+	/**
+	 * Compile the given module description in the context of its enclosing Java project
+	 * and add class file attributes using the given map of attribute values.
+	 * <p>In this map, the following keys are supported</p>
+	 * <dl>
+	 * <dt>{@link IAttributeNamesConstants#MODULE_MAIN_CLASS}</dt>
+	 * <dd>The associated value will be used for the <code>ModuleMainClass</code> attribute.</dd>
+	 * <dt>{@link IAttributeNamesConstants#MODULE_PACKAGES}</dt>
+	 * <dd>If the associated value is an empty string, then the compiler will generate a
+	 * <code>ModulePackages</code> attribute with a list of packages that is computed from
+	 * <ul>
+	 * <li>all <code>exports</code> directives
+	 * <li>all <code>opens</code> directives
+	 * <li>the implementation classes of all <code>provides</code> directives.
+	 * </ul>
+	 * If the associated value is not empty, it must be a comma-separated list of package names,
+	 * which will be added to the computed list.
+	 * </dl>
+	 * <p>No other keys are supported in this version, but more keys may be added in the future.</p>
+	 *
+	 * @param module handle for the <code>module-info.java</code> file to be compiled.
+	 * @param classFileAttributes map of attribute names and values to be used during class file generation
+	 * @return the compiled byte code
+	 *
+	 * @throws JavaModelException
+	 * @throws IllegalArgumentException if the map of classFileAttributes contains an unsupported key.
+	 * @since 3.13 BETA_JAVA9
+	 */
+	public static byte[] compileWithAttributes(IModuleDescription module, Map<String,String> classFileAttributes)
+			throws JavaModelException, IllegalArgumentException
+	{
+		return new ModuleInfoBuilder().compileWithAttributes(module, classFileAttributes);
 	}
 
 	/* (non-Javadoc)

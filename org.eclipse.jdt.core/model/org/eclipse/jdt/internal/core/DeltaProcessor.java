@@ -1,9 +1,13 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
+ *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
  *
  * Contributors:
  *     IBM Corporation - initial API and implementation
@@ -496,7 +500,7 @@ public class DeltaProcessor {
 						this.manager.removePerProjectInfo(javaProject, true /* remove external jar files indexes and timestamps*/);
 						// remove container cache for this project
 						this.manager.containerRemove(javaProject);
-
+						JavaModelManager.getModulePathManager().removeEntry(javaProject);
 						this.state.rootsAreStale = true;
 						break;
 				}
@@ -820,7 +824,10 @@ public class DeltaProcessor {
 							// create class file handle
 							// fileName validation has been done in elementType(IResourceDelta, int, boolean)
 							String fileName = path.lastSegment();
-							element = pkgFragment.getClassFile(fileName);
+							if (TypeConstants.MODULE_INFO_CLASS_NAME_STRING.equals(fileName))
+								element = pkgFragment.getModularClassFile();
+							else
+								element = pkgFragment.getClassFile(fileName);
 						}
 					}
 				}
@@ -1143,6 +1150,7 @@ public class DeltaProcessor {
 					javaProject.computePackageFragmentRoots(
 						javaProject.getResolvedClasspath(),
 						false,
+						true, // respect limit modules
 						null /*no reverse map*/));
 			}
 

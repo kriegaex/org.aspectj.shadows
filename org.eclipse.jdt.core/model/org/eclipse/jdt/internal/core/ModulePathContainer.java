@@ -19,11 +19,10 @@ import java.util.List;
 
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.Path;
+import org.eclipse.jdt.core.IClasspathAttribute;
 import org.eclipse.jdt.core.IClasspathContainer;
 import org.eclipse.jdt.core.IClasspathEntry;
 import org.eclipse.jdt.core.IJavaProject;
-import org.eclipse.jdt.core.IModuleDescription;
-import org.eclipse.jdt.core.IModuleDescription.IModuleReference;
 import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jdt.internal.compiler.env.IModulePathEntry;
@@ -41,11 +40,11 @@ public class ModulePathContainer implements IClasspathContainer{
 		List<IClasspathEntry> entries = new ArrayList<>();
 		ModuleSourcePathManager manager = JavaModelManager.getModulePathManager();
 		try {
-			IModuleDescription module = ((JavaProject)this.project).getModuleDescription();
+			AbstractModule module = (AbstractModule) ((JavaProject)this.project).getModuleDescription();
 			if (module == null)
 				return new IClasspathEntry[0];
-			for (IModuleReference ref : module.getRequiredModules()) {
-				IModulePathEntry entry = manager.getModuleRoot(ref.getModuleName());
+			for (org.eclipse.jdt.internal.compiler.env.IModule.IModuleReference ref : module.getRequiredModules()) {
+				IModulePathEntry entry = manager.getModuleRoot(new String(ref.name()));
 				JavaProject refRoot = null;
 				if (entry instanceof ProjectEntry) {
 					refRoot = ((ProjectEntry) entry).project;
@@ -53,7 +52,10 @@ public class ModulePathContainer implements IClasspathContainer{
 				if (refRoot == null)
 					continue;
 				IPath path = refRoot.getPath();
-				entries.add(JavaCore.newProjectEntry(path, ref.isPublic()));
+				IClasspathAttribute moduleAttribute = new ClasspathAttribute(IClasspathAttribute.MODULE, "true"); //$NON-NLS-1$
+				entries.add(JavaCore.newProjectEntry(path, ClasspathEntry.NO_ACCESS_RULES,
+						false,
+						new IClasspathAttribute[] {moduleAttribute}, ref.isTransitive()));
 			}
 		} catch (JavaModelException e) {
 			// ignore
@@ -64,7 +66,7 @@ public class ModulePathContainer implements IClasspathContainer{
 	@Override
 	public String getDescription() {
 		// 
-		return "Module source path"; //$NON-NLS-1$
+		return "Module path"; //$NON-NLS-1$
 	}
 
 	@Override

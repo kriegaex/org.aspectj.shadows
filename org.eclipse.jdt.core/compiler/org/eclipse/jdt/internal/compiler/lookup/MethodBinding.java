@@ -194,9 +194,16 @@ public MethodBinding asRawMethod(LookupEnvironment env) {
 	int length = this.typeVariables.length;
 	TypeBinding[] arguments = new TypeBinding[length];
 	for (int i = 0; i < length; i++) {
-		TypeVariableBinding var = this.typeVariables[i];
+		arguments[i] = makeRawArgument(env, this.typeVariables[i]);
+	}
+	return env.createParameterizedGenericMethod(this, arguments);
+}
+private TypeBinding makeRawArgument(LookupEnvironment env, TypeVariableBinding var) {
 		if (var.boundsCount() <= 1) {
-			arguments[i] = env.convertToRawType(var.upperBound(), false /*do not force conversion of enclosing types*/);
+		TypeBinding upperBound = var.upperBound();
+		if (upperBound.isTypeVariable())
+			return makeRawArgument(env, (TypeVariableBinding) upperBound);
+		return env.convertToRawType(upperBound, false /*do not force conversion of enclosing types*/);
 		} else {
 			// use an intersection type to retain full bound information if more than 1 bound
 			TypeBinding[] itsSuperinterfaces = var.superInterfaces();
@@ -214,10 +221,8 @@ public MethodBinding asRawMethod(LookupEnvironment env) {
 				for (int s = 0; s < superLength; s++)
 					rawOtherBounds[s] = env.convertToRawType(itsSuperinterfaces[s], false);
 			}
-			arguments[i] = env.createWildcard(null, 0, rawFirstBound, rawOtherBounds, org.eclipse.jdt.internal.compiler.ast.Wildcard.EXTENDS);
-		}
+		return env.createWildcard(null, 0, rawFirstBound, rawOtherBounds, org.eclipse.jdt.internal.compiler.ast.Wildcard.EXTENDS);
 	}
-	return env.createParameterizedGenericMethod(this, arguments);
 }
 /* Answer true if the receiver is visible to the type provided by the scope.
 * InvocationSite implements isSuperAccess() to provide additional information
@@ -316,7 +321,7 @@ public boolean canBeSeenBy(TypeBinding receiverType, InvocationSite invocationSi
 
 	SourceTypeBinding invocationType = scope.invocationType(); // AspectJ Extension - was scope.enclosingSourceType()
 
-	if (this.declaringClass.isInterface() && isStatic()) {
+	if (this.declaringClass.isInterface() && isStatic() && !isPrivate()) {
 		// Static interface methods can be explicitly invoked only through the type reference of the declaring interface or implicitly in the interface itself or via static import.
 		if (scope.compilerOptions().sourceLevel < ClassFileConstants.JDK1_8)
 			return false;

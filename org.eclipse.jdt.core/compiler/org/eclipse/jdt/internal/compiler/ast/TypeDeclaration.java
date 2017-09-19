@@ -1,3 +1,4 @@
+// AspectJ
 /*******************************************************************************
  * Copyright (c) 2000, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
@@ -35,7 +36,6 @@ public class TypeDeclaration extends Statement implements ProblemSeverities, Ref
 	public static final int INTERFACE_DECL = 2;
 	public static final int ENUM_DECL = 3;
 	public static final int ANNOTATION_TYPE_DECL = 4;
-	public static final int MODULE_DECL = 5;
 
 	public int modifiers = ClassFileConstants.AccDefault;
 	public int modifiersSourceStart;
@@ -777,15 +777,13 @@ private void internalAnalyseCode(FlowContext flowContext, FlowInfo flowInfo) {
 }
 
 public final static int kind(int flags) {
-	switch (flags & (ClassFileConstants.AccInterface|ClassFileConstants.AccAnnotation|ClassFileConstants.AccEnum|ClassFileConstants.AccModule)) {
+	switch (flags & (ClassFileConstants.AccInterface|ClassFileConstants.AccAnnotation|ClassFileConstants.AccEnum)) {
 		case ClassFileConstants.AccInterface :
 			return TypeDeclaration.INTERFACE_DECL;
 		case ClassFileConstants.AccInterface|ClassFileConstants.AccAnnotation :
 			return TypeDeclaration.ANNOTATION_TYPE_DECL;
 		case ClassFileConstants.AccEnum :
 			return TypeDeclaration.ENUM_DECL;
-		case ClassFileConstants.AccModule:
-			return TypeDeclaration.MODULE_DECL;
 		default :
 			return TypeDeclaration.CLASS_DECL;
 	}

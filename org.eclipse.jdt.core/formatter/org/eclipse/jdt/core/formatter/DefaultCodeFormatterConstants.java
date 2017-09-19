@@ -236,6 +236,17 @@ public class DefaultCodeFormatterConstants {
 	public static final String FORMATTER_ALIGNMENT_FOR_METHOD_DECLARATION = JavaCore.PLUGIN_ID + ".formatter.alignment_for_method_declaration";	 //$NON-NLS-1$
 	/**
 	 * <pre>
+	 * FORMATTER / Option for alignment of module statements
+	 *     - option id:         "org.eclipse.jdt.core.formatter.alignment_for_module_statements"
+	 *     - possible values:   values returned by <code>createAlignmentValue(boolean, int, int)</code> call
+	 *     - default:           createAlignmentValue(false, WRAP_COMPACT, INDENT_DEFAULT)
+	 * </pre>
+	 * @see #createAlignmentValue(boolean, int, int)
+	 * @since 3.13 BETA_JAVA9
+	 */
+	public static final String FORMATTER_ALIGNMENT_FOR_MODULE_STATEMENTS = JavaCore.PLUGIN_ID + ".formatter.alignment_for_module_statements";	 //$NON-NLS-1$
+	/**
+	 * <pre>
 	 * FORMATTER / Option for alignment of multiple fields
 	 *     - option id:         "org.eclipse.jdt.core.formatter.alignment_for_multiple_fields"
 	 *     - possible values:   values returned by <code>createAlignmentValue(boolean, int, int)</code> call
@@ -1070,7 +1081,7 @@ public class DefaultCodeFormatterConstants {
 	 * FORMATTER / Option to control whether comments' line length will be counted from their starting position
 	 *     - option id:         "org.eclipse.jdt.core.formatter.comment.count_line_length_from_starting_position"
 	 *     - possible values:   { TRUE, FALSE }
-	 *     - default:           FALSE
+	 *     - default:           TRUE
 	 * </pre>
 	 * @since 3.13
 	 */
@@ -4389,6 +4400,7 @@ public class DefaultCodeFormatterConstants {
 	public static Map getEclipse21Settings() {
 		DefaultCodeFormatterOptions options = DefaultCodeFormatterOptions.getDefaultSettings();
 		options.page_width = 80; // changed with bug 356841
+		options.comment_count_line_length_from_starting_position = false;
 		return options.getMap();
 	}
 

@@ -128,6 +128,7 @@ import org.eclipse.jdt.internal.compiler.Compiler;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
 import org.eclipse.jdt.internal.compiler.env.AccessRestriction;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
+import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.compiler.util.HashtableOfObjectToInt;
 import org.eclipse.jdt.internal.compiler.util.JRTUtil;
 import org.eclipse.jdt.internal.compiler.util.ObjectVector;
@@ -372,14 +373,16 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 	private static final String SEARCH_DEBUG = JavaCore.PLUGIN_ID + "/debug/search" ; //$NON-NLS-1$
 	private static final String SOURCE_MAPPER_DEBUG_VERBOSE = JavaCore.PLUGIN_ID + "/debug/sourcemapper" ; //$NON-NLS-1$
 	private static final String FORMATTER_DEBUG = JavaCore.PLUGIN_ID + "/debug/formatter" ; //$NON-NLS-1$
-	private static final String INDEX_DEBUG_LARGE_CHUNKS = JavaCore.PLUGIN_ID + "/debug/index/largechunks" ; //$NON-NLS-1$
+	private static final String INDEX_DEBUG_LARGE_CHUNKS = JavaCore.PLUGIN_ID + "/debug/index/freespacetest" ; //$NON-NLS-1$
 	private static final String INDEX_DEBUG_PAGE_CACHE = JavaCore.PLUGIN_ID + "/debug/index/pagecache" ; //$NON-NLS-1$
 	private static final String INDEX_INDEXER_DEBUG = JavaCore.PLUGIN_ID + "/debug/index/indexer" ; //$NON-NLS-1$
 	private static final String INDEX_INDEXER_INSERTIONS = JavaCore.PLUGIN_ID + "/debug/index/insertions" ; //$NON-NLS-1$
+	private static final String INDEX_INDEXER_SCHEDULING = JavaCore.PLUGIN_ID + "/debug/index/scheduling" ; //$NON-NLS-1$
 	private static final String INDEX_INDEXER_SELFTEST = JavaCore.PLUGIN_ID + "/debug/index/selftest" ; //$NON-NLS-1$
 	private static final String INDEX_LOCKS_DEBUG = JavaCore.PLUGIN_ID + "/debug/index/locks" ; //$NON-NLS-1$
 	private static final String INDEX_INDEXER_SPACE = JavaCore.PLUGIN_ID + "/debug/index/space" ; //$NON-NLS-1$
 	private static final String INDEX_INDEXER_TIMING = JavaCore.PLUGIN_ID + "/debug/index/timing" ; //$NON-NLS-1$
+	private static final String INDEX_INDEXER_LOG_SIZE_MEGS = JavaCore.PLUGIN_ID + "/debug/index/logsizemegs"; //$NON-NLS-1$
 
 	public static final String COMPLETION_PERF = JavaCore.PLUGIN_ID + "/perf/completion" ; //$NON-NLS-1$
 	public static final String SELECTION_PERF = JavaCore.PLUGIN_ID + "/perf/selection" ; //$NON-NLS-1$
@@ -1067,6 +1070,9 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 			PackageFragmentRoot root = (PackageFragmentRoot) project.getPackageFragmentRoot(file.getParent());
 			pkg = root.getPackageFragment(CharOperation.NO_STRINGS);
 		}
+		String fileName = file.getName();
+		if (TypeConstants.MODULE_INFO_CLASS_NAME_STRING.equals(fileName))
+			return pkg.getModularClassFile();
 		return pkg.getClassFile(file.getName());
 	}
 
@@ -1855,13 +1861,15 @@ public class JavaModelManager implements ISaveParticipant, IContentTypeChangeLis
 				JavaModelManager.ZIP_ACCESS_VERBOSE = debug && options.getBooleanOption(ZIP_ACCESS_DEBUG, false);
 				SourceMapper.VERBOSE = debug && options.getBooleanOption(SOURCE_MAPPER_DEBUG_VERBOSE, false);
 				DefaultCodeFormatter.DEBUG = debug && options.getBooleanOption(FORMATTER_DEBUG, false);
-				Database.DEBUG_LARGE_CHUNKS = debug && options.getBooleanOption(INDEX_DEBUG_LARGE_CHUNKS, false);
+				Database.DEBUG_FREE_SPACE = debug && options.getBooleanOption(INDEX_DEBUG_LARGE_CHUNKS, false);
 				Database.DEBUG_PAGE_CACHE = debug && options.getBooleanOption(INDEX_DEBUG_PAGE_CACHE, false);
 				Indexer.DEBUG = debug && options.getBooleanOption(INDEX_INDEXER_DEBUG, false);
 				Indexer.DEBUG_INSERTIONS = debug  && options.getBooleanOption(INDEX_INDEXER_INSERTIONS, false);
 				Indexer.DEBUG_ALLOCATIONS = debug && options.getBooleanOption(INDEX_INDEXER_SPACE, false);
 				Indexer.DEBUG_TIMING = debug && options.getBooleanOption(INDEX_INDEXER_TIMING, false);
+				Indexer.DEBUG_SCHEDULING = debug && options.getBooleanOption(INDEX_INDEXER_SCHEDULING, false);
 				Indexer.DEBUG_SELFTEST = debug && options.getBooleanOption(INDEX_INDEXER_SELFTEST, false);
+				Indexer.DEBUG_LOG_SIZE_MB = debug ? options.getIntegerOption(INDEX_INDEXER_LOG_SIZE_MEGS, 0) : 0;
 				Nd.sDEBUG_LOCKS = debug && options.getBooleanOption(INDEX_LOCKS_DEBUG, false);
 		
 				// configure performance options

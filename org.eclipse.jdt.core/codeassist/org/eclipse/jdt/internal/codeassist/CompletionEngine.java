@@ -25,7 +25,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.stream.Stream;
 
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
@@ -40,6 +39,7 @@ import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.IMethod;
 import org.eclipse.jdt.core.IModuleDescription;
+import org.eclipse.jdt.core.IPackageFragmentRoot;
 import org.eclipse.jdt.core.IType;
 import org.eclipse.jdt.core.ITypeRoot;
 import org.eclipse.jdt.core.JavaCore;
@@ -180,7 +180,6 @@ import org.eclipse.jdt.internal.compiler.ast.Wildcard;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
 import org.eclipse.jdt.internal.compiler.env.AccessRestriction;
 import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
-import org.eclipse.jdt.internal.compiler.env.IModuleContext;
 import org.eclipse.jdt.internal.compiler.env.INameEnvironment;
 import org.eclipse.jdt.internal.compiler.env.ISourceType;
 import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
@@ -234,7 +233,6 @@ import org.eclipse.jdt.internal.core.INamingRequestor;
 import org.eclipse.jdt.internal.core.InternalNamingConventions;
 import org.eclipse.jdt.internal.core.JavaElementRequestor;
 import org.eclipse.jdt.internal.core.JavaModelManager;
-import org.eclipse.jdt.internal.core.JavaProject;
 import org.eclipse.jdt.internal.core.ModuleSourcePathManager;
 import org.eclipse.jdt.internal.core.SourceMethod;
 import org.eclipse.jdt.internal.core.SourceMethodElementInfo;
@@ -717,9 +715,6 @@ public final class CompletionEngine
 	char[] source;
 	ModuleDeclaration moduleDeclaration;
 	char[] completionToken;
-	IModuleContext moduleContext = () -> {
-		return Stream.of((JavaProject)this.javaProject);
-	};
 
 	char[] qualifiedCompletionToken;
 	boolean resolvingImports = false;
@@ -1864,7 +1859,7 @@ public final class CompletionEngine
 				if (expression.body().sourceStart <= astNode.sourceStart &&
 						astNode.sourceEnd <= expression.body().sourceEnd) {
 					// completion is inside a method body
-					if (astNodeParent == null &&
+					if ((astNodeParent == null || astNodeParent == expression) &&
 							astNode instanceof CompletionOnSingleNameReference &&
 							!((CompletionOnSingleNameReference)astNode).isPrecededByModifiers) {
 						context.setTokenLocation(CompletionContext.TL_STATEMENT_START);
@@ -2129,6 +2124,9 @@ public final class CompletionEngine
 									debugPrintf();
 									return;
 								}
+							} else if (implementation instanceof CompletionOnKeyword) {
+								contextAccepted = true;
+								processModuleKeywordCompletion(parsedUnit, implementation, (CompletionOnKeyword) implementation);
 							}
 						}
 					}
@@ -10334,7 +10332,7 @@ public final class CompletionEngine
 					sourceType = (ISourceType) type;
 				}
 			} else {
-				NameEnvironmentAnswer answer = this.nameEnvironment.findType(bindingType.compoundName);
+				NameEnvironmentAnswer answer = this.nameEnvironment.findTypeInModules(bindingType.compoundName, this.unitScope.module());
 				if(answer != null && answer.isSourceType()) {
 					sourceType = answer.getSourceTypes()[0];
 					this.typeCache.put(compoundName, sourceType);
@@ -10691,7 +10689,12 @@ public final class CompletionEngine
 	}
 
 	private void findPackagesInCurrentModule() {
-		this.nameEnvironment.findPackages(CharOperation.toLowerCase(this.completionToken), this, this.moduleContext);
+		try {
+			IPackageFragmentRoot[] moduleRoots = SearchableEnvironment.getOwnedPackageFragmentRoots(this.javaProject);
+			this.nameEnvironment.findPackages(CharOperation.toLowerCase(this.completionToken), this, moduleRoots);
+		} catch (JavaModelException e) {
+			// silent
+		}
 	}
 	private void findPackages(CompletionOnPackageReference packageStatement) {
 		this.completionToken = CharOperation.concatWithAll(packageStatement.tokens, '.');
@@ -11034,8 +11037,7 @@ public final class CompletionEngine
 								hasMemberTypesInEnclosingScope(sourceType, scope)) ||
 								hasArrayTypeAsExpectedSuperTypes()) {
 					char[] typeName = sourceType.sourceName();
-					if (!sourceType.isModule())
-						createTypeProposal(
+					createTypeProposal(
 								sourceType,
 								typeName,
 								IAccessRule.K_ACCESSIBLE,
@@ -11903,7 +11905,7 @@ public final class CompletionEngine
 		char[][] theInterfaceType = theInterface.getTypeName();
 		if (theInterfaceType == null) return;
 		SearchPattern pattern  = null;
-		NameEnvironmentAnswer answer =  this.nameEnvironment.findType(theInterfaceType);
+		NameEnvironmentAnswer answer =  this.nameEnvironment.findTypeInModules(theInterfaceType, scope.module());
 		if (answer != null ) {
 			if (answer.isSourceType()) {
 				IType typeHandle = ((SourceTypeElementInfo) answer.getSourceTypes()[0]).getHandle();
@@ -12673,6 +12675,11 @@ public final class CompletionEngine
 		if (this.targetedElement == TagBits.AnnotationForPackage) {
 			long target = typeBinding.getAnnotationTagBits() & TagBits.AnnotationTargetMASK;
 			if(target != 0 && (target & TagBits.AnnotationForPackage) == 0) {
+				return false;
+			}
+		} else if (this.targetedElement == TagBits.AnnotationForModule) {
+			long target = typeBinding.getAnnotationTagBits() & TagBits.AnnotationTargetMASK;
+			if(target != 0 && (target & TagBits.AnnotationForModule) == 0) {
 				return false;
 			}
 		} else if ((this.targetedElement & (TagBits.AnnotationForType | TagBits.AnnotationForTypeUse)) != 0) {

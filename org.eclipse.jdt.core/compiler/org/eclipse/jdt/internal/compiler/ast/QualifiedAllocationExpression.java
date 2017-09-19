@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2015 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -523,10 +523,18 @@ public class QualifiedAllocationExpression extends AllocationExpression {
 				if (constructorBinding == null)
 					return null;
 				this.resolvedType = this.anonymousType.binding;
-				// Check that inferred type is denotable
-				if (!checkTypeArgumentValidity((ParameterizedTypeBinding) receiverType, scope)) {
-					scope.problemReporter().anonymousDiamondWithNonDenotableTypeArguments(this.type, receiverType);
+				// Check that inferred type is valid
+				if (!validate((ParameterizedTypeBinding) receiverType, scope)) {
 					return this.resolvedType;
+				}
+			} else {
+				// 15.9.3 - If the compile-time declaration is applicable by variable arity invocation...
+				if (this.binding.isVarargs()) {
+					TypeBinding lastArg = this.binding.parameters[this.binding.parameters.length - 1].leafComponentType();
+					if (!lastArg.erasure().canBeSeenBy(scope)) {
+						scope.problemReporter().invalidType(this, new ProblemReferenceBinding(new char[][] {lastArg.readableName()}, (ReferenceBinding)lastArg, ProblemReasons.NotVisible));
+						return this.resolvedType = null;
+					}
 				}
 			}
 			resolvePolyExpressionArguments(this, this.binding, this.argumentTypes, scope);
@@ -597,7 +605,7 @@ public class QualifiedAllocationExpression extends AllocationExpression {
 		}
 	}
 
-	private boolean checkTypeArgumentValidity(final ParameterizedTypeBinding allocationType, final Scope scope) {
+	private boolean validate(final ParameterizedTypeBinding allocationType, final Scope scope) {
 		class ValidityInspector extends TypeBindingVisitor {
 			private boolean noErrors;
 
@@ -607,13 +615,22 @@ public class QualifiedAllocationExpression extends AllocationExpression {
 
 			public boolean visit(IntersectionTypeBinding18 intersectionTypeBinding18) {
 				Arrays.sort(intersectionTypeBinding18.intersectingTypes, (t1, t2) -> t1.id - t2.id);
+				scope.problemReporter().anonymousDiamondWithNonDenotableTypeArguments(QualifiedAllocationExpression.this.type, allocationType);
 				return this.noErrors = false;  // stop traversal
 			}
 			public boolean visit(TypeVariableBinding typeVariable) {
 				if (typeVariable.isCapture()) {
+					scope.problemReporter().anonymousDiamondWithNonDenotableTypeArguments(QualifiedAllocationExpression.this.type, allocationType);
 					return this.noErrors = false;  // stop traversal
 				}
 				return true; // continue traversal
+			}
+			public boolean visit(ReferenceBinding ref) {
+				if (!ref.canBeSeenBy(scope)) {
+					scope.problemReporter().invalidType(QualifiedAllocationExpression.this.anonymousType, new ProblemReferenceBinding(ref.compoundName, ref, ProblemReasons.NotVisible));
+					return this.noErrors = false;
+				}
+				return true;
 			}
 			public boolean isValid() {
 				TypeBindingVisitor.visit(this, allocationType);

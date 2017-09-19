@@ -61,7 +61,6 @@ import org.eclipse.jdt.internal.compiler.ast.FieldDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ImportReference;
 import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.ModuleReference;
 import org.eclipse.jdt.internal.compiler.ast.PackageVisibilityStatement;
 import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.TypeParameter;
@@ -94,6 +93,7 @@ import org.eclipse.jdt.internal.compiler.lookup.Scope;
 import org.eclipse.jdt.internal.compiler.lookup.SourceTypeBinding;
 import org.eclipse.jdt.internal.compiler.lookup.SyntheticMethodBinding;
 import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
+import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.compiler.lookup.TypeVariableBinding;
 import org.eclipse.jdt.internal.compiler.parser.Scanner;
 import org.eclipse.jdt.internal.compiler.parser.ScannerHelper;
@@ -549,7 +549,8 @@ public final class SelectionEngine extends Engine implements ISearchRequestor {
 	private boolean checkSelection(
 			char[] source,
 			int selectionStart,
-			int selectionEnd) {
+			int selectionEnd,
+			boolean isModuleInfo) {
 
 		Scanner scanner =
 			new Scanner(
@@ -638,7 +639,7 @@ public final class SelectionEngine extends Engine implements ISearchRequestor {
 			}
 
 			// compute start and end of the last token
-			scanner.resetTo(nextCharacterPosition, end);
+			scanner.resetTo(nextCharacterPosition, end, isModuleInfo);
 			isolateLastName: do {
 				try {
 					token = scanner.getNextToken();
@@ -688,7 +689,7 @@ public final class SelectionEngine extends Engine implements ISearchRequestor {
 					}
 				}  
 			} // there could be some innocuous widening, shouldn't matter.
-			scanner.resetTo(selectionStart, selectionEnd);
+			scanner.resetTo(selectionStart, selectionEnd, isModuleInfo);
 
 			boolean expectingIdentifier = true;
 			do {
@@ -950,7 +951,8 @@ public final class SelectionEngine extends Engine implements ISearchRequestor {
 			System.out.println("SELECTION - Source :"); //$NON-NLS-1$
 			System.out.println(source);
 		}
-		if (!checkSelection(source, selectionSourceStart, selectionSourceEnd)) {
+		boolean isModuleInfo = CharOperation.endsWith(sourceUnit.getFileName(), TypeConstants.MODULE_INFO_FILE_NAME);
+		if (!checkSelection(source, selectionSourceStart, selectionSourceEnd, isModuleInfo)) {
 			return;
 		}
 		if (DEBUG) {
@@ -1025,19 +1027,20 @@ public final class SelectionEngine extends Engine implements ISearchRequestor {
 						}
 					}
 				}
-				if (parsedUnit.isModuleInfo() && parsedUnit.types != null &&
-						parsedUnit.types.length > 0) {
-					ModuleDeclaration module = (ModuleDeclaration) parsedUnit.types[0];//TODO, could be null
-					this.lookupEnvironment.buildTypeBindings(parsedUnit, null /*no access restriction*/);
-					acceptPackageVisibilityStatements(module.exports, parsedUnit.scope);
-					acceptPackageVisibilityStatements(module.opens, parsedUnit.scope);
-				}
-				if (parsedUnit.types != null || parsedUnit.isPackageInfo()) {
-					if(selectDeclaration(parsedUnit))
-						return;
-					this.lookupEnvironment.buildTypeBindings(parsedUnit, null /*no access restriction*/);
-					if ((this.unitScope = parsedUnit.scope)  != null) {
-						try {
+				try {
+					if (parsedUnit.isModuleInfo() && parsedUnit.moduleDeclaration != null) {
+						ModuleDeclaration module = parsedUnit.moduleDeclaration;
+						this.lookupEnvironment.buildTypeBindings(parsedUnit, null /*no access restriction*/);
+						module.resolveModuleDirectives(parsedUnit.scope);
+						module.resolvePackageDirectives(parsedUnit.scope);
+						module.resolveTypeDirectives(parsedUnit.scope);
+						acceptPackageVisibilityStatements(module.exports, parsedUnit.scope);
+						acceptPackageVisibilityStatements(module.opens, parsedUnit.scope);
+					} else if (parsedUnit.types != null || parsedUnit.isPackageInfo()) {
+						if(selectDeclaration(parsedUnit))
+							return;
+						this.lookupEnvironment.buildTypeBindings(parsedUnit, null /*no access restriction*/);
+						if ((this.unitScope = parsedUnit.scope)  != null) {
 							this.lookupEnvironment.completeTypeBindings(parsedUnit, true);
 							CompilationUnitDeclaration previousUnitBeingCompleted = this.lookupEnvironment.unitBeingCompleted;
 							this.lookupEnvironment.unitBeingCompleted = parsedUnit;
@@ -1054,16 +1057,16 @@ public final class SelectionEngine extends Engine implements ISearchRequestor {
 							if (node != null) {
 								selectLocalDeclaration(node);
 							}
-						} catch (SelectionNodeFound e) {
-							if (e.binding != null) {
-								if(DEBUG) {
-									System.out.println("SELECTION - Selection binding:"); //$NON-NLS-1$
-									System.out.println(e.binding.toString());
-								}
-								// if null then we found a problem in the selection node
-								selectFrom(e.binding, parsedUnit, sourceUnit, e.isDeclaration);
-							}
 						}
+					}
+				} catch (SelectionNodeFound e) {
+					if (e.binding != null) {
+						if(DEBUG) {
+							System.out.println("SELECTION - Selection binding:"); //$NON-NLS-1$
+							System.out.println(e.binding.toString());
+						}
+						// if null then we found a problem in the selection node
+						selectFrom(e.binding, parsedUnit, sourceUnit, e.isDeclaration);
 					}
 				}
 			}
@@ -1107,20 +1110,6 @@ public final class SelectionEngine extends Engine implements ISearchRequestor {
 					this.noProposal = false;
 					this.requestor.acceptPackage(CharOperation.concatWith(((SelectionOnPackageVisibilityReference) pv.pkgRef).tokens, '.'));
 				}
-				if (pv.targets == null || pv.targets.length == 0) continue;
-				for (ModuleReference ref : pv.targets) {
-					acceptModuleReference(ref, scope);
-				}
-			}
-		}
-	}
-	private void acceptModuleReference(ModuleReference ref, Scope scope) {
-		try {
-			ref.resolve(scope);
-		} catch (SelectionNodeFound e) {
-			if (e.binding != null) {
-				this.noProposal = false;
-				this.requestor.acceptModule(ref.moduleName, e.binding.computeUniqueKey(), ref.sourceStart, ref.sourceEnd);
 			}
 		}
 	}
@@ -1397,6 +1386,7 @@ public final class SelectionEngine extends Engine implements ISearchRequestor {
 					moduleBinding.computeUniqueKey(),
 					this.actualSelectionStart,
 					this.actualSelectionEnd);
+			this.acceptedAnswer = true;
 		}
 	}
 	/*

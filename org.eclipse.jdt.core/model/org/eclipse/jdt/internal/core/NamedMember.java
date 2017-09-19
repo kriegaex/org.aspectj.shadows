@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2004, 2016 IBM Corporation and others.
+ * Copyright (c) 2004, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -20,6 +20,7 @@ import org.eclipse.jdt.core.IField;
 import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.IMember;
 import org.eclipse.jdt.core.IMethod;
+import org.eclipse.jdt.core.IModularClassFile;
 import org.eclipse.jdt.core.IModuleDescription;
 import org.eclipse.jdt.core.IPackageFragment;
 import org.eclipse.jdt.core.IType;
@@ -96,8 +97,10 @@ public abstract class NamedMember extends Member {
 
 		// selector
 		key.append('.');
-		String selector = method.getElementName();
-		key.append(selector);
+		if (!method.isConstructor()) { // empty selector for ctors, cf. BindingKeyResolver.consumeMethod()
+			String selector = method.getElementName();
+			key.append(selector);
+		}
 
 		// type parameters
 		if (forceOpen) {
@@ -164,10 +167,9 @@ public abstract class NamedMember extends Member {
 	}
 	protected String getKey(IModuleDescription module, boolean forceOpen) throws JavaModelException {
 		StringBuffer key = new StringBuffer();
-		key.append('L');
+		key.append('"');
 		String modName = module.getElementName();
 		key.append(modName);
-		key.append(';');
 		return key.toString();
 	}
 
@@ -211,6 +213,8 @@ public abstract class NamedMember extends Member {
 				}
 				return this.name;
 			case IJavaElement.CLASS_FILE:
+				if (this.parent instanceof IModularClassFile)
+					return null;
 				String classFileName = this.parent.getElementName();
 				String typeName;
 				if (classFileName.indexOf('$') == -1) {

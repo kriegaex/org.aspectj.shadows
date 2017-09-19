@@ -178,7 +178,6 @@ protected void acceptBinaryMethod(
 public void acceptModule(char[] moduleName, char[] uniqueKey, int start, int end) {
 	IModuleDescription module = resolveModule(moduleName);
 	addElement(module);
-	// TODO: Implement use cases to construct modules from location/key
 }
 /**
  * Resolve the type.
@@ -918,7 +917,7 @@ public IJavaElement[] getElements() {
 	return this.elements;
 }
 protected IModuleDescription resolveModule(char[] moduleName) {
-	Answer answer = this.nameLookup.findModule(new String(moduleName));
+	Answer answer = this.nameLookup.findModule(moduleName);
 	if (answer != null) {
 		return answer.module;
 	}

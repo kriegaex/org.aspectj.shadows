@@ -66,6 +66,7 @@ import org.eclipse.jdt.internal.compiler.lookup.InferenceContext18;
 import org.eclipse.jdt.internal.compiler.lookup.InvocationSite;
 import org.eclipse.jdt.internal.compiler.lookup.LocalVariableBinding;
 import org.eclipse.jdt.internal.compiler.lookup.MethodBinding;
+import org.eclipse.jdt.internal.compiler.lookup.ModuleBinding;
 import org.eclipse.jdt.internal.compiler.lookup.PackageBinding;
 import org.eclipse.jdt.internal.compiler.lookup.ParameterizedGenericMethodBinding;
 import org.eclipse.jdt.internal.compiler.lookup.ParameterizedMethodBinding;
@@ -778,6 +779,11 @@ public abstract class ASTNode implements TypeConstants, TypeIds {
 					// deliberately don't set the annotation resolved tagbits, it is not material and also we are working with a dummy static object.
 					annotations = new AnnotationBinding[length];
 					break;
+				case Binding.MODULE:
+					ModuleBinding module = (ModuleBinding)recipient;
+					if ((module.tagBits & TagBits.AnnotationResolved) != 0) return annotations;
+					module.tagBits |= (TagBits.AnnotationResolved | TagBits.DeprecatedAnnotationResolved);
+					break;
 				default :
 					return annotations;
 			}
@@ -1180,28 +1186,38 @@ public static void resolveDeprecatedAnnotations(BlockScope scope, Annotation[] a
 					if (!CharOperation.equals(TypeConstants.JAVA_LANG_DEPRECATED[2], annotationTypeRef.getLastToken())) continue;
 					TypeBinding annotationType = annotations[i].type.resolveType(scope);
 					if(annotationType != null && annotationType.isValidBinding() && annotationType.id == TypeIds.T_JavaLangDeprecated) {
+						long deprecationTagBits = TagBits.AnnotationDeprecated | TagBits.DeprecatedAnnotationResolved;
+						if (scope.compilerOptions().complianceLevel >= ClassFileConstants.JDK9) {
+							for (MemberValuePair memberValuePair : annotations[i].memberValuePairs()) {
+								if (CharOperation.equals(memberValuePair.name, TypeConstants.FOR_REMOVAL)) {
+									if (memberValuePair.value instanceof TrueLiteral)
+										deprecationTagBits |= TagBits.AnnotationTerminallyDeprecated;
+									break;
+								}
+							}
+						}
 						switch (kind) {
 							case Binding.PACKAGE :
 								PackageBinding packageBinding = (PackageBinding) recipient;
-								packageBinding.tagBits |= (TagBits.AnnotationDeprecated | TagBits.DeprecatedAnnotationResolved);
+								packageBinding.tagBits |= deprecationTagBits;
 								return;
 							case Binding.TYPE :
 							case Binding.GENERIC_TYPE :
 							case Binding.TYPE_PARAMETER :
 								ReferenceBinding type = (ReferenceBinding) recipient;
-								type.tagBits |= (TagBits.AnnotationDeprecated | TagBits.DeprecatedAnnotationResolved);
+								type.tagBits |= deprecationTagBits;
 								return;
 							case Binding.METHOD :
 								MethodBinding method = (MethodBinding) recipient;
-								method.tagBits |= (TagBits.AnnotationDeprecated | TagBits.DeprecatedAnnotationResolved);
+								method.tagBits |= deprecationTagBits;
 								return;
 							case Binding.FIELD :
 								FieldBinding field = (FieldBinding) recipient;
-								field.tagBits |= (TagBits.AnnotationDeprecated | TagBits.DeprecatedAnnotationResolved);
+								field.tagBits |= deprecationTagBits;
 								return;
 							case Binding.LOCAL :
 								LocalVariableBinding local = (LocalVariableBinding) recipient;
-								local.tagBits |= (TagBits.AnnotationDeprecated | TagBits.DeprecatedAnnotationResolved);
+								local.tagBits |= deprecationTagBits;
 								return;
 							default:
 								return;

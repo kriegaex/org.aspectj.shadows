@@ -55,7 +55,7 @@ public class ModuleLocator extends PatternLocator {
 	}
 	public int resolveLevel(ASTNode possibleMatchingNode) {
 		if (this.pattern.findDeclarations && possibleMatchingNode instanceof ModuleDeclaration) {
-			return resolveLevel(((ModuleDeclaration) possibleMatchingNode).moduleBinding);
+			return resolveLevel(((ModuleDeclaration) possibleMatchingNode).binding);
 		}
 		if (this.pattern.findReferences && possibleMatchingNode instanceof ModuleReference) {
 			return resolveLevel(((ModuleReference) possibleMatchingNode).resolve(null));
@@ -79,10 +79,10 @@ public class ModuleLocator extends PatternLocator {
 	protected int referenceType() {
 		return IJavaElement.JAVA_MODULE;
 	}
+	@Override
 	public int resolveLevel(Binding binding) {
 		if (binding == null) return INACCURATE_MATCH;
 		if (!(binding instanceof ModuleBinding)) return IMPOSSIBLE_MATCH;
 		return (matchesName(this.pattern.name, binding.readableName())) ? ACCURATE_MATCH : IMPOSSIBLE_MATCH;
-			
 	}
 }

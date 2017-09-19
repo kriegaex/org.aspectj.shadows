@@ -17,6 +17,7 @@ package org.eclipse.jdt.internal.core;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.Map;
+import java.util.jar.Manifest;
 
 import org.eclipse.core.resources.*;
 import org.eclipse.core.runtime.*;
@@ -450,7 +451,7 @@ public IJavaElement getHandleFromMemento(String token, MementoTokenizer memento,
 			if (memento.hasMoreTokens()) {
 				token = memento.nextToken();
 				char firstChar = token.charAt(0);
-				if (firstChar == JEM_CLASSFILE || firstChar == JEM_COMPILATIONUNIT || firstChar == JEM_COUNT) {
+				if (firstChar == JEM_CLASSFILE || firstChar == JEM_MODULAR_CLASSFILE || firstChar == JEM_COMPILATIONUNIT || firstChar == JEM_COUNT) {
 					pkgName = CharOperation.NO_STRINGS;
 				} else {
 					pkgName = Util.splitOn('.', token, 0, token.length());
@@ -870,8 +871,8 @@ public IModuleDescription getModuleDescription() {
 							return info.getModule();
 					}
 				} else {
-					IClassFile classFile = ((IPackageFragment)pkgs[j]).getClassFile(TypeConstants.MODULE_INFO_CLASS_NAME_STRING);
-					if (classFile instanceof ClassFile && classFile.exists()) {
+					IModularClassFile classFile = ((IPackageFragment)pkgs[j]).getModularClassFile();
+					if (classFile.exists()) {
 						return classFile.getModule();
 					}
 				}
@@ -879,8 +880,24 @@ public IModuleDescription getModuleDescription() {
 			}
 		}
 	} catch (JavaModelException e) {
+		e.printStackTrace();
 		//
 	}
+	return null;
+}
+/** @see org.eclipse.jdt.internal.compiler.env.IModulePathEntry#hasCompilationUnit(String, String) */
+public boolean hasCompilationUnit(String qualifiedPackageName, String moduleName) {
+	IPackageFragment fragment = getPackageFragment(qualifiedPackageName.replace('/', '.'));
+	try {
+		if (fragment.exists())
+			return fragment.containsJavaResources();
+	} catch (JavaModelException e) {
+		// silent
+	}
+	return false;
+}
+/** Convenience lookup, though currently only JarPackageFragmentRoot is searched for a manifest. */
+public Manifest getManifest() {
 	return null;
 }
 }

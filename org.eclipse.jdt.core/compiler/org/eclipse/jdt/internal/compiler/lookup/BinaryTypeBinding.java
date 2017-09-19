@@ -315,8 +315,8 @@ public BinaryTypeBinding(PackageBinding packageBinding, IBinaryType binaryType, 
 		cachePartsFrom(binaryType, true);
 }
 public boolean canBeSeenBy(Scope sco) {
-	ModuleBinding mod = this.environment.getModule(sco.module());
-	return mod.canSee(this.fPackage) && super.canBeSeenBy(sco);
+	ModuleBinding mod = sco.module();
+	return mod.canAccess(this.fPackage) && super.canBeSeenBy(sco);
 }
 /**
  * @see org.eclipse.jdt.internal.compiler.lookup.ReferenceBinding#availableFields()
@@ -541,12 +541,14 @@ void cachePartsFrom(IBinaryType binaryType, boolean needFieldsAndMethods) {
 					FieldBinding field = this.fields[i];
 					if (!field.isDeprecated()) {
 						field.modifiers |= ExtraCompilerModifiers.AccDeprecatedImplicitly;
+						field.tagBits |= this.tagBits & TagBits.AnnotationTerminallyDeprecated;
 					}
 				}
 				for (int i = 0, max = this.methods.length; i < max; i++) {
 					MethodBinding method = this.methods[i];
 					if (!method.isDeprecated()) {
 						method.modifiers |= ExtraCompilerModifiers.AccDeprecatedImplicitly;
+						method.tagBits |= this.tagBits & TagBits.AnnotationTerminallyDeprecated;
 					}
 				}
 			}
@@ -683,7 +685,8 @@ private MethodBinding createMethod(IBinaryMethod method, IBinaryType binaryType,
 		methodModifiers &= ~ClassFileConstants.AccVarargs; // vararg methods are not recognized until 1.5
 	if (isInterface() && (methodModifiers & ClassFileConstants.AccAbstract) == 0) {
 		// see https://bugs.eclipse.org/388954 superseded by https://bugs.eclipse.org/390889
-		if ((methodModifiers & ClassFileConstants.AccStatic) == 0) {
+		if (((methodModifiers & ClassFileConstants.AccStatic) == 0
+				&& (methodModifiers & ClassFileConstants.AccPrivate) == 0)) {
 			// i.e. even at 1.7- we record AccDefaultMethod when reading a 1.8+ interface to avoid errors caused by default methods added to a library
 			methodModifiers |= ExtraCompilerModifiers.AccDefaultMethod;
 		}
@@ -900,9 +903,10 @@ private MethodBinding createMethod(IBinaryMethod method, IBinaryType binaryType,
 
 	if (this.environment.globalOptions.storeAnnotations) {
 		IBinaryAnnotation[] annotations = method.getAnnotations();
-	    if (annotations == null || annotations.length == 0)
-	    	if (method.isConstructor())
-	    		annotations = walker.toMethodReturn().getAnnotationsAtCursor(this.id, false); // FIXME: When both exist, order could become an issue.
+		if (method.isConstructor()) {
+			IBinaryAnnotation[] tAnnotations = walker.toMethodReturn().getAnnotationsAtCursor(this.id, false);
+			result.setTypeAnnotations(createAnnotations(tAnnotations, this.environment, missingTypeNames));
+		}
 		result.setAnnotations(
 			createAnnotations(annotations, this.environment, missingTypeNames),
 			paramAnnotations,
@@ -1383,7 +1387,7 @@ private void initializeTypeVariable(TypeVariableBinding variable, TypeVariableBi
 	ReferenceBinding type, firstBound = null;
 	short rank = 0;
 	if (wrapper.signature[wrapper.start] == Util.C_COLON) {
-		type = this.environment.getResolvedType(TypeConstants.JAVA_LANG_OBJECT, null);
+		type = this.environment.getResolvedJavaBaseType(TypeConstants.JAVA_LANG_OBJECT, null);
 		rank++;
 	} else {
 		TypeBinding typeFromTypeSignature = this.environment.getTypeFromTypeSignature(wrapper, existingVariables, this, missingTypeNames, walker.toTypeBound(rank++));
@@ -1391,7 +1395,7 @@ private void initializeTypeVariable(TypeVariableBinding variable, TypeVariableBi
 			type = (ReferenceBinding) typeFromTypeSignature;
 		} else {
 			// this should only happen if the signature is corrupted (332423)
-			type = this.environment.getResolvedType(TypeConstants.JAVA_LANG_OBJECT, null);
+			type = this.environment.getResolvedJavaBaseType(TypeConstants.JAVA_LANG_OBJECT, null);
 		}
 		firstBound = type;
 	}
@@ -1875,7 +1879,7 @@ private void scanTypeForNullDefaultAnnotation(IBinaryType binaryType, PackageBin
 			&& ((this.typeBits & (TypeIds.BitAnyNullAnnotation)) == 0))
 	{
 		// this will scan the annotations in package-info
-		ReferenceBinding packageInfo = packageBinding.getType(TypeConstants.PACKAGE_INFO_NAME, null);
+		ReferenceBinding packageInfo = packageBinding.getType(TypeConstants.PACKAGE_INFO_NAME, packageBinding.enclosingModule);
 		if (packageInfo == null) {
 			packageBinding.defaultNullness = Binding.NO_NULL_DEFAULT;
 		}
@@ -1911,7 +1915,7 @@ int getNonNullByDefaultValue(IBinaryAnnotation annotation) {
 	IBinaryElementValuePair[] elementValuePairs = annotation.getElementValuePairs();
 	if (elementValuePairs == null || elementValuePairs.length == 0 ) {
 		// no argument: apply default default
-		ReferenceBinding annotationType = this.environment.getType(typeName, null);
+		ReferenceBinding annotationType = this.environment.getType(typeName, this.environment.UnNamedModule); // TODO(SHMOD): null annotations from a module?
 		if (annotationType == null) return 0;
 		if (annotationType.isUnresolvedType())
 			annotationType = ((UnresolvedReferenceBinding) annotationType).resolve(this.environment, false);
@@ -2167,6 +2171,8 @@ public FieldBinding[] unResolvedFields() {
 	return this.fields;
 }
 public ModuleBinding module() {
+	if (!isPrototype())
+		return this.prototype.module;
 	return this.module;
 }
 

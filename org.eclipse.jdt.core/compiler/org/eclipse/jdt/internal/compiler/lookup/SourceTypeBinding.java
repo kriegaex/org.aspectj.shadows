@@ -934,8 +934,10 @@ private void checkAnnotationsInType() {
 	// check @Deprecated annotation
 	getAnnotationTagBits(); // marks as deprecated by side effect
 	ReferenceBinding enclosingType = enclosingType();
-	if (enclosingType != null && enclosingType.isViewedAsDeprecated() && !isDeprecated())
+	if (enclosingType != null && enclosingType.isViewedAsDeprecated() && !isDeprecated()) {
 		this.modifiers |= ExtraCompilerModifiers.AccDeprecatedImplicitly;
+		this.tagBits |= (enclosingType.tagBits & TagBits.AnnotationTerminallyDeprecated);
+	}
 
 	for (int i = 0, length = this.memberTypes.length; i < length; i++)
 		((SourceTypeBinding) this.memberTypes[i]).checkAnnotationsInType();
@@ -1557,7 +1559,7 @@ public boolean canBeSeenBy(Scope sco) {
 	SourceTypeBinding invocationType = sco.enclosingSourceType();
 	if (TypeBinding.equalsEquals(invocationType, this)) 
 		return true;
-	return ((this.environment.canTypeBeSeen(this, sco)) &&
+	return ((this.environment.canTypeBeAccessed(this, sco)) &&
 			super.canBeSeenBy(sco));
 }
 public ReferenceBinding[] memberTypes() {
@@ -1838,8 +1840,10 @@ public FieldBinding resolveTypeFor(FieldBinding field) {
 		if ((field.getAnnotationTagBits() & TagBits.AnnotationDeprecated) != 0)
 			field.modifiers |= ClassFileConstants.AccDeprecated;
 	}
-	if (isViewedAsDeprecated() && !field.isDeprecated())
+	if (isViewedAsDeprecated() && !field.isDeprecated()) {
 		field.modifiers |= ExtraCompilerModifiers.AccDeprecatedImplicitly;
+		field.tagBits |= this.tagBits & TagBits.AnnotationTerminallyDeprecated;
+	}
 	if (hasRestrictedAccess())
 		field.modifiers |= ExtraCompilerModifiers.AccRestrictedAccess;
 	FieldDeclaration[] fieldDecls = this.scope.referenceContext.fields;
@@ -1906,6 +1910,8 @@ public FieldBinding resolveTypeFor(FieldBinding field) {
 						field.tagBits &= ~TagBits.AnnotationNullMASK;
 				}
 			}
+			if (initializationScope.shouldCheckAPILeaks(this, field.isPublic()) && fieldDecl.type != null) // fieldDecl.type is null for enum constants
+				initializationScope.detectAPILeaks(fieldDecl.type, fieldType);
 		} finally {
 		    initializationScope.initializedField = previousField;
 		}
@@ -1943,8 +1949,10 @@ private MethodBinding resolveTypesWithSuspendedTempErrorHandlingPolicy(MethodBin
 		if ((method.getAnnotationTagBits() & TagBits.AnnotationDeprecated) != 0)
 			method.modifiers |= ClassFileConstants.AccDeprecated;
 	}
-	if (isViewedAsDeprecated() && !method.isDeprecated())
+	if (isViewedAsDeprecated() && !method.isDeprecated()) {
 		method.modifiers |= ExtraCompilerModifiers.AccDeprecatedImplicitly;
+		method.tagBits |= this.tagBits & TagBits.AnnotationTerminallyDeprecated;
+	}
 	if (hasRestrictedAccess())
 		method.modifiers |= ExtraCompilerModifiers.AccRestrictedAccess;
 
@@ -1999,6 +2007,7 @@ private MethodBinding resolveTypesWithSuspendedTempErrorHandlingPolicy(MethodBin
 	}
 	final boolean reportUnavoidableGenericTypeProblems = this.scope.compilerOptions().reportUnavoidableGenericTypeProblems;
 	boolean foundArgProblem = false;
+	boolean checkAPIleak = methodDecl.scope.shouldCheckAPILeaks(this, method.isPublic());
 	Argument[] arguments = methodDecl.arguments;
 	if (arguments != null) {
 		int size = arguments.length;
@@ -2036,6 +2045,8 @@ private MethodBinding resolveTypesWithSuspendedTempErrorHandlingPolicy(MethodBin
 				if (leafType instanceof ReferenceBinding && (((ReferenceBinding) leafType).modifiers & ExtraCompilerModifiers.AccGenericSignature) != 0)
 					method.modifiers |= ExtraCompilerModifiers.AccGenericSignature;
 				newParameters[i] = parameterType;
+				if (checkAPIleak)
+					methodDecl.scope.detectAPILeaks(arg.type, parameterType);
 				arg.binding = new LocalVariableBinding(arg, parameterType, arg.modifiers, methodDecl.scope);
 			}
 		}
@@ -2103,6 +2114,8 @@ private MethodBinding resolveTypesWithSuspendedTempErrorHandlingPolicy(MethodBin
 					method.modifiers |= ExtraCompilerModifiers.AccGenericSignature;
 				else if (leafType == TypeBinding.VOID && methodDecl.annotations != null)
 					rejectTypeAnnotatedVoidMethod(methodDecl);
+				if (checkAPIleak)
+					methodDecl.scope.detectAPILeaks(returnType, methodType);
 			}
 		}
 	} else {
@@ -2209,7 +2222,7 @@ public void evaluateNullAnnotations() {
 	if (!isPackageInfo) {
 		boolean isInNullnessAnnotationPackage = this.scope.environment().isNullnessAnnotationPackage(pkg);
 		if (pkg.defaultNullness == NO_NULL_DEFAULT && !isInDefaultPkg && !isInNullnessAnnotationPackage && !(this instanceof NestedTypeBinding)) {
-			ReferenceBinding packageInfo = pkg.getType(TypeConstants.PACKAGE_INFO_NAME, this.scope.module());
+			ReferenceBinding packageInfo = pkg.getType(TypeConstants.PACKAGE_INFO_NAME, this.module);
 			if (packageInfo == null) {
 				// no pkgInfo - complain
 				this.scope.problemReporter().missingNonNullByDefaultAnnotation(this.scope.referenceContext);
@@ -2768,6 +2781,8 @@ public void tagIndirectlyAccessibleMembers() {
 			((SourceTypeBinding) this.superclass).tagIndirectlyAccessibleMembers();
 }
 public ModuleBinding module() {
+	if (!isPrototype())
+		return this.prototype.module;
 	return this.module;
 }
 

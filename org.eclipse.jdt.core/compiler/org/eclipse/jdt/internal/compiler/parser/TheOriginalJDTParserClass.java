@@ -5560,10 +5560,6 @@ protected void consumePackageComment() {
 }
 protected void consumeInternalCompilationUnitWithModuleDeclaration() {
 	this.compilationUnit.moduleDeclaration = (ModuleDeclaration)this.astStack[this.astPtr--];
-	if (this.compilationUnit.isModuleInfo()) {
-		this.compilationUnit.types = new TypeDeclaration[1];
-		this.compilationUnit.createModuleInfoType(this.compilationUnit.moduleDeclaration);
-	}
 	this.astLengthStack[this.astLengthPtr--] = 0;
 }
 protected void consumeRequiresStatement() {
@@ -5789,7 +5785,7 @@ protected void consumeProvidesInterface() {
 	ref.sourceEnd = siName.sourceEnd;
 	ref.declarationSourceEnd = ref.sourceEnd;
 	// recovery
-	if (this.currentElement != null){
+	if (this.currentElement instanceof RecoveredModule) {
 		this.lastCheckPoint = siName.sourceEnd + 1;
 		this.currentElement = this.currentElement.add(ref, 0);
 		this.lastIgnoredToken = -1;
@@ -5823,7 +5819,7 @@ protected void consumeProvidesStatement() {
 	ProvidesStatement ref = (ProvidesStatement) this.astStack[this.astPtr];
 	ref.declarationEnd = ref.declarationSourceEnd = this.endStatementPosition;
 	//recovery
-	if (this.currentElement != null) {
+	if (this.currentElement instanceof RecoveredProvidesStatement) {
 		this.lastIgnoredToken = -1;
 		this.currentElement = this.currentElement.parent;
 		this.restartRecovery = true; // used to avoid branching back into the regular automaton
@@ -5850,7 +5846,7 @@ protected void consumeWithClause() {
 	}
 	this.listLength = 0; // reset after having read super-interfaces
 	// recovery
-	if (this.currentElement != null) { // is recovering
+	if (this.currentElement instanceof RecoveredProvidesStatement) { // is recovering
 		this.lastCheckPoint = service.declarationSourceEnd;
 	}
 }
@@ -5859,6 +5855,14 @@ protected void consumeEmptyModuleStatementsOpt() {
 }
 protected void consumeModuleStatements() {
 	concatNodeLists();
+}
+protected void consumeModuleModifiers() {
+	checkComment(); // might update modifiers with AccDeprecated
+	// Merge with other modifiers
+	this.intStack[this.intPtr -1] |= this.modifiers;
+	resetModifiers();
+	// Account for the possible presence of annotations as well
+	this.expressionLengthStack[this.expressionLengthPtr - 1] += this.expressionLengthStack[this.expressionLengthPtr--];
 }
 protected void consumeModuleHeader() {
 	// ModuleHeader ::= 'module' Name
@@ -5884,6 +5888,21 @@ protected void consumeModuleHeader() {
 	typeDecl.modifiers = this.intStack[this.intPtr--];
 	if (typeDecl.modifiersSourceStart >= 0) {
 		typeDecl.declarationSourceStart = typeDecl.modifiersSourceStart;
+	}
+//	int otherModifiersStart = this.intStack[this.intPtr--];
+//	int otherModifiers = this.intStack[this.intPtr--];
+//	if (otherModifiersStart >= 0) {
+//		typeDecl.declarationSourceStart = typeDecl.modifiersSourceStart = otherModifiersStart;
+//	}
+	// Merge with other modifiers
+//	typeDecl.modifiers |= otherModifiers;
+	if ((length = this.expressionLengthStack[this.expressionLengthPtr--]) != 0) {
+		System.arraycopy(
+			this.expressionStack,
+			(this.expressionPtr -= length) + 1,
+			typeDecl.annotations = new Annotation[length],
+			0,
+			length);
 	}
 	pushOnAstStack(typeDecl);
 
@@ -6161,9 +6180,6 @@ protected void rejectIllegalLeadingTypeAnnotations(TypeReference typeReference) 
 	}
 }
 private void rejectIllegalTypeAnnotations(TypeReference typeReference) {
-	rejectIllegalTypeAnnotations(typeReference, false);
-}
-private void rejectIllegalTypeAnnotations(TypeReference typeReference, boolean tolerateAnnotationsOnDimensions) {
 	// Reject misplaced annotations on type reference; Used when grammar is permissive enough to allow them in the first place.
 	Annotation [][]  annotations = typeReference.annotations;
 	Annotation[] misplacedAnnotations;
@@ -6174,24 +6190,16 @@ private void rejectIllegalTypeAnnotations(TypeReference typeReference, boolean t
 		}
 	}
 	annotations = typeReference.getAnnotationsOnDimensions(true);
-	boolean tolerated = false;
 	for (int i = 0, length = annotations == null ? 0 : annotations.length; i < length; i++) {
 		misplacedAnnotations = annotations[i];
 		if (misplacedAnnotations != null) {
-			if (tolerateAnnotationsOnDimensions) {
-				problemReporter().toleratedMisplacedTypeAnnotations(misplacedAnnotations[0], misplacedAnnotations[misplacedAnnotations.length - 1]);
-				tolerated = true;
-			}
-			else 
 				problemReporter().misplacedTypeAnnotations(misplacedAnnotations[0], misplacedAnnotations[misplacedAnnotations.length - 1]);
 		}
 	}
-	if (!tolerated) {
 		typeReference.annotations = null;
 		typeReference.setAnnotationsOnDimensions(null);
 		typeReference.bits &= ~ASTNode.HasTypeAnnotations;
 	}
-}
 protected void consumeQualifiedSuperReceiver() {
 	// QualifiedSuperReceiver ::= Name '.' 'super'
 	// handle type arguments
@@ -6226,7 +6234,7 @@ protected void consumePrimaryNoNewArrayPrimitiveArrayType() {
 	ClassLiteralAccess cla;
 	pushOnExpressionStack(
 		cla = new ClassLiteralAccess(this.intStack[this.intPtr--], getTypeReference(this.intStack[this.intPtr--])));
-	rejectIllegalTypeAnnotations(cla.type, true /* tolerate annotations on dimensions for bug compatibility for now */);
+	rejectIllegalTypeAnnotations(cla.type);
 }
 protected void consumePrimaryNoNewArrayPrimitiveType() {
 	// PrimaryNoNewArray ::= PrimitiveType '.' 'class'
@@ -9000,6 +9008,7 @@ public void goForHeaders(){
 		this.firstToken = TokenNameUNSIGNED_RIGHT_SHIFT;
 	}
 	this.scanner.recordLineSeparator = true; // recovery goals must record line separators
+	this.scanner.scanContext = null;
 }
 public void goForImportDeclaration(){
 	//tells the scanner to go for import declaration parsing
@@ -9026,10 +9035,13 @@ public void goForMethodBody(){
 	this.scanner.recordLineSeparator = false;
 }
 public void goForPackageDeclaration() {
+	goForPackageDeclaration(true);
+}
+public void goForPackageDeclaration(boolean recordLineSeparators) {
 	//tells the scanner to go for package declaration parsing
 
 	this.firstToken = TokenNameQUESTION;
-	this.scanner.recordLineSeparator = true;
+	this.scanner.recordLineSeparator = recordLineSeparators;
 }
 public void goForTypeDeclaration() {
 	//tells the scanner to go for type (interface or class) declaration parsing
@@ -10155,6 +10167,29 @@ public Expression parseLambdaExpression(char[] source, int offset, int length, C
 	return parseExpression(source, offset, length, unit, recordLineSeparators);
 }
 
+public char[][] parsePackageDeclaration(char[] source, CompilationResult result) {
+	initialize();
+	goForPackageDeclaration(false);
+	this.referenceContext =
+			this.compilationUnit =
+				new CompilationUnitDeclaration(
+					problemReporter(),
+					result,
+					source.length);
+	this.scanner.setSource(source);
+	try {
+		parse();
+	} catch (AbortCompilation ex) {
+		this.lastAct = ERROR_ACTION;
+	}
+
+	if (this.lastAct == ERROR_ACTION) {
+		return null;
+	}
+
+	return this.compilationUnit.currentPackage == null ? null : this.compilationUnit.currentPackage.getImportName();
+
+}
 public Expression parseExpression(char[] source, int offset, int length, CompilationUnitDeclaration unit, boolean recordLineSeparators) {
 
 	initialize();
@@ -11144,7 +11179,7 @@ public boolean automatonWillShift(int token, int lastAction) {
 @Override
 public boolean isParsingModuleDeclaration() {
 	// It can be a null in case of a Vanguard parser, which means no module to be dealt with.
-	return (this.compilationUnit != null && this.compilationUnit.isModuleInfo());
+	return (this.parsingJava9Plus && this.compilationUnit != null && this.compilationUnit.isModuleInfo());
 }
 
 protected boolean shouldTryToRecover() { return true; } // AspectJ Extension - to be overridden

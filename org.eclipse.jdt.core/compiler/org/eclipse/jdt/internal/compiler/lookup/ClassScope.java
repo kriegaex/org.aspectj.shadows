@@ -473,7 +473,7 @@ public class ClassScope extends Scope {
 		}
 
 		SourceTypeBinding sourceType = this.referenceContext.binding;
-		sourceType.module = environment().getModule(module());
+		sourceType.module = module();
 		environment().setAccessRestriction(sourceType, accessRestriction);
 		
 		TypeParameter[] typeParameters = this.referenceContext.typeParameters;
@@ -538,6 +538,7 @@ public class ClassScope extends Scope {
 				return;
 			}
 			if (sourceType.isAnonymousType()) {
+				if (compilerOptions().complianceLevel < ClassFileConstants.JDK9)
 			    modifiers |= ClassFileConstants.AccFinal;
 			    // set AccEnum flag for anonymous body of enum constants
 			    if (this.referenceContext.allocation.type == null)
@@ -578,8 +579,10 @@ public class ClassScope extends Scope {
 						// local member
 						if (enclosingType.isStrictfp())
 							modifiers |= ClassFileConstants.AccStrictfp;
-						if (enclosingType.isViewedAsDeprecated() && !sourceType.isDeprecated())
+						if (enclosingType.isViewedAsDeprecated() && !sourceType.isDeprecated()) {
 							modifiers |= ExtraCompilerModifiers.AccDeprecatedImplicitly;
+							sourceType.tagBits |= enclosingType.tagBits & TagBits.AnnotationTerminallyDeprecated;
+						}
 						break;
 				}
 				scope = scope.parent;
@@ -695,13 +698,6 @@ public class ClassScope extends Scope {
 				}
 			}
 		} else {
-			if (sourceType.sourceName == TypeConstants.MODULE_INFO_NAME) {
-				// TBD - allowed only at source level 9 or above
-				modifiers = ClassFileConstants.AccModule;
-				if ((realModifiers & ClassFileConstants.ACC_OPEN) != 0) {
-					modifiers |= ClassFileConstants.ACC_OPEN;
-				}
-			} else
 			// detect abnormal cases for classes
 			if (isMemberType) { // includes member types defined inside local types
 				final int UNEXPECTED_MODIFIERS = ~(ClassFileConstants.AccPublic | ClassFileConstants.AccPrivate | ClassFileConstants.AccProtected | ClassFileConstants.AccStatic | ClassFileConstants.AccAbstract | ClassFileConstants.AccFinal | ClassFileConstants.AccStrictfp);
@@ -1007,8 +1003,6 @@ public class ClassScope extends Scope {
 		if (this.referenceContext.superclass == null) {
 			if (sourceType.isEnum() && compilerOptions().sourceLevel >= ClassFileConstants.JDK1_5) // do not connect if source < 1.5 as enum already got flagged as syntax error
 				return connectEnumSuperclass();
-			if (sourceType.isModule())
-				return true;
 			sourceType.setSuperClass(getJavaLangObject());
 			return !detectHierarchyCycle(sourceType, sourceType.superclass, null);
 		}
@@ -1284,7 +1278,7 @@ public class ClassScope extends Scope {
 		if (superType.isMemberType()) {
 			ReferenceBinding current = superType.enclosingType();
 			do {
-				if (current.isHierarchyBeingActivelyConnected() && TypeBinding.equalsEquals(current, sourceType)) {
+				if (current.isHierarchyBeingActivelyConnected()) {
 					problemReporter().hierarchyCircularity(sourceType, current, reference);
 					sourceType.tagBits |= TagBits.HierarchyHasProblems;
 					current.tagBits |= TagBits.HierarchyHasProblems;
@@ -1346,11 +1340,16 @@ public class ClassScope extends Scope {
 			org.eclipse.jdt.internal.compiler.ast.TypeReference ref = ((SourceTypeBinding) superType).scope.superTypeReference;
 			// https://bugs.eclipse.org/bugs/show_bug.cgi?id=133071
 			// https://bugs.eclipse.org/bugs/show_bug.cgi?id=121734
-			if (ref != null && ref.resolvedType != null && ((ReferenceBinding) ref.resolvedType).isHierarchyBeingActivelyConnected()) {
+			if (ref != null && ref.resolvedType != null) {
+				ReferenceBinding s = (ReferenceBinding) ref.resolvedType;
+				do {
+					if (s.isHierarchyBeingActivelyConnected()) {
 				problemReporter().hierarchyCircularity(sourceType, superType, reference);
 				sourceType.tagBits |= TagBits.HierarchyHasProblems;
 				superType.tagBits |= TagBits.HierarchyHasProblems;
 				return true;
+			}
+				} while ((s = s.enclosingType()) != null);
 			}
 			if (ref != null && ref.resolvedType == null) {
 				// https://bugs.eclipse.org/bugs/show_bug.cgi?id=319885 Don't cry foul prematurely.

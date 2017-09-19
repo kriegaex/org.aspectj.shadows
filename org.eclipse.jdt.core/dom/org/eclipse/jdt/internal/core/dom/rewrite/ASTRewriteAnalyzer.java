@@ -2123,13 +2123,34 @@ public final class ASTRewriteAnalyzer extends ASTVisitor {
 			return doVisitUnchangedChildren(node);
 		}
 		int pos= rewriteJavadoc(node, ModuleDeclaration.JAVADOC_PROPERTY);
-		pos= rewriteModifiers2(node, ModuleDeclaration.MODIFIERS_PROPERTY, pos);
+		pos= rewriteModifiers2(node, ModuleDeclaration.ANNOTATIONS_PROPERTY, pos);
+
+		RewriteEvent event= getEvent(node, ModuleDeclaration.OPEN_PROPERTY);
+		if (event != null && event.getChangeKind() != RewriteEvent.UNCHANGED) {
+			boolean fakeInModule = getScanner().getScanner().fakeInModule;
+			try {
+				boolean wasOpen= ((Boolean) event.getOriginalValue()).booleanValue();
+				if (wasOpen) {
+					this.tokenScanner.getScanner().fakeInModule = true;
+					int endPos= getScanner().getTokenStartOffset(TerminalTokens.TokenNamemodule, pos);
+					doTextRemove(pos, endPos - pos, getEditGroup(event));
+				} else {
+					doTextInsert(pos, "open ", getEditGroup(event)); //$NON-NLS-1$
+				}
+			} catch (CoreException e) {
+				handleException(e);
+			} finally {
+				this.tokenScanner.getScanner().fakeInModule = fakeInModule;
+			}
+		}
+
 		pos= rewriteRequiredNode(node, ModuleDeclaration.NAME_PROPERTY);
 		int startPos = getPosAfterLeftBrace(pos);
 		int startIndent= getIndent(node.getStartPosition()) + 1;
+		boolean fakeInModule = this.tokenScanner.getScanner().fakeInModule;
 		this.tokenScanner.getScanner().fakeInModule = true;
-		rewriteParagraphList(node, ModuleDeclaration.MODULE_STATEMENTS_PROPERTY, startPos, startIndent, 0, 1);
-		this.tokenScanner.getScanner().fakeInModule = false;
+		rewriteParagraphList(node, ModuleDeclaration.MODULE_DIRECTIVES_PROPERTY, startPos, startIndent, 0, 1);
+		this.tokenScanner.getScanner().fakeInModule = fakeInModule;
 		return false;
 	}
 
@@ -2173,12 +2194,13 @@ public final class ASTRewriteAnalyzer extends ASTVisitor {
 	}
 
 	@Override
-	public boolean visit(RequiresStatement node) {
+	public boolean visit(RequiresDirective node) {
 		if (!hasChildrenChanges(node)) {
 			return doVisitUnchangedChildren(node);
 		}
-		rewriteModifiers2(node, RequiresStatement.MODIFIERS_PROPERTY, getPosAfterToken(node.getStartPosition(), TerminalTokens.TokenNamerequires));
-		rewriteRequiredNode(node, RequiresStatement.NAME_PROPERTY);
+		int pos = getPosAfterToken(node.getStartPosition(), TerminalTokens.TokenNamerequires);
+		rewriteNodeList(node, RequiresDirective.MODIFIERS_PROPERTY, pos, String.valueOf(' '), String.valueOf(' '), String.valueOf(' '));
+		rewriteRequiredNode(node, RequiresDirective.NAME_PROPERTY);
 		return false;
 	}
 
@@ -2720,12 +2742,12 @@ public final class ASTRewriteAnalyzer extends ASTVisitor {
 	}
 
 	@Override
-	public boolean visit(ExportsStatement node) {
+	public boolean visit(ExportsDirective node) {
 		if (!hasChildrenChanges(node)) {
 			return doVisitUnchangedChildren(node);
 		}
-		int pos = rewriteRequiredNode(node, ExportsStatement.NAME_PROPERTY);
-		rewriteNodeList(node, ExportsStatement.MODULES_PROPERTY, pos, "to ", ", "); //$NON-NLS-1$ //$NON-NLS-2$ 
+		int pos = rewriteRequiredNode(node, ExportsDirective.NAME_PROPERTY);
+		rewriteNodeList(node, ExportsDirective.MODULES_PROPERTY, pos, "to ", ", "); //$NON-NLS-1$ //$NON-NLS-2$ 
 
 		return false;
 	}
@@ -3303,12 +3325,12 @@ public final class ASTRewriteAnalyzer extends ASTVisitor {
 	}
 
 	@Override
-	public boolean visit(ProvidesStatement node) {
+	public boolean visit(ProvidesDirective node) {
 		if (!hasChildrenChanges(node)) {
 			return doVisitUnchangedChildren(node);
 		}
-		int pos = rewriteRequiredNode(node, ProvidesStatement.TYPE_PROPERTY);
-		pos= rewriteNodeList(node, ProvidesStatement.IMPLEMENTATIONS_PROPERTY, pos, " with ", ", "); //$NON-NLS-1$ //$NON-NLS-2$
+		int pos = rewriteRequiredNode(node, ProvidesDirective.NAME_PROPERTY);
+		pos= rewriteNodeList(node, ProvidesDirective.IMPLEMENTATIONS_PROPERTY, pos, " with ", ", "); //$NON-NLS-1$ //$NON-NLS-2$
 		return false;
 	}
 	/* (non-Javadoc)
@@ -3778,11 +3800,11 @@ public final class ASTRewriteAnalyzer extends ASTVisitor {
 	}
 	
 	@Override
-	public boolean visit(UsesStatement node) {
+	public boolean visit(UsesDirective node) {
 		if (!hasChildrenChanges(node)) {
 			return doVisitUnchangedChildren(node);
 		}
-		rewriteRequiredNode(node,UsesStatement.TYPE_PROPERTY);
+		rewriteRequiredNode(node,UsesDirective.NAME_PROPERTY);
 		return false;
 	}
 
@@ -4249,6 +4271,18 @@ public final class ASTRewriteAnalyzer extends ASTVisitor {
 		}
 		String newText= getNewValue(node, Modifier.KEYWORD_PROPERTY).toString(); // type Modifier.ModifierKeyword
 		TextEditGroup group = getEditGroup(node, Modifier.KEYWORD_PROPERTY);
+		doTextReplace(node.getStartPosition(), node.getLength(), newText, group);
+		return false;
+	}
+	/* (non-Javadoc)
+	 * @see org.eclipse.jdt.core.dom.ASTVisitor#visit(org.eclipse.jdt.core.dom.ModuleModifier)
+	 */
+	public boolean visit(ModuleModifier node) {
+		if (!hasChildrenChanges(node)) {
+			return doVisitUnchangedChildren(node);
+		}
+		String newText= getNewValue(node, ModuleModifier.KEYWORD_PROPERTY).toString(); // type ModuleModifier.ModuleModifierKeyword
+		TextEditGroup group = getEditGroup(node, ModuleModifier.KEYWORD_PROPERTY);
 		doTextReplace(node.getStartPosition(), node.getLength(), newText, group);
 		return false;
 	}

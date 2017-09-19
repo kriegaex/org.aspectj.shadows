@@ -149,10 +149,11 @@ public class TypeParameter extends AbstractVariableDeclaration {
 						}
 					}
 					this.binding.evaluateNullAnnotations(scope, this);
+				}
 			}
 		}	
 	}
-	}
+
 	/* (non-Javadoc)
 	 * @see org.eclipse.jdt.internal.compiler.ast.AstNode#print(int, java.lang.StringBuffer)
 	 */

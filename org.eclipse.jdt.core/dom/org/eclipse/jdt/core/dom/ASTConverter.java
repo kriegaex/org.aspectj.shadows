@@ -33,6 +33,7 @@ import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.core.compiler.InvalidInputException;
 import org.eclipse.jdt.core.dom.Modifier.ModifierKeyword;
+import org.eclipse.jdt.core.dom.ModuleModifier.ModuleModifierKeyword;
 import org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.AbstractVariableDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.Argument;
@@ -684,7 +685,8 @@ public class ASTConverter {
 			if (block != null) {
 				if ((methodDeclaration.modifiers & (ClassFileConstants.AccAbstract | ClassFileConstants.AccNative)) != 0
 						|| (isInterface && (this.ast.apiLevel < AST.JLS8_INTERNAL ||
-							(methodDeclaration.modifiers & (ClassFileConstants.AccStatic | ExtraCompilerModifiers.AccDefaultMethod)) == 0))) {
+							(methodDeclaration.modifiers & (ClassFileConstants.AccStatic | ExtraCompilerModifiers.AccDefaultMethod |
+									(this.ast.apiLevel > AST.JLS8_INTERNAL ? ClassFileConstants.AccPrivate : 0))) == 0))) {
 					methodDecl.setFlags(methodDecl.getFlags() | ASTNode.MALFORMED);
 				}
 			}
@@ -1407,6 +1409,15 @@ public class ASTConverter {
 				}
 			}
 	
+			org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration mod = unit.moduleDeclaration;
+			if (mod != null) {
+				ASTNode declaration = convertToModuleDeclaration(mod);
+				if (declaration == null) {
+					compilationUnit.setFlags(compilationUnit.getFlags() | ASTNode.MALFORMED);
+				} else {
+					compilationUnit.setModule((ModuleDeclaration) declaration);
+				}
+			} else {
 			org.eclipse.jdt.internal.compiler.ast.TypeDeclaration[] types = unit.types;
 			if (types != null) {
 				int typesLength = types.length;
@@ -1425,6 +1436,7 @@ public class ASTConverter {
 						compilationUnit.types().add(type);
 					}
 				}
+			}
 			}
 			compilationUnit.setSourceRange(unit.sourceStart, unit.sourceEnd - unit.sourceStart  + 1);
 	
@@ -1739,8 +1751,13 @@ public class ASTConverter {
 		if (pvsStmt.targets != null && pvsStmt.targets.length > 0) {
 			List<Name> modules = stmt.modules();
 			for (ModuleReference moduleRef : pvsStmt.getTargetedModules()) {
-				modules.add(getName(moduleRef, CharOperation.splitOn('.', moduleRef.moduleName), moduleRef.sourcePositions));
+				Name target = getName(moduleRef, CharOperation.splitOn('.', moduleRef.moduleName), moduleRef.sourcePositions);
+				modules.add(target);
 				if (tmp < moduleRef.sourceEnd) tmp = moduleRef.sourceEnd;
+				if (this.resolveBindings) {
+					this.recordNodes(target, moduleRef);
+				}
+
 			}
 		}
 		if (tmp > sourceEnd) sourceEnd = tmp;
@@ -2996,12 +3013,6 @@ public class ASTConverter {
 				} else {
 					return convertToAnnotationDeclaration(typeDeclaration);
 				}
-			case org.eclipse.jdt.internal.compiler.ast.TypeDeclaration.MODULE_DECL :
-				if (this.ast.apiLevel < AST.JLS9_INTERNAL) {
-					return null;
-				} else {
-					return convertToModuleDeclaration(typeDeclaration);
-		}
 		}
 
 		checkCanceled();
@@ -3334,61 +3345,74 @@ public class ASTConverter {
 		return fieldDeclaration;
 	}
 
-	public ModuleDeclaration convertToModuleDeclaration(org.eclipse.jdt.internal.compiler.ast.TypeDeclaration typeDeclaration) {
+	/**
+	 * If there is a parsing error causing a recovered module the source positions may be updated only partially. 
+	 * See bug 518843 for a case where this issue occurred. This method provide a safety net with 
+	 * source positions updated even in case of a recovery - if there is no recovery, the source positions will 
+	 * be retained in-tact identical to the compile time ast module node.
+	 */
+	private int getKnownEnd(ModuleDeclaration md, int sourceEnd, int declSourceEnd) {
+		int end =  retrieveRightBrace(md.getStartPosition() + 1, this.compilationUnitSourceLength);
+		end = end > sourceEnd ? end : sourceEnd;
+		end = end > declSourceEnd ? end : declSourceEnd;
+		return end;
+	}
+	public ModuleDeclaration convertToModuleDeclaration(org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration moduleDeclaration) {
 		checkCanceled();
-		if (this.scanner.sourceLevel < ClassFileConstants.JDK9) return null;
-		org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration moduleDeclaration = (org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration) typeDeclaration;
+		if (this.scanner.sourceLevel < ClassFileConstants.JDK9
+				|| this.ast.apiLevel < AST.JLS9_INTERNAL) return null;
 		ModuleDeclaration moduleDecl = this.ast.newModuleDeclaration();
-		convert(moduleDeclaration.javadoc, moduleDecl);
-		setModifiers(moduleDecl, moduleDeclaration);
+		// TODO
+		//convert(moduleDeclaration.javadoc, moduleDecl);
+		setAnnotations(moduleDecl, moduleDeclaration); // only annotations
+		moduleDecl.setOpen(moduleDeclaration.isOpen());
 		Name moduleName = getName(moduleDeclaration, CharOperation.splitOn('.', moduleDeclaration.moduleName), moduleDeclaration.sourcePositions);
 		moduleDecl.setName(moduleName);
-		moduleDecl.setSourceRange(moduleDeclaration.declarationSourceStart, moduleDeclaration.declarationSourceEnd - moduleDeclaration.declarationSourceStart + 1);
 
-		if (this.resolveBindings) {
-			this.recordNodes(moduleDecl, moduleDeclaration);
-		}
-		List<ModuleStatement> stmts = moduleDecl.moduleStatements();
-		TreeSet<ModuleStatement> tSet = new TreeSet<> (new Comparator() {
+		List<ModuleDirective> stmts = moduleDecl.moduleStatements();
+		TreeSet<ModuleDirective> tSet = new TreeSet<> (new Comparator() {
 			public int compare(Object o1, Object o2) {
-				int p1 = ((ModuleStatement) o1).getStartPosition();
-				int p2 = ((ModuleStatement) o2).getStartPosition();
+				int p1 = ((ModuleDirective) o1).getStartPosition();
+				int p2 = ((ModuleDirective) o2).getStartPosition();
 				return p1 < p2 ? -1 : p1 == p2 ? 0 : 1;
 			}
 		});
 		for (int i = 0; i < moduleDeclaration.exportsCount; ++i) {
-			tSet.add(getPackageVisibilityStatement(moduleDeclaration.exports[i], new ExportsStatement(this.ast)));
+			tSet.add(getPackageVisibilityStatement(moduleDeclaration.exports[i], new ExportsDirective(this.ast)));
 		}
 		for (int i = 0; i < moduleDeclaration.opensCount; ++i) {
-			tSet.add(getPackageVisibilityStatement(moduleDeclaration.opens[i], new OpensStatement(this.ast)));
+			tSet.add(getPackageVisibilityStatement(moduleDeclaration.opens[i], new OpensDirective(this.ast)));
 		}
 		for (int i = 0; i < moduleDeclaration.requiresCount; ++i) {
 			org.eclipse.jdt.internal.compiler.ast.RequiresStatement req = moduleDeclaration.requires[i];
 			ModuleReference moduleRef = req.module;
-			RequiresStatement stmt = new RequiresStatement(this.ast);
+			RequiresDirective stmt = new RequiresDirective(this.ast);
 			Name name = getName(moduleRef, CharOperation.splitOn('.', moduleRef.moduleName), moduleRef.sourcePositions);
 			stmt.setName(name);
+			if (this.resolveBindings) {
+				recordNodes(name, moduleRef);
+			}
 
-			addModifierToRequires(req, req.isTransitive(), Modifier.ModifierKeyword.TRANSIENT_KEYWORD, stmt);
-			addModifierToRequires(req, req.isStatic(), Modifier.ModifierKeyword.STATIC_KEYWORD, stmt);
+			setModuleModifiers(req, stmt);
 			stmt.setSourceRange(req.declarationSourceStart, req.declarationEnd - req.declarationSourceStart + 1);			
 			tSet.add(stmt);
 		}
 		for (int i = 0; i < moduleDeclaration.usesCount; ++i) {
 			org.eclipse.jdt.internal.compiler.ast.UsesStatement usesStatement = moduleDeclaration.uses[i];
-			UsesStatement stmt = new UsesStatement(this.ast);
+			UsesDirective stmt = new UsesDirective(this.ast);
 			TypeReference usesRef = usesStatement.serviceInterface;
-			stmt.setType(convertType(usesRef));
+			Name name = convert(usesRef);
+			stmt.setName(name);
 			stmt.setSourceRange(usesStatement.declarationSourceStart, usesStatement.declarationSourceEnd - usesStatement.declarationSourceStart + 1);			
 			tSet.add(stmt);
 		}
 		for (int i = 0; i < moduleDeclaration.servicesCount; ++i) {
 			org.eclipse.jdt.internal.compiler.ast.ProvidesStatement pStmt = moduleDeclaration.services[i];
-			ProvidesStatement stmt = new ProvidesStatement(this.ast);
-			stmt.setType(convertType(pStmt.serviceInterface));
+			ProvidesDirective stmt = new ProvidesDirective(this.ast);
+			stmt.setName(convert(pStmt.serviceInterface));
 			TypeReference[] impls = pStmt.implementations;
 			for (TypeReference impl : impls) {
-				stmt.implementations().add(convertType(impl));
+				stmt.implementations().add(convert(impl));
 			}
 			stmt.setSourceRange(pStmt.declarationSourceStart, pStmt.declarationSourceEnd - pStmt.declarationSourceStart + 1);			
 			tSet.add(stmt);
@@ -3397,18 +3421,40 @@ public class ASTConverter {
 		if (this.resolveBindings) {
 			recordNodes(moduleDecl, moduleDeclaration);
 			recordNodes(moduleName, moduleDeclaration);
-			// moduleDecl.resolveBinding(); TODO: Implement resolveBinding
+			moduleDecl.resolveBinding();
 		}
 		stmts.addAll(tSet);
+		int end = getKnownEnd(moduleDecl, moduleDeclaration.sourceEnd, moduleDeclaration.declarationSourceEnd);
+		moduleDecl.setSourceRange(moduleDeclaration.declarationSourceStart, end  - moduleDeclaration.declarationSourceStart + 1);
 		return moduleDecl;
 	}
 
-	private void addModifierToRequires(org.eclipse.jdt.internal.compiler.ast.RequiresStatement req, boolean flag, Modifier.ModifierKeyword keyword,
-			RequiresStatement stmt) {
-		if (flag) {
-			Modifier modifier = createModifier(keyword);
-			modifier.setSourceRange(req.modifiersSourceStart, keyword.toString().length());
+	private void setModuleModifiers(org.eclipse.jdt.internal.compiler.ast.RequiresStatement req,	RequiresDirective stmt) {
+		boolean fakeInModule = this.scanner.fakeInModule;
+		this.scanner.fakeInModule = true;
+		this.scanner.resetTo(req.declarationSourceStart, req.sourceEnd);
+		try {
+			int token;
+			ModuleModifier modifier;
+			while ((token = this.scanner.getNextToken()) != TerminalTokens.TokenNameEOF) {
+				switch(token) {
+					case TerminalTokens.TokenNamestatic:
+						modifier = createModuleModifier(ModuleModifier.ModuleModifierKeyword.STATIC_KEYWORD);
+						break;
+					case TerminalTokens.TokenNametransitive:
+						modifier = createModuleModifier(ModuleModifier.ModuleModifierKeyword.TRANSITIVE_KEYWORD);
+						break;
+					default :
+						continue;
+				}
+				if (modifier != null) {
 			stmt.modifiers().add(modifier);
+		}
+	}
+		} catch(InvalidInputException e) {
+			// ignore
+		} finally {
+			this.scanner.fakeInModule = fakeInModule;
 		}
 	}
 
@@ -4228,6 +4274,18 @@ public class ASTConverter {
 	 */
 	private Modifier createModifier(ModifierKeyword keyword) {
 		final Modifier modifier = new Modifier(this.ast);
+		modifier.setKeyword(keyword);
+		int start = this.scanner.getCurrentTokenStartPosition();
+		int end = this.scanner.getCurrentTokenEndPosition();
+		modifier.setSourceRange(start, end - start + 1);
+		return modifier;
+	}
+
+	/**
+	 * @return a new module modifier
+	 */
+	private ModuleModifier createModuleModifier(ModuleModifierKeyword keyword) {
+		final ModuleModifier modifier = new ModuleModifier(this.ast);
 		modifier.setKeyword(keyword);
 		int start = this.scanner.getCurrentTokenStartPosition();
 		int end = this.scanner.getCurrentTokenEndPosition();
@@ -5355,9 +5413,9 @@ public class ASTConverter {
 		}
 	}
 
-	protected void setModifiers(ModuleDeclaration moduleDecl, org.eclipse.jdt.internal.compiler.ast.TypeDeclaration typeDeclaration) {
-		this.scanner.resetTo(typeDeclaration.declarationSourceStart, typeDeclaration.sourceStart);
-		this.setModifiers(moduleDecl.modifiers(), typeDeclaration.annotations, typeDeclaration.sourceStart);
+	protected void setAnnotations(ModuleDeclaration moduleDecl, org.eclipse.jdt.internal.compiler.ast.ModuleDeclaration moduleDeclaration) {
+		this.scanner.resetTo(moduleDeclaration.declarationSourceStart, moduleDeclaration.sourceStart);
+		this.setModifiers(moduleDecl.annotations(), moduleDeclaration.annotations, moduleDeclaration.sourceStart);
 	}
 	/**
 	 * @param variableDecl

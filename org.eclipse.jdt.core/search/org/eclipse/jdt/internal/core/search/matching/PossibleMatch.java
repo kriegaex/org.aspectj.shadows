@@ -68,14 +68,23 @@ public boolean equals(Object obj) {
 public char[] getContents() {
 	char[] contents = (this.source == NO_SOURCE_FILE) ? null : this.source;
 	if (this.source == null) {
-		if (this.openable instanceof ClassFile) {
+		if (this.openable instanceof AbstractClassFile) {
 			String fileName = getSourceFileName();
 			if (fileName == NO_SOURCE_FILE_NAME) return CharOperation.NO_CHAR;
 
 			SourceMapper sourceMapper = this.openable.getSourceMapper();
 			if (sourceMapper != null) {
-				IType type = ((ClassFile) this.openable).getType();
-				contents = sourceMapper.findSource(type, fileName);
+				if (this.openable instanceof ClassFile) {
+					IType type = ((ClassFile) this.openable).getType();
+					contents = sourceMapper.findSource(type, fileName);
+				} else if (this.openable instanceof ModularClassFile) {
+					try {
+						IModuleDescription module = ((ModularClassFile) this.openable).getModule();
+						contents = module != null ? sourceMapper.findSource(module) : CharOperation.NO_CHAR; // FIXME(SHMOD)
+					} catch (JavaModelException e) {
+						return CharOperation.NO_CHAR;
+					}
+				}
 			}
 		} else {
 			contents = this.document.getCharContents();
@@ -124,6 +133,11 @@ private char[] getQualifiedName() {
 		String simpleName = index==-1 ? fileName : fileName.substring(0, index);
 		PackageFragment pkg = (PackageFragment) this.openable.getParent();
 		return Util.concatWith(pkg.names, simpleName, '.').toCharArray();
+	} else if (this.openable instanceof ModularClassFile) {
+		// FIXME(SHMOD): not useful https://bugs.eclipse.org/501162#c30
+		String simpleName = TypeConstants.MODULE_INFO_NAME_STRING;
+		PackageFragment pkg = (PackageFragment) this.openable.getParent();
+		return Util.concatWith(pkg.names, simpleName, '.').toCharArray();
 	}
 	return null;
 }
@@ -139,11 +153,16 @@ private String getSourceFileName() {
 
 	this.sourceFileName = NO_SOURCE_FILE_NAME;
 	if (this.openable.getSourceMapper() != null) {
-		BinaryType type = (BinaryType) ((ClassFile) this.openable).getType();
-		IBinaryType reader = MatchLocator.classFileReader(type);
-		if (reader != null) {
-			String fileName = type.sourceFileName(reader);
-			this.sourceFileName = fileName == null ? NO_SOURCE_FILE_NAME : fileName;
+		if (this.openable instanceof ClassFile) {
+			BinaryType type = (BinaryType) ((ClassFile) this.openable).getType();
+			IBinaryType reader = MatchLocator.classFileReader(type);
+			if (reader != null) {
+				String fileName = type.sourceFileName(reader);
+				this.sourceFileName = fileName == null ? NO_SOURCE_FILE_NAME : fileName;
+			}
+		} else if (this.openable instanceof ModularClassFile) {
+			// FIXME(SHMOD): premature https://bugs.eclipse.org/501162#c31
+			this.sourceFileName = TypeConstants.MODULE_INFO_FILE_NAME_STRING;
 		}
 	}
 	return this.sourceFileName;
@@ -175,11 +194,15 @@ public String toString() {
 	return this.openable == null ? "Fake PossibleMatch" : this.openable.toString(); //$NON-NLS-1$
 }
 @Override
-public char[] module() {
+public char[] getModuleName() {
 	if (this.openable instanceof CompilationUnit) {
-		return ((CompilationUnit) this.openable).module();
+		return ((CompilationUnit) this.openable).getModuleName();
+	} else if (this.openable instanceof ClassFile) {
+		IModuleDescription moduleDescription = this.openable.getPackageFragmentRoot().getModuleDescription();
+		if (moduleDescription != null) {
+			return moduleDescription.getElementName().toCharArray();
+		}
 	}
-	// TODO BETA_JAVA9 Auto-generated method stub
 	return null;
 }
 }

@@ -1,10 +1,14 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2014 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
- *
+ * 
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ * 
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *******************************************************************************/
@@ -100,7 +104,7 @@ public class AnnotationMethodDeclaration extends MethodDeclaration {
 	public void resolveStatements() {
 
 		super.resolveStatements();
-		if (this.arguments != null) {
+		if (this.arguments != null || this.receiver != null) {
 			this.scope.problemReporter().annotationMembersCannotHaveParameters(this);
 		}
 		if (this.typeParameters != null) {
@@ -139,7 +143,7 @@ public class AnnotationMethodDeclaration extends MethodDeclaration {
 				MemberValuePair pair = new MemberValuePair(this.selector, this.sourceStart, this.sourceEnd, this.defaultValue);
 				pair.binding = this.binding;
 				if (pair.value.resolvedType == null)
-				pair.resolveTypeExpecting(this.scope, returnTypeBinding);
+					pair.resolveTypeExpecting(this.scope, returnTypeBinding);
 				this.binding.setDefaultValue(org.eclipse.jdt.internal.compiler.lookup.ElementValuePair.getValue(this.defaultValue));
 			} else { // let it know it does not have a default value so it won't try to find it
 				this.binding.setDefaultValue(null);

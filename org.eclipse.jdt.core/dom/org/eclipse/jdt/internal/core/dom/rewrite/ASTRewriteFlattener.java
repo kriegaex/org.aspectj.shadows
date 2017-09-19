@@ -164,6 +164,7 @@ public class ASTRewriteFlattener extends ASTVisitor {
 		}
 	}
 
+
 	protected List getChildList(ASTNode parent, StructuralPropertyDescriptor childProperty) {
 		return (List) getAttribute(parent, childProperty);
 	}
@@ -533,13 +534,13 @@ public class ASTRewriteFlattener extends ASTVisitor {
 	}
 
 	@Override
-	public boolean visit(ExportsStatement node) {
+	public boolean visit(ExportsDirective node) {
 		this.result.append("exports "); //$NON-NLS-1$
-		getChildNode(node, ExportsStatement.NAME_PROPERTY).accept(this);
+		getChildNode(node, ExportsDirective.NAME_PROPERTY).accept(this);
 		List<Name> modules = node.modules();
 		if (modules.size() > 0) {
 			this.result.append(" to "); //$NON-NLS-1$
-			visitList(node, ExportsStatement.MODULES_PROPERTY, Util.COMMA_SEPARATOR, Util.EMPTY_STRING, Util.EMPTY_STRING);
+			visitList(node, ExportsDirective.MODULES_PROPERTY, Util.COMMA_SEPARATOR, Util.EMPTY_STRING, Util.EMPTY_STRING);
 		}
 		this.result.append(';');
 		return false;
@@ -804,11 +805,14 @@ public class ASTRewriteFlattener extends ASTVisitor {
 		if (javadoc != null) {
 			javadoc.accept(this);
 		}
-		visitList(node, ModuleDeclaration.MODIFIERS_PROPERTY, String.valueOf(' '), Util.EMPTY_STRING, String.valueOf(' '));
+		visitList(node, ModuleDeclaration.ANNOTATIONS_PROPERTY, String.valueOf(' '), Util.EMPTY_STRING, String.valueOf(' '));
+		if (getBooleanAttribute(node, ModuleDeclaration.OPEN_PROPERTY)) {
+			this.result.append("open ");//$NON-NLS-1$
+		}
 		this.result.append("module "); //$NON-NLS-1$
 		getChildNode(node, ModuleDeclaration.NAME_PROPERTY).accept(this);
 		this.result.append('{');
-		visitList(node, ModuleDeclaration.MODULE_STATEMENTS_PROPERTY, null);
+		visitList(node, ModuleDeclaration.MODULE_DIRECTIVES_PROPERTY, null);
 		this.result.append('}');
 		return false;
 	}
@@ -895,11 +899,11 @@ public class ASTRewriteFlattener extends ASTVisitor {
 	}
 
 	@Override
-	public boolean visit(ProvidesStatement node) {
+	public boolean visit(ProvidesDirective node) {
 		this.result.append("provides "); //$NON-NLS-1$
-		getChildNode(node, ProvidesStatement.TYPE_PROPERTY).accept(this);
+		getChildNode(node, ProvidesDirective.NAME_PROPERTY).accept(this);
 		this.result.append(" with "); //$NON-NLS-1$
-		visitList(node, ProvidesStatement.IMPLEMENTATIONS_PROPERTY, Util.EMPTY_STRING, Util.COMMA_SEPARATOR, Util.EMPTY_STRING);
+		visitList(node, ProvidesDirective.IMPLEMENTATIONS_PROPERTY, Util.EMPTY_STRING, Util.COMMA_SEPARATOR, Util.EMPTY_STRING);
 		this.result.append(';');
 		return false;
 	}
@@ -926,10 +930,10 @@ public class ASTRewriteFlattener extends ASTVisitor {
 	}
 
 	@Override
-	public boolean visit(RequiresStatement node) {
+	public boolean visit(RequiresDirective node) {
 		this.result.append("requires "); //$NON-NLS-1$
-		visitList(node, RequiresStatement.MODIFIERS_PROPERTY, Util.EMPTY_STRING, Util.EMPTY_STRING, String.valueOf(' '));
-		getChildNode(node, RequiresStatement.NAME_PROPERTY).accept(this);
+		visitList(node, RequiresDirective.MODIFIERS_PROPERTY, String.valueOf(' '), Util.EMPTY_STRING, String.valueOf(' '));
+		getChildNode(node, RequiresDirective.NAME_PROPERTY).accept(this);
 		this.result.append(';');
 		return false;
 	}
@@ -1210,11 +1214,11 @@ public class ASTRewriteFlattener extends ASTVisitor {
 		visitList(node, UnionType.TYPES_PROPERTY, " | ", Util.EMPTY_STRING, Util.EMPTY_STRING); //$NON-NLS-1$
 		return false;
 	}
-	
+
 	@Override
-	public boolean visit(UsesStatement node) {
+	public boolean visit(UsesDirective node) {
 		this.result.append("uses "); //$NON-NLS-1$
-		getChildNode(node, UsesStatement.TYPE_PROPERTY).accept(this);
+		getChildNode(node, UsesDirective.NAME_PROPERTY).accept(this);
 		this.result.append(';');
 		return false;
 	}
@@ -1495,6 +1499,15 @@ public class ASTRewriteFlattener extends ASTVisitor {
 	 */
 	public boolean visit(Modifier node) {
 		this.result.append(getAttribute(node, Modifier.KEYWORD_PROPERTY).toString());
+		return false;
+	}
+
+	/*
+	 * @see ASTVisitor#visit(ModuleModifier)
+	 * @since 3.13 BETA_JAVA9
+	 */
+	public boolean visit(ModuleModifier node) {
+		this.result.append(getAttribute(node, ModuleModifier.KEYWORD_PROPERTY).toString());
 		return false;
 	}
 

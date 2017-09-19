@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2016 IBM Corporation.
+ * Copyright (c) 2016, 2017 IBM Corporation.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -22,6 +22,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.StringTokenizer;
+import java.util.jar.JarFile;
+import java.util.jar.Manifest;
 import java.util.zip.ZipFile;
 
 import org.eclipse.jdt.internal.compiler.CompilationResult;
@@ -31,9 +33,7 @@ import org.eclipse.jdt.internal.compiler.classfmt.ClassFileReader;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFormatException;
 import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
 import org.eclipse.jdt.internal.compiler.env.IModule;
-import org.eclipse.jdt.internal.compiler.env.IModuleEnvironment;
 import org.eclipse.jdt.internal.compiler.env.PackageExportImpl;
-import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment;
 import org.eclipse.jdt.internal.compiler.parser.Parser;
 import org.eclipse.jdt.internal.compiler.util.Util;
 
@@ -46,51 +46,72 @@ public class ModuleFinder {
 			if (files == null) 
 				return Collections.EMPTY_LIST;
 			for (final File file : files) {
-				FileSystem.Classpath modulePath = FileSystem.getClasspath(
-						file.getAbsolutePath(),
-						null,
-						!isModulepath,
-						null,
-						destinationPath == null ? null : (destinationPath + File.separator + file.getName()), 
-						options);
-				if (modulePath != null) {
+				Classpath modulePath = findModule(file, destinationPath, parser, options, isModulepath);
+				if (modulePath != null)
 					collector.add(modulePath);
-					IModule module = null;
-					if (file.isDirectory()) {
-						String[] list = file.list(new FilenameFilter() {
-							@Override
-							public boolean accept(File dir, String name) {
-								if (dir == file && (name.equalsIgnoreCase(IModuleEnvironment.MODULE_INFO_CLASS)
-										|| name.equalsIgnoreCase(IModuleEnvironment.MODULE_INFO_JAVA))) {
-									return true;
-								}
-								return false;
-							}
-						});
-						if (list.length > 0) {
-							String fileName = list[0];
-							switch (fileName) {
-								case IModuleEnvironment.MODULE_INFO_CLASS:
-									module = ModuleFinder.extractModuleFromClass(new File(file, fileName), modulePath);
-									break;
-								case IModuleEnvironment.MODULE_INFO_JAVA:
-									module = ModuleFinder.extractModuleFromSource(new File(file, fileName), parser, modulePath);
-									break;
-							}
-						}
-					} else if (isJar(file)) {
-						module = extractModuleFromJar(file, modulePath);
-					}
-					if (isModulepath && module == null) {
-						 // The name includes the file's extension, but it shouldn't matter.
-						module = new ModuleEnvironment.AutoModule(getFileName(file).toCharArray());
-					}
-					if (module != null)
-						modulePath.acceptModule(module);
-				}
 			}
 		}
 		return collector;
+	}
+	protected static FileSystem.Classpath findModule(final File file, String destinationPath, Parser parser, Map<String, String> options, boolean isModulepath) {
+		FileSystem.Classpath modulePath = FileSystem.getClasspath(
+				file.getAbsolutePath(),
+				null,
+				!isModulepath,
+				null,
+				destinationPath == null ? null : (destinationPath + File.separator + file.getName()), 
+				options);
+		if (modulePath != null) {
+			scanForModule(modulePath, file, parser, isModulepath);
+		}
+		return modulePath;
+	}
+	protected static IModule scanForModule(FileSystem.Classpath modulePath, final File file, Parser parser, boolean isModulepath) {
+		IModule module = null;
+		if (file.isDirectory()) {
+			String[] list = file.list(new FilenameFilter() {
+				@Override
+				public boolean accept(File dir, String name) {
+					if (dir == file && (name.equalsIgnoreCase(IModule.MODULE_INFO_CLASS)
+							|| name.equalsIgnoreCase(IModule.MODULE_INFO_JAVA))) {
+						return true;
+					}
+					return false;
+				}
+			});
+			if (list.length > 0) {
+				String fileName = list[0];
+				switch (fileName) {
+					case IModule.MODULE_INFO_CLASS:
+						module = ModuleFinder.extractModuleFromClass(new File(file, fileName), modulePath);
+						break;
+					case IModule.MODULE_INFO_JAVA:
+						module = ModuleFinder.extractModuleFromSource(new File(file, fileName), parser, modulePath);
+						String modName = new String(module.name());
+						if (!modName.equals(file.getName())) {
+							throw new IllegalArgumentException("module name " + modName + " does not match expected name " + file.getName()); //$NON-NLS-1$ //$NON-NLS-2$
+						}
+						break;
+				}
+			}
+		} else if (isJar(file)) {
+			module = extractModuleFromJar(file, modulePath);
+		}
+		if (isModulepath && module == null && !(modulePath instanceof ClasspathJrt)) {
+			module = IModule.createAutomatic(getFileName(file), file.isFile(), getManifest(file));
+		}
+		if (module != null)
+			modulePath.acceptModule(module);
+		return module;
+	}
+	private static Manifest getManifest(File file) {
+		if (!isJar(file))
+			return null;
+		try (JarFile jar = new JarFile(file)) {
+			return jar.getManifest();
+		} catch (IOException e) {
+			return null;
+		}
 	}
 	private static String getFileName(File file) {
 		String name = file.getName();
@@ -175,7 +196,7 @@ public class ModuleFinder {
 		ZipFile zipFile = null;
 		try {
 			zipFile = new ZipFile(file);
-			ClassFileReader reader = ClassFileReader.read(zipFile, IModuleEnvironment.MODULE_INFO_CLASS);
+			ClassFileReader reader = ClassFileReader.read(zipFile, IModule.MODULE_INFO_CLASS);
 			IModule module = getModule(reader);
 			if (module != null) {
 				return reader.getModuleDeclaration();

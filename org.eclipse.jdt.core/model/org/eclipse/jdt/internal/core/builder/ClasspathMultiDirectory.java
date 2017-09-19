@@ -18,11 +18,10 @@ import org.eclipse.core.resources.*;
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.CompilationResult;
 import org.eclipse.jdt.internal.compiler.ast.CompilationUnitDeclaration;
+import org.eclipse.jdt.internal.compiler.batch.BasicModule;
 import org.eclipse.jdt.internal.compiler.env.ICompilationUnit;
 import org.eclipse.jdt.internal.compiler.env.IModule;
-import org.eclipse.jdt.internal.compiler.env.INameEnvironment;
 import org.eclipse.jdt.internal.compiler.parser.Parser;
-import org.eclipse.jdt.internal.core.ModuleInfo;
 import org.eclipse.jdt.internal.core.util.Util;
 
 public class ClasspathMultiDirectory extends ClasspathDirectory {
@@ -33,8 +32,8 @@ char[][] exclusionPatterns; // used by builders when walking source folders
 boolean hasIndependentOutputFolder; // if output folder is not equal to any of the source folders
 public boolean ignoreOptionalProblems;
 
-ClasspathMultiDirectory(IContainer sourceFolder, IContainer binaryFolder, char[][] inclusionPatterns, char[][] exclusionPatterns, boolean ignoreOptionalProblems, INameEnvironment env) {
-	super(binaryFolder, true, null, null, env, false /* source never an automatic module*/);
+ClasspathMultiDirectory(IContainer sourceFolder, IContainer binaryFolder, char[][] inclusionPatterns, char[][] exclusionPatterns, boolean ignoreOptionalProblems) {
+	super(binaryFolder, true, null, null, false /* source never an automatic module*/);
 
 	this.sourceFolder = sourceFolder;
 	this.inclusionPatterns = inclusionPatterns;
@@ -81,10 +80,7 @@ public void acceptModuleInfo(ICompilationUnit cu, Parser parser) {
 	CompilationUnitDeclaration unit = parser.parse(cu, compilationResult);
 	// Request could also come in when module-info has changed or removed.
 	if (unit.isModuleInfo() && unit.moduleDeclaration != null) {
-		IModule decl = ModuleInfo.createModule(unit.moduleDeclaration);
-		if (decl != null) {
-			this.module = decl;
-		}
+		this.module = new BasicModule(unit.moduleDeclaration, null);
 	}
 }
 public void setModule(IModule mod) {

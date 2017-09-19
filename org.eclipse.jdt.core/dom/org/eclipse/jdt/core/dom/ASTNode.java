@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -910,43 +910,52 @@ public abstract class ASTNode {
 
 	/**
 	 * Node type constant indicating a node of type
-	 * <code>ExportsStatement</code>.
-	 * @see ExportsStatement
+	 * <code>RequiresDirective</code>.
+	 * @see RequiresDirective
 	 * @since 3.13 BETA_JAVA9
 	 */
-	public static final int EXPORTS_STATEMENT = 94;
+	public static final int REQUIRES_DIRECTIVE = 94;
+	
+	/**
+	 * Node type constant indicating a node of type
+	 * <code>ExportsDirective</code>.
+	 * @see ExportsDirective
+	 * @since 3.13 BETA_JAVA9
+	 */
+	public static final int EXPORTS_DIRECTIVE = 95;
 
 	/**
 	 * Node type constant indicating a node of type
-	 * <code>RequiresStatement</code>.
-	 * @see RequiresStatement
+	 * <code>OpensDirective</code>.
+	 * @see OpensDirective
 	 * @since 3.13 BETA_JAVA9
 	 */
-	public static final int REQUIRES_STATEMENT = 95;
+	public static final int OPENS_DIRECTIVE = 96;
+	
+	/**
+	 * Node type constant indicating a node of type
+	 * <code>UsesDirective</code>.
+	 * @see UsesDirective
+	 * @since 3.13 BETA_JAVA9
+	 */
+	public static final int USES_DIRECTIVE = 97;
 
 	/**
 	 * Node type constant indicating a node of type
-	 * <code>UsesStatement</code>.
-	 * @see UsesStatement
+	 * <code>ProvidesDirective</code>.
+	 * @see ProvidesDirective
 	 * @since 3.13 BETA_JAVA9
 	 */
-	public static final int USES_STATEMENT = 96;
+	public static final int PROVIDES_DIRECTIVE = 98;
 
 	/**
 	 * Node type constant indicating a node of type
-	 * <code>ProvidesStatement</code>.
-	 * @see ProvidesStatement
+	 * <code>ModuleModifier</code>.
+	 * @see ModuleModifier
 	 * @since 3.13 BETA_JAVA9
 	 */
-	public static final int PROVIDES_STATEMENT = 97;
+	public static final int MODULE_MODIFIER = 99;
 
-	/**
-	 * Node type constant indicating a node of type
-	 * <code>OpensStatement</code>.
-	 * @see OpensStatement
-	 * @since 3.13 BETA_JAVA9
-	 */
-	public static final int OPENS_STATEMENT = 98;
 	/**
 	 * Returns the node class for the corresponding node type.
 	 *
@@ -1015,8 +1024,8 @@ public abstract class ASTNode {
 				return EnumConstantDeclaration.class;
 			case ENUM_DECLARATION :
 				return EnumDeclaration.class;
-			case EXPORTS_STATEMENT :
-				return ExportsStatement.class;
+			case EXPORTS_DIRECTIVE :
+				return ExportsDirective.class;
 			case EXPRESSION_METHOD_REFERENCE :
 				return ExpressionMethodReference.class;
 			case EXPRESSION_STATEMENT :
@@ -1065,6 +1074,8 @@ public abstract class ASTNode {
 				return Modifier.class;
 			case MODULE_DECLARATION :
 				return ModuleDeclaration.class;
+			case MODULE_MODIFIER :
+				return ModuleModifier.class;
 			case NAME_QUALIFIED_TYPE :
 				return NameQualifiedType.class;
 			case NORMAL_ANNOTATION :
@@ -1073,8 +1084,8 @@ public abstract class ASTNode {
 				return NullLiteral.class;
 			case NUMBER_LITERAL :
 				return NumberLiteral.class;
-			case OPENS_STATEMENT :
-				return OpensStatement.class;
+			case OPENS_DIRECTIVE :
+				return OpensDirective.class;
 			case PACKAGE_DECLARATION :
 				return PackageDeclaration.class;
 			case PARAMETERIZED_TYPE :
@@ -1087,14 +1098,14 @@ public abstract class ASTNode {
 				return PrefixExpression.class;
 			case PRIMITIVE_TYPE :
 				return PrimitiveType.class;
-			case PROVIDES_STATEMENT :
-				return ProvidesStatement.class;
+			case PROVIDES_DIRECTIVE :
+				return ProvidesDirective.class;
 			case QUALIFIED_NAME :
 				return QualifiedName.class;
 			case QUALIFIED_TYPE :
 				return QualifiedType.class;
-			case REQUIRES_STATEMENT :
-				return RequiresStatement.class;
+			case REQUIRES_DIRECTIVE :
+				return RequiresDirective.class;
 			case RETURN_STATEMENT :
 				return ReturnStatement.class;
 			case SIMPLE_NAME :
@@ -1143,8 +1154,8 @@ public abstract class ASTNode {
 				return TypeParameter.class;
 			case UNION_TYPE :
 				return UnionType.class;
-			case USES_STATEMENT :
-				return UsesStatement.class;
+			case USES_DIRECTIVE :
+				return UsesDirective.class;
 			case VARIABLE_DECLARATION_EXPRESSION :
 				return VariableDeclarationExpression.class;
 			case VARIABLE_DECLARATION_FRAGMENT :

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2016 IBM Corporation and others.
+ * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -68,6 +68,7 @@ import org.eclipse.jdt.internal.compiler.env.AccessRestriction;
 import org.eclipse.jdt.internal.compiler.env.AccessRule;
 import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
+import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.compiler.util.ManifestAnalyzer;
 import org.eclipse.jdt.internal.core.nd.IReader;
 import org.eclipse.jdt.internal.core.nd.java.JavaIndex;
@@ -327,7 +328,7 @@ public class ClasspathEntry implements IClasspathEntry {
 //		}
 
 		this.combineAccessRules = combineAccessRules;
-		this.extraAttributes = extraAttributes;
+		this.extraAttributes = extraAttributes.length > 0 ? extraAttributes : NO_EXTRA_ATTRIBUTES;
 
 	    if (inclusionPatterns != INCLUDE_ALL && inclusionPatterns.length > 0) {
 			this.fullInclusionPatternChars = UNINIT_PATTERNS;
@@ -1004,7 +1005,7 @@ public class ClasspathEntry implements IClasspathEntry {
 		JavaModelManager manager = JavaModelManager.getJavaModelManager();
 		try {
 			zip = manager.getZipFile(jarPath);
-			ZipEntry manifest = zip.getEntry("META-INF/MANIFEST.MF"); //$NON-NLS-1$
+			ZipEntry manifest = zip.getEntry(TypeConstants.META_INF_MANIFEST_MF);
 			if (manifest == null) {
 				return null;
 			}
@@ -1367,14 +1368,7 @@ public class ClasspathEntry implements IClasspathEntry {
 	 * @return the attached external annotation path, or null.
 	 */
 	static String getRawExternalAnnotationPath(IClasspathEntry entry) {
-		IClasspathAttribute[] extraAttributes = entry.getExtraAttributes();
-		for (int i = 0, length = extraAttributes.length; i < length; i++) {
-			IClasspathAttribute attribute = extraAttributes[i];
-			if (IClasspathAttribute.EXTERNAL_ANNOTATION_PATH.equals(attribute.getName())) {
-				return attribute.getValue();
-			}
-		}
-		return null;
+		return getExtraAttribute(entry, IClasspathAttribute.EXTERNAL_ANNOTATION_PATH);
 	}
 
 	private static void invalidExternalAnnotationPath(IProject project) {
@@ -1412,6 +1406,17 @@ public class ClasspathEntry implements IClasspathEntry {
 						new String[] { annotationPath.toString(), project.getName(), this.path.toString()}));
 	}
 
+	public static String getExtraAttribute(IClasspathEntry entry, String attributeName) {
+		IClasspathAttribute[] extraAttributes = entry.getExtraAttributes();
+		for (int i = 0, length = extraAttributes.length; i < length; i++) {
+			IClasspathAttribute attribute = extraAttributes[i];
+			if (attributeName.equals(attribute.getName())) {
+				return attribute.getValue();
+			}
+		}
+		return null;
+	}
+
 	public IClasspathEntry getReferencingEntry() {
 		return this.referencingEntry;
 	}
@@ -1438,10 +1443,10 @@ public class ClasspathEntry implements IClasspathEntry {
 		}
 		return false;
 	}
-	public boolean isAutomaticModule() {
+	public boolean isModular() {
 		for (int i = 0, length = this.extraAttributes.length; i < length; i++) {
 			IClasspathAttribute attribute = this.extraAttributes[i];
-			if (IClasspathAttribute.AUTOMATIC_MODULE.equals(attribute.getName()) && "true".equals(attribute.getValue())) //$NON-NLS-1$
+			if (IClasspathAttribute.MODULE.equals(attribute.getName()) && "true".equals(attribute.getValue())) //$NON-NLS-1$
 				return true;
 		}
 		return false;

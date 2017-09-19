@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2016 IBM Corporation and others.
+ * Copyright (c) 2016, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -14,6 +14,7 @@
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.env;
 
+import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.compiler.CharOperation;
 
 /**
@@ -57,27 +58,35 @@ public interface IModulePathEntry {
 	default boolean servesModule(char[] name) {
 		return getModule(name) != null;
 	}
+
 	/**
-	 * Return the look up environment for this entry. Should be used when one needs to
-	 * look up types/packages in all the modules contributed by this entry
-	 * 
+	 * Answer the relevant modules that declare the given package.
+	 * If moduleName is ModuleBinding.ANY then all packages are relevant,
+	 * if moduleName is ModuleBinding.UNNAMED, then only packages in the unnamed module are relevant,
+	 * otherwise consider only packages in the module identified by moduleName.
 	 */
-	IModuleEnvironment getLookupEnvironment();
+	char[][] getModulesDeclaringPackage(String qualifiedPackageName, /*@Nullable*/String moduleName);
+
 	/**
-	 * Return the lookup environment for the given module
-	 * 
-	 * @param module
-	 * 
-	 * @return The look up environment for the module, or null if this entry
-	 * does not know any such module
+	 * Answer whether the given package has any compilation unit (.java or .class) in the given module.
+	 * For entries representing a single module, the module name should be checked before invoking this method.
+	 * @param qualifiedPackageName '/'-separated package name
+	 * @param moduleName if non-null only CUs attached to the given module should be considered
+	 * @return true iff a .java or .class file could be found in the given module / package.
 	 */
-	IModuleEnvironment getLookupEnvironmentFor(IModule module);
+	boolean hasCompilationUnit(String qualifiedPackageName, String moduleName);
+
 	/**
 	 * Specifies whether this entry represents an automatic module.
 	 * 
 	 * @return true if this is an automatic module, false otherwise
 	 */
 	public default boolean isAutomaticModule() {
+		return false;
+	}
+
+	/** Tests whether the current entry represents the given java project. */
+	public default boolean equalsProject(IJavaProject project) {
 		return false;
 	}
 }

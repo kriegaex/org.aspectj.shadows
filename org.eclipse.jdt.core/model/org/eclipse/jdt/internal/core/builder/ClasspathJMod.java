@@ -14,12 +14,7 @@
  *******************************************************************************/
 package org.eclipse.jdt.internal.core.builder;
 
-import java.io.BufferedInputStream;
-import java.io.DataOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.Enumeration;
 import java.util.zip.ZipEntry;
 
@@ -30,36 +25,36 @@ import org.eclipse.jdt.internal.compiler.classfmt.ClassFormatException;
 import org.eclipse.jdt.internal.compiler.classfmt.ExternalAnnotationDecorator;
 import org.eclipse.jdt.internal.compiler.env.AccessRuleSet;
 import org.eclipse.jdt.internal.compiler.env.IBinaryType;
-import org.eclipse.jdt.internal.compiler.env.INameEnvironment;
+import org.eclipse.jdt.internal.compiler.env.IModule;
 import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
 import org.eclipse.jdt.internal.compiler.util.SimpleSet;
 import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
-import org.eclipse.jdt.internal.compiler.util.Util;
 
 public class ClasspathJMod extends ClasspathJar {
 
 	public static char[] CLASSES = "classes".toCharArray(); //$NON-NLS-1$
 	public static char[] CLASSES_FOLDER = "classes/".toCharArray(); //$NON-NLS-1$
-	private static int MODULE_DESCRIPTOR_NAME_LENGTH = MODULE_INFO_CLASS.length();
+	private static int MODULE_DESCRIPTOR_NAME_LENGTH = IModule.MODULE_INFO_CLASS.length();
 
-	ClasspathJMod(String zipFilename, long lastModified, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, INameEnvironment env) {
-		super(zipFilename, lastModified, accessRuleSet, externalAnnotationPath, env, true);
+	ClasspathJMod(String zipFilename, long lastModified, AccessRuleSet accessRuleSet, IPath externalAnnotationPath) {
+		super(zipFilename, lastModified, accessRuleSet, externalAnnotationPath, true);
 	}
 
 
-	public NameEnvironmentAnswer findClass(String binaryFileName, String qualifiedPackageName, String qualifiedBinaryFileName, boolean asBinaryOnly) {
-		// TOOD: BETA_JAVA9 - Should really check for packages with the module context
-		if (!isPackage(qualifiedPackageName)) return null; // most common case
+	public NameEnvironmentAnswer findClass(String binaryFileName, String qualifiedPackageName, String moduleName, String qualifiedBinaryFileName, boolean asBinaryOnly) {
+		if (!isPackage(qualifiedPackageName, moduleName)) return null; // most common case
 
 		try {
 			qualifiedBinaryFileName = new String(CharOperation.append(CLASSES_FOLDER, qualifiedBinaryFileName.toCharArray()));
 			IBinaryType reader = ClassFileReader.read(this.zipFile, qualifiedBinaryFileName);
 			if (reader != null) {
+				char[] modName = this.module == null ? null : this.module.name();
 				if (reader instanceof ClassFileReader) {
 					ClassFileReader classReader = (ClassFileReader) reader;
-					if (classReader.moduleName == null) {
-						classReader.moduleName = this.module == null ? null : this.module.name();
-					}
+					if (classReader.moduleName == null)
+						classReader.moduleName = modName;
+					else
+						modName = classReader.moduleName;
 				}
 				String fileNameWithoutExtension = qualifiedBinaryFileName.substring(0, qualifiedBinaryFileName.length() - SuffixConstants.SUFFIX_CLASS.length);
 				if (this.externalAnnotationPath != null) {
@@ -76,8 +71,8 @@ public class ClasspathJMod extends ClasspathJar {
 					}
 				}
 				if (this.accessRuleSet == null)
-					return new NameEnvironmentAnswer(reader, null);
-				return new NameEnvironmentAnswer(reader, this.accessRuleSet.getViolatedRestriction(fileNameWithoutExtension.toCharArray()));
+					return new NameEnvironmentAnswer(reader, null, modName);
+				return new NameEnvironmentAnswer(reader, this.accessRuleSet.getViolatedRestriction(fileNameWithoutExtension.toCharArray()), modName);
 			}
 		} catch (IOException e) { // treat as if class file is missing
 		} catch (ClassFormatException e) { // treat as if class file is missing
@@ -95,22 +90,7 @@ public class ClasspathJMod extends ClasspathJar {
 				if (CharOperation.equals(CLASSES, folder)) {
 					char[] fileName = CharOperation.subarray(entryName, index + 1, entryName.length);
 					if (modInfo == null && fileName.length == MODULE_DESCRIPTOR_NAME_LENGTH) {
-						if (CharOperation.equals(fileName, MODULE_INFO_CLASS.toCharArray())) {
-							InputStream stream = null;
-							InputStream inputStream;
-							try {
-								inputStream = this.zipFile.getInputStream(entry);
-								if (inputStream == null) throw new IOException("Invalid zip entry name : " + entry.getName()); //$NON-NLS-1$
-								stream = new BufferedInputStream(inputStream);
-								byte[] content = Util.getInputStreamAsByteArray(stream, (int) entry.getSize());
-								DataOutputStream dos = new DataOutputStream(new FileOutputStream(new File("c:\\temp\\module-info.class"))); //$NON-NLS-1$
-								dos.write(content);
-								dos.close();
-//								FileWriter writer = new FileWriter(new File("c:\\temp\\module-info.class")); //$NON-NLS-1$
-							} catch (IOException e1) {
-								// TODO Auto-generated catch block
-								e1.printStackTrace();
-							}
+						if (CharOperation.equals(fileName, IModule.MODULE_INFO_CLASS.toCharArray())) {
 							modInfo = new String(entryName);
 						}
 					}

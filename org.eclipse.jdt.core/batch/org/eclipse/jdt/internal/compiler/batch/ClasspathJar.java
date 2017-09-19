@@ -1,3 +1,4 @@
+// AspectJ Extension
 /*******************************************************************************
  * Copyright (c) 2000, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
@@ -17,7 +18,6 @@
  *******************************************************************************/
 package org.eclipse.jdt.internal.compiler.batch;
 
-/* AspectJ Extension */
 // this file has a number of changes made by ASC to prevent us from
 // leaking OS resources by keeping jars open longer than needed.
 
@@ -30,10 +30,12 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 import org.eclipse.jdt.core.compiler.CharOperation;
+import org.eclipse.jdt.internal.compiler.batch.FileSystem.Classpath;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileReader;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFormatException;
 import org.eclipse.jdt.internal.compiler.classfmt.ExternalAnnotationDecorator;
@@ -45,6 +47,7 @@ import org.eclipse.jdt.internal.compiler.env.NameEnvironmentAnswer;
 import org.eclipse.jdt.internal.compiler.env.IPackageLookup;
 import org.eclipse.jdt.internal.compiler.env.ITypeLookup;
 import org.eclipse.jdt.internal.compiler.env.IBinaryType;
+import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.compiler.lookup.BinaryTypeBinding.ExternalAnnotationStatus;
 import org.eclipse.jdt.internal.compiler.lookup.ModuleEnvironment.AutoModule;
 import org.eclipse.jdt.internal.compiler.util.ManifestAnalyzer;
@@ -52,7 +55,7 @@ import org.eclipse.jdt.internal.compiler.util.SuffixConstants;
 import org.eclipse.jdt.internal.compiler.util.Util;
 
 @SuppressWarnings({"rawtypes", "unchecked"})
-public class ClasspathJar extends ClasspathLocation implements IModuleEnvironment {
+public class ClasspathJar extends ClasspathLocation {
 
 	// AspectJ Extension
 	/**
@@ -98,14 +101,14 @@ public ClasspathJar(File file, boolean closeZipFileAtEnd,
 	this.closeZipFileAtEnd = closeZipFileAtEnd;
 }
 
-public List fetchLinkedJars(FileSystem.ClasspathSectionProblemReporter problemReporter) {
+public List<Classpath> fetchLinkedJars(FileSystem.ClasspathSectionProblemReporter problemReporter) {
 	// expected to be called once only - if multiple calls desired, consider
 	// using a cache
 	InputStream inputStream = null;
 	try {
 		initialize();
-		ArrayList result = new ArrayList();
-		ZipEntry manifest = this.zipFile.getEntry("META-INF/MANIFEST.MF"); //$NON-NLS-1$
+		ArrayList<Classpath> result = new ArrayList<>();
+		ZipEntry manifest = this.zipFile.getEntry(TypeConstants.META_INF_MANIFEST_MF);
 		if (manifest != null) { // non-null implies regular file
 			inputStream = this.zipFile.getInputStream(manifest);
 			ManifestAnalyzer analyzer = new ManifestAnalyzer();
@@ -124,8 +127,7 @@ public List fetchLinkedJars(FileSystem.ClasspathSectionProblemReporter problemRe
 				int lastSeparator = directoryPath.lastIndexOf(File.separatorChar);
 				directoryPath = directoryPath.substring(0, lastSeparator + 1); // potentially empty (see bug 214731)
 				while (calledFilesIterator.hasNext()) {
-						result.add(new ClasspathJar(new File(directoryPath + (String) calledFilesIterator.next()),
-								this.closeZipFileAtEnd, this.accessRuleSet, this.destinationPath));
+					result.add(new ClasspathJar(new File(directoryPath + (String) calledFilesIterator.next()), this.closeZipFileAtEnd, this.accessRuleSet, this.destinationPath));
 				}
 			}
 		}
@@ -144,11 +146,11 @@ public List fetchLinkedJars(FileSystem.ClasspathSectionProblemReporter problemRe
 		}
 	}
 }
-public NameEnvironmentAnswer findClass(char[] typeName, String qualifiedPackageName, String qualifiedBinaryFileName) {
-	return findClass(typeName, qualifiedPackageName, qualifiedBinaryFileName, false);
+public NameEnvironmentAnswer findClass(char[] typeName, String qualifiedPackageName, String moduleName, String qualifiedBinaryFileName) {
+	return findClass(typeName, qualifiedPackageName, moduleName, qualifiedBinaryFileName, false);
 }
-public NameEnvironmentAnswer findClass(char[] typeName, String qualifiedPackageName, String qualifiedBinaryFileName, boolean asBinaryOnly) {
-	if (!isPackage(qualifiedPackageName))
+public NameEnvironmentAnswer findClass(char[] typeName, String qualifiedPackageName, String moduleName, String qualifiedBinaryFileName, boolean asBinaryOnly) {
+	if (!isPackage(qualifiedPackageName, moduleName))
 		return null; // most common case
 
 	try {
@@ -158,9 +160,10 @@ public NameEnvironmentAnswer findClass(char[] typeName, String qualifiedPackageN
 			char[] modName = this.module == null ? null : this.module.name();
 			if (reader instanceof ClassFileReader) {
 				ClassFileReader classReader = (ClassFileReader) reader;
-				if (classReader.moduleName == null) {
+				if (classReader.moduleName == null)
 					classReader.moduleName = modName;
-				}
+				else
+					modName = classReader.moduleName;
 			}
 			searchPaths:
 			if (this.annotationPaths != null) {
@@ -195,11 +198,13 @@ public NameEnvironmentAnswer findClass(char[] typeName, String qualifiedPackageN
 public boolean hasAnnotationFileFor(String qualifiedTypeName) {
 	return this.zipFile.getEntry(qualifiedTypeName+ExternalAnnotationProvider.ANNOTATION_FILE_SUFFIX) != null; 
 }
-public char[][][] findTypeNames(final String qualifiedPackageName, final IModule mod) {
-	if (!isPackage(qualifiedPackageName))
+public char[][][] findTypeNames(final String qualifiedPackageName, String moduleName) {
+	if (!isPackage(qualifiedPackageName, moduleName))
 		return null; // most common case
 	final char[] packageArray = qualifiedPackageName.toCharArray();
 	final ArrayList answers = new ArrayList();
+	nextEntry : for (Enumeration e = this.zipFile.entries(); e.hasMoreElements(); ) {
+		String fileName = ((ZipEntry) e.nextElement()).getName();
 
 	// AspectJ Extension
 	try {
@@ -225,6 +230,7 @@ public char[][][] findTypeNames(final String qualifiedPackageName, final IModule
 				addTypeName(answers, fileName, last, packageArray);
 			}
 		}
+	}
 	int size = answers.size();
 	if (size != 0) {
 		char[][][] result = new char[size][][];
@@ -259,7 +265,7 @@ void acceptModule(byte[] content) {
 		return;
 	ClassFileReader reader = null;
 	try {
-		reader = new ClassFileReader(content, IModuleEnvironment.MODULE_INFO_CLASS.toCharArray(), null);
+		reader = new ClassFileReader(content, IModule.MODULE_INFO_CLASS.toCharArray());
 	} catch (ClassFormatException e) {
 		e.printStackTrace();
 	}
@@ -278,9 +284,9 @@ protected void addToPackageCache(String fileName, boolean endsWithSep) {
 		last = packageName.lastIndexOf('/');
 	}
 }
-public synchronized boolean isPackage(String qualifiedPackageName) {
+public synchronized char[][] getModulesDeclaringPackage(String qualifiedPackageName, String moduleName) {
 	if (this.packageCache != null)
-		return this.packageCache.contains(qualifiedPackageName);
+		return singletonModuleNameIf(this.packageCache.contains(qualifiedPackageName));
 
 	// AspectJ Extension
 	try {
@@ -299,7 +305,16 @@ public synchronized boolean isPackage(String qualifiedPackageName) {
 		String fileName = ((ZipEntry) e.nextElement()).getName();
 		addToPackageCache(fileName, false);
 	}
-	return this.packageCache.contains(qualifiedPackageName);
+	return singletonModuleNameIf(this.packageCache.contains(qualifiedPackageName));
+}
+@Override
+public boolean hasCompilationUnit(String qualifiedPackageName, String moduleName) {
+	for (Enumeration<? extends ZipEntry> e = this.zipFile.entries(); e.hasMoreElements(); ) {
+		String fileName = e.nextElement().getName();
+		if (fileName.startsWith(qualifiedPackageName) && fileName.toLowerCase().endsWith(SUFFIX_STRING_class))
+			return true;
+	}	
+	return false;
 }
 public void reset() {
 	if (this.closeZipFileAtEnd) {
@@ -325,10 +340,8 @@ public void reset() {
 			this.annotationZipFile = null;
 		}
 	}
-	if (this.annotationPaths != null) {
-		this.packageCache = null;
-		this.annotationPaths = null;
-	}
+	this.packageCache = null;
+	this.annotationPaths = null;
 }
 public String toString() {
 	return "Classpath for jar file " + this.file.getPath(); //$NON-NLS-1$
@@ -361,29 +374,18 @@ public int getMode() {
 
 public IModule getModule() {
 	if (this.isAutoModule && this.module == null) {
-		return this.module = new AutoModule(this.file.getName().toCharArray());
+		Manifest manifest = null;
+		try {
+			initialize();
+			ZipEntry entry = this.zipFile.getEntry(TypeConstants.META_INF_MANIFEST_MF);
+			if (entry != null)
+				manifest = new Manifest(this.zipFile.getInputStream(entry));
+		} catch (IOException e) {
+			// no usable manifest 
+		}
+		return this.module = IModule.createAutomatic(this.file.getName(), true, manifest);
 	}
 	return this.module;
-}
-@Override
-public ITypeLookup typeLookup() {
-	return this::findClass;
-}
-@Override
-public IPackageLookup packageLookup() {
-	return this::isPackage;
-}
-
-@Override
-public IModuleEnvironment getLookupEnvironmentFor(IModule mod) {
-	// 
-	return servesModule(mod.name()) ? this : null;
-}
-
-@Override
-public IModuleEnvironment getLookupEnvironment() {
-	// 
-	return this;
 }
 // AspectJ Extension
 private void ensureOpen() throws IOException {

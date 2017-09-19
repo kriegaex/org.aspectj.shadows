@@ -14,9 +14,14 @@
  *******************************************************************************/
 package org.eclipse.jdt.internal.core;
 
+import java.net.URL;
+
+import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.jdt.core.IJavaElement;
-import org.eclipse.jdt.core.IModuleDescription;
+import org.eclipse.jdt.core.ISourceRange;
 import org.eclipse.jdt.core.JavaModelException;
+import org.eclipse.jdt.internal.core.JavaModelManager.PerProjectInfo;
 
 public class BinaryModule extends AbstractModule {
 	public BinaryModule(JavaElement parent, String name) {
@@ -26,9 +31,11 @@ public class BinaryModule extends AbstractModule {
 	 * @see IParent#getChildren()
 	 */
 	public IJavaElement[] getChildren() throws JavaModelException {
-		ClassFile cf = (ClassFile) this.parent;
-		ClassFileInfo cfi = (ClassFileInfo) cf.getElementInfo();
-		return cfi.binaryChildren;
+		return NO_ELEMENTS;
+	}
+	@Override
+	public boolean isBinary() {
+		return true;
 	}
 	@Override
 	public int getFlags() throws JavaModelException {
@@ -37,6 +44,51 @@ public class BinaryModule extends AbstractModule {
 	}
 	public String getKey(boolean forceOpen) throws JavaModelException {
 		return getKey(this, forceOpen);
+	}
+	@Override
+	public ISourceRange getSourceRange() throws JavaModelException {
+		SourceMapper mapper= getSourceMapper();
+		if (mapper != null) {
+			// ensure the class file's buffer is open so that source ranges are computed
+			((ModularClassFile)getClassFile()).getBuffer();
+
+			return mapper.getSourceRange(this);
+		} else {
+			return SourceMapper.UNKNOWN_RANGE;
+		}
+	}
+	public String getAttachedJavadoc(IProgressMonitor monitor) throws JavaModelException {
+		JavadocContents javadocContents = getJavadocContents(monitor);
+		if (javadocContents == null) return null;
+		return javadocContents.getModuleDoc();
+	}
+	public JavadocContents getJavadocContents(IProgressMonitor monitor) throws JavaModelException {
+		PerProjectInfo projectInfo = JavaModelManager.getJavaModelManager().getPerProjectInfoCheckExistence(getJavaProject().getProject());
+		JavadocContents cachedJavadoc = null;
+		synchronized (projectInfo.javadocCache) {
+			cachedJavadoc = (JavadocContents) projectInfo.javadocCache.get(this);
+		}
+		
+		if (cachedJavadoc != null && cachedJavadoc != BinaryType.EMPTY_JAVADOC) {
+			return cachedJavadoc;
+		}
+		URL baseLocation= getJavadocBaseLocation();
+		if (baseLocation == null) {
+			return null;
+		}
+		StringBuffer pathBuffer = new StringBuffer(baseLocation.toExternalForm());
+
+		if (!(pathBuffer.charAt(pathBuffer.length() - 1) == '/')) {
+			pathBuffer.append('/');
+		}
+		pathBuffer.append(getElementName()).append(JavadocConstants.MODULE_FILE_SUFFIX);
+		if (monitor != null && monitor.isCanceled()) throw new OperationCanceledException();
+		String contents = getURLContents(baseLocation, String.valueOf(pathBuffer));
+		JavadocContents javadocContents = new JavadocContents(contents);
+		synchronized (projectInfo.javadocCache) {
+			projectInfo.javadocCache.put(this, javadocContents);
+		}
+		return javadocContents;
 	}
 	public String toString(String lineDelimiter) {
 		StringBuffer buffer = new StringBuffer();
@@ -47,31 +99,5 @@ public class BinaryModule extends AbstractModule {
 			e.printStackTrace();
 		}
 		return buffer.toString();
-	}
-	protected void toStringContent(StringBuffer buffer, String lineDelimiter) throws JavaModelException {
-		IModuleDescription.IPackageExport[] exports = getExportedPackages();
-		IModuleDescription.IModuleReference[] requires = getRequiredModules();
-		buffer.append("module "); //$NON-NLS-1$
-		buffer.append(this.name).append(' ');
-		buffer.append('{').append(lineDelimiter);
-		if (exports != null) {
-			for(int i = 0; i < exports.length; i++) {
-				buffer.append("\texports "); //$NON-NLS-1$
-				buffer.append(exports[i].toString());
-				buffer.append(lineDelimiter);
-			}
-		}
-		buffer.append(lineDelimiter);
-		if (requires != null) {
-			for(int i = 0; i < requires.length; i++) {
-				buffer.append("\trequires "); //$NON-NLS-1$
-				if (requires[i].isPublic()) {
-					buffer.append(" public "); //$NON-NLS-1$
-				}
-				buffer.append(requires[i].getElementName());
-				buffer.append(';').append(lineDelimiter);
-			}
-		}
-		buffer.append(lineDelimiter).append('}').toString();
 	}
 }

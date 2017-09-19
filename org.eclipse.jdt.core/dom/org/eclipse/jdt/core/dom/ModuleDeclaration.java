@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2016 IBM Corporation and others.
+ * Copyright (c) 2016, 2017 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -14,22 +14,23 @@
 package org.eclipse.jdt.core.dom;
 
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
 /**
- * Module declaration AST node type representing the module descriptor file
+ * Module declaration AST node type representing the module descriptor file (added in JLS9 API).
  *
  * <pre>
  * ModuleDeclaration:
- *  [ Javadoc ] { ExtendedModifier } <b>module</b> Name <b>{</b>
- *        [ ExportsStatement | RequiresStatement | UsesStatement | ProvidesStatement ]
+ *  [ Javadoc ] { Annotation } [ <b>open</b> ] <b>module</b> Name <b>{</b>
+ *        { RequiresDirective | ExportsDirective | OpensDirective | UsesDirective | ProvidesDirective }
  *  <b>}</b>
  * </pre>
  * <p>
  * </p>
  *
  * @since 3.13 BETA_JAVA9
+ *
+ * @noextend This class is not intended to be subclassed by clients.
  * @noinstantiate This class is not intended to be instantiated by clients.
  */
 @SuppressWarnings("rawtypes")
@@ -42,22 +43,28 @@ public class ModuleDeclaration extends ASTNode {
 			new ChildPropertyDescriptor(ModuleDeclaration.class, "javadoc", Javadoc.class, OPTIONAL, NO_CYCLE_RISK); //$NON-NLS-1$
 
 	/**
-	 * The "modifiers" structural property of this node type (element type: {@link IExtendedModifier}).
+	 * The "annotations" structural property of this node type (element type: {@link Annotation}).
 	 */
-	public static final ChildListPropertyDescriptor MODIFIERS_PROPERTY =
-			new ChildListPropertyDescriptor(ModuleDeclaration.class, "modifiers", IExtendedModifier.class, CYCLE_RISK); //$NON-NLS-1$
+	public static final ChildListPropertyDescriptor ANNOTATIONS_PROPERTY =
+			new ChildListPropertyDescriptor(ModuleDeclaration.class, "annotations", Annotation.class, NO_CYCLE_RISK); //$NON-NLS-1$
+
+	/**
+	 * The "open" structural property of this node type (type: {@link Boolean}).
+	 */
+	public static final SimplePropertyDescriptor OPEN_PROPERTY =
+			new SimplePropertyDescriptor(ModuleDeclaration.class, "open", boolean.class, MANDATORY); //$NON-NLS-1$
 
 	/**
 	 * The "name" structural property of this node type (child type: {@link Name}).
 	 */
 	public static final ChildPropertyDescriptor NAME_PROPERTY =
-		new ChildPropertyDescriptor(ModuleDeclaration.class, "name", Name.class, MANDATORY, NO_CYCLE_RISK); //$NON-NLS-1$
+			new ChildPropertyDescriptor(ModuleDeclaration.class, "name", Name.class, MANDATORY, NO_CYCLE_RISK); //$NON-NLS-1$
 
 	/**
-	 * The "moduleStatements" structural property of this node type (element type: {@link ModuleStatement}).
+	 * The "moduleDirectives" structural property of this node type (element type: {@link ModuleDirective}).
 	 */
-	public static final ChildListPropertyDescriptor MODULE_STATEMENTS_PROPERTY =
-		new ChildListPropertyDescriptor(ModuleDeclaration.class, "moduleStatements", ModuleStatement.class, NO_CYCLE_RISK); //$NON-NLS-1$
+	public static final ChildListPropertyDescriptor MODULE_DIRECTIVES_PROPERTY =
+			new ChildListPropertyDescriptor(ModuleDeclaration.class, "moduleDirectives", ModuleDirective.class, NO_CYCLE_RISK); //$NON-NLS-1$
 
 	/**
 	 * A list of property descriptors (element type:
@@ -67,12 +74,13 @@ public class ModuleDeclaration extends ASTNode {
 	private static final List PROPERTY_DESCRIPTORS_9_0;
 
 	static {
-		List properyList = new ArrayList(5);
+		List properyList = new ArrayList(6);
 		createPropertyList(ModuleDeclaration.class, properyList);
 		addProperty(JAVADOC_PROPERTY, properyList);
-		addProperty(MODIFIERS_PROPERTY, properyList);
+		addProperty(ANNOTATIONS_PROPERTY, properyList);
+		addProperty(OPEN_PROPERTY, properyList);
 		addProperty(NAME_PROPERTY, properyList);
-		addProperty(MODULE_STATEMENTS_PROPERTY, properyList);
+		addProperty(MODULE_DIRECTIVES_PROPERTY, properyList);
 		PROPERTY_DESCRIPTORS_9_0 = reapPropertyList(properyList);
 	}
 
@@ -97,12 +105,16 @@ public class ModuleDeclaration extends ASTNode {
 	private Javadoc optionalDocComment = null;
 
 	/**
-	 * The extended modifiers (element type: {@link IExtendedModifier}).
-	 * defaults to an empty list
-	 * (see constructor).
+	 * The annotations (element type: {@link Annotation}).
+	 * Defaults to an empty list.
 	 *
 	 */
-	private ASTNode.NodeList modifiers = null;
+	private ASTNode.NodeList annotations = new ASTNode.NodeList(ANNOTATIONS_PROPERTY);
+
+	/**
+	 * open versus normal; defaults to normal module.
+	 */
+	private boolean isOpen = false;
 
 	/**
 	 * The referenced module name; lazily initialized; defaults to a unspecified,
@@ -111,15 +123,14 @@ public class ModuleDeclaration extends ASTNode {
 	private Name name = null;
 
 	/**
-	 * The list of statements (element type: {@link ModuleStatement}).
+	 * The list of statements (element type: {@link ModuleDirective}).
 	 * Defaults to an empty list.
 	 */
-	private ASTNode.NodeList moduleStatements = new ASTNode.NodeList(MODULE_STATEMENTS_PROPERTY);
+	private ASTNode.NodeList moduleStatements = new ASTNode.NodeList(MODULE_DIRECTIVES_PROPERTY);
 
 	ModuleDeclaration(AST ast) {
 		super(ast);
 		unsupportedBelow9();
-		this.modifiers = new ASTNode.NodeList(MODIFIERS_PROPERTY);
 	}
 
 	@Override
@@ -127,6 +138,21 @@ public class ModuleDeclaration extends ASTNode {
 		return propertyDescriptors(apiLevel);
 	}
 
+	/* (omit javadoc for this method)
+	 * Method declared on ASTNode.
+	 */
+	final boolean internalGetSetBooleanProperty(SimplePropertyDescriptor property, boolean get, boolean value) {
+		if (property == OPEN_PROPERTY) {
+			if (get) {
+				return isOpen();
+			} else {
+				setOpen(value);
+				return false;
+			}
+		}
+		// allow default implementation to flag the error
+		return super.internalGetSetBooleanProperty(property, get, value);
+	}
 	/* (omit javadoc for this method)
 	 * Method declared on ASTNode.
 	 */
@@ -155,10 +181,10 @@ public class ModuleDeclaration extends ASTNode {
 	 * Method declared on ASTNode.
 	 */
 	final List internalGetChildListProperty(ChildListPropertyDescriptor property) {
-		if (property == MODIFIERS_PROPERTY) {
-			return modifiers();
+		if (property == ANNOTATIONS_PROPERTY) {
+			return annotations();
 		}
-		if (property == MODULE_STATEMENTS_PROPERTY) {
+		if (property == MODULE_DIRECTIVES_PROPERTY) {
 			return moduleStatements();
 		}
 		// allow default implementation to flag the error
@@ -176,7 +202,8 @@ public class ModuleDeclaration extends ASTNode {
 		ModuleDeclaration result = new ModuleDeclaration(target);
 		result.setSourceRange(getStartPosition(), getLength());
 		result.setJavadoc((Javadoc) ASTNode.copySubtree(target, getJavadoc()));
-		result.modifiers().addAll(ASTNode.copySubtrees(target, modifiers()));
+		result.setOpen(isOpen());
+		result.annotations().addAll(ASTNode.copySubtrees(target, annotations()));
 		result.setName((SimpleName) getName().clone(target));
 		result.moduleStatements().addAll(ASTNode.copySubtrees(target, moduleStatements()));
 		return result;
@@ -194,7 +221,7 @@ public class ModuleDeclaration extends ASTNode {
 		if (visitChildren) {
 			// visit children in normal left to right reading order
 			acceptChild(visitor, getJavadoc());
-			acceptChildren(visitor, this.modifiers);
+			acceptChildren(visitor, this.annotations);
 			acceptChild(visitor, getName());
 			acceptChildren(visitor, this.moduleStatements);
 		}
@@ -225,27 +252,36 @@ public class ModuleDeclaration extends ASTNode {
 	}
 
 	/**
-	 * Returns the modifiers explicitly specified on this declaration.
-	 * <p>
-	 *  this method is a convenience method that
-	 * computes these flags from {@link #modifiers()}.
-	 * </p>
+	 * Returns the live ordered list of annotations
+	 * of this declaration.
 	 *
-	 * @return the bit-wise "or" of <code>Modifier</code> constants
-	 * @see Modifier
+	 * @return the live list of annotations
+	 *    (element type: {@link Annotation})
 	 */
-	public int getModifiers() {
-		// convenience method -
-		// performance could be improved by caching computed flags
-		// but this would require tracking changes to this.modifiers
-		int computedmodifierFlags = Modifier.NONE;
-		for (Iterator it = modifiers().iterator(); it.hasNext(); ) {
-			Object x = it.next();
-			if (x instanceof Modifier) {
-				computedmodifierFlags |= ((Modifier) x).getKeyword().toFlagValue();
-			}
-		}
-		return computedmodifierFlags;
+	public List annotations() {
+		return this.annotations;
+	}
+
+	/**
+	 * Returns whether this module declaration is open or not.
+	 *
+	 * @return <code>true</code> if this is open, else
+	 *    <code>false</code>
+	 */
+	public boolean isOpen() {
+		return this.isOpen;
+	}
+
+	/**
+	 * Sets whether this module declaration is open or not.
+	 *
+	 * @param isOpen <code>true</code> if this is an open module,
+	 *    and <code>false</code> if not
+	 */
+	public void setOpen(boolean isOpen) {
+		preValueChange(OPEN_PROPERTY);
+		this.isOpen = isOpen;
+		postValueChange(OPEN_PROPERTY);
 	}
 
 	/**
@@ -289,40 +325,43 @@ public class ModuleDeclaration extends ASTNode {
 	}
 
 	/**
-	 * Returns the live ordered list of modifiers and annotations
-	 * of this declaration.
-	 *
-	 * @return the live list of modifiers and annotations
-	 *    (element type: {@link IExtendedModifier})
-	 */
-	public List modifiers() {
-		return this.modifiers;
-	}
-
-	/**
 	 * Returns the live list of statements in this module. Adding and
 	 * removing nodes from this list affects this node dynamically.
-	 * All nodes in this list must be <code>Statement</code>s;
+	 * All nodes in this list must be <code>ModuleDirective</code>s;
 	 * attempts to add any other type of node will trigger an
 	 * exception.
 	 *
 	 * @return the live list of statements in this module declaration
-	 *    (element type: {@link ModuleStatement})
+	 *    (element type: {@link ModuleDirective})
 	 */
 	public List moduleStatements() {
 		return this.moduleStatements;
 	}
 
+	/**
+	 * Resolves and returns the binding for the module.
+	 * <p>
+	 * Note that bindings are generally unavailable unless requested when the
+	 * AST is being built.
+	 * </p>
+	 *
+	 * @return the binding, or <code>null</code> if the binding cannot be
+	 *    resolved
+	 */
+	public IModuleBinding resolveBinding() {
+		return this.ast.getBindingResolver().resolveModule(this);
+	}
+
 	@Override
 	int memSize() {
-		return BASE_NODE_SIZE + 4 * 4;
+		return BASE_NODE_SIZE + 5 * 4;
 	}
 
 	@Override
 	int treeSize() {
 		return	memSize()
 			+ (this.optionalDocComment == null ? 0 : getJavadoc().treeSize())
-			+ this.modifiers.listSize()
+			+ this.annotations.listSize()
 			+ (this.name == null ? 0 : getName().treeSize())
 			+ this.moduleStatements.listSize();
 	}

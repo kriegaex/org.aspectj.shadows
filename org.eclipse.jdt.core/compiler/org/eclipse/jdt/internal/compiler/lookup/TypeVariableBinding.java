@@ -141,7 +141,7 @@ public class TypeVariableBinding extends ReferenceBinding {
 			return BoundCheckStatus.OK;
 
 		BoundCheckStatus nullStatus = BoundCheckStatus.OK;
-		boolean checkNullAnnotations = scope.environment().usesNullTypeAnnotations();
+		boolean checkNullAnnotations = scope.environment().usesNullTypeAnnotations() && (location == null || (location.bits & ASTNode.InsideJavadoc) == 0);
 
 		if (argumentType.kind() == Binding.WILDCARD_TYPE) {
 			WildcardBinding wildcard = (WildcardBinding) argumentType;
@@ -174,6 +174,16 @@ public class TypeVariableBinding extends ReferenceBinding {
 										} else {
 											if (denotesRelevantSuperClass(wildcardBound) && denotesRelevantSuperClass(substitutedSuperType)) {
 												// non-object real superclass should have produced a valid 'match' above
+												return BoundCheckStatus.MISMATCH;
+											}
+											// not fully spec-ed in JLS, but based on email communication (2017-09-13):
+											// (a) bound check should apply capture
+											// (b) capture applies glb
+											// (c) and then the glb should be checked for well-formedness (see Scope.isMalformedPair() - this part missing in JLS).
+											// Since we don't do (a), nor (b) for this case, we just directly proceed to (b) here.
+											// For (a) see ParameterizedTypeBinding.boundCheck() - comment added as of this commit
+											// for (b) see CaptureBinding.initializeBounds()  - comment added as of this commit
+											if (Scope.greaterLowerBound(new TypeBinding[] {substitutedSuperType, wildcardBound}, scope, this.environment) == null) {
 												return BoundCheckStatus.MISMATCH;
 											}
 										}

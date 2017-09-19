@@ -21,9 +21,10 @@ import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 import org.eclipse.jdt.core.compiler.CharOperation;
+import org.eclipse.jdt.internal.compiler.env.IBinaryModule;
 import org.eclipse.jdt.internal.compiler.env.IModule;
 
-public class ModuleInfo extends ClassFileStruct implements IModule {
+public class ModuleInfo extends ClassFileStruct implements IBinaryModule {
 	protected int flags;
 	protected int requiresCount;
 	protected int exportsCount;
@@ -38,6 +39,10 @@ public class ModuleInfo extends ClassFileStruct implements IModule {
 	char[][] uses;
 	IModule.IService[] provides;
 
+	@Override
+	public boolean isOpen() {
+		return (this.flags & ClassFileConstants.ACC_OPEN) != 0;
+	}
 	public int requiresCount() {
 		return this.requiresCount;
 	}

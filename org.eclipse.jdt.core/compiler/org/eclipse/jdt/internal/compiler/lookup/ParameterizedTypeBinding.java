@@ -116,6 +116,7 @@ public class ParameterizedTypeBinding extends ReferenceBinding implements Substi
 			boolean hasErrors = false;
 			TypeVariableBinding[] typeVariables = this.type.typeVariables();
 			if (this.arguments != null && typeVariables != null) { // arguments may be null in error cases
+				// per JLS 4.5 we should capture 'this'
 				for (int i = 0, length = typeVariables.length; i < length; i++) {
 				    BoundCheckStatus checkStatus = typeVariables[i].boundCheck(this, this.arguments[i], scope, argumentReferences[i]);
 				    hasErrors |= checkStatus != BoundCheckStatus.OK;
@@ -1411,7 +1412,7 @@ public class ParameterizedTypeBinding extends ReferenceBinding implements Substi
 		return this.fields;
 	}
 	@Override
-	protected MethodBinding[] getInterfaceAbstractContracts(Scope scope, boolean replaceWildcards) throws InvalidInputException {
+	protected MethodBinding[] getInterfaceAbstractContracts(Scope scope, boolean replaceWildcards, boolean filterDefaultMethods) throws InvalidInputException {
 		if (replaceWildcards) {
 			TypeBinding[] types = getNonWildcardParameterization(scope);
 			if (types == null)
@@ -1425,11 +1426,11 @@ public class ParameterizedTypeBinding extends ReferenceBinding implements Substi
 						if (!typeParameters[j].boundCheck(declaringType, types[j], scope, null).isOKbyJLS())
 							return new MethodBinding[] { new ProblemMethodBinding(TypeConstants.ANONYMOUS_METHOD, null, ProblemReasons.NotAWellFormedParameterizedType) };			
 					}
-					return declaringType.getInterfaceAbstractContracts(scope, replaceWildcards);
+					return declaringType.getInterfaceAbstractContracts(scope, replaceWildcards, filterDefaultMethods);
 				}
 			}
 		}
-		return super.getInterfaceAbstractContracts(scope, replaceWildcards);
+		return super.getInterfaceAbstractContracts(scope, replaceWildcards, filterDefaultMethods);
 	}
 	public MethodBinding getSingleAbstractMethod(final Scope scope, boolean replaceWildcards) {
 		return getSingleAbstractMethod(scope, replaceWildcards, -1, -1 /* do not capture */);

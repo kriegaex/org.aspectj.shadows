@@ -55,7 +55,6 @@ import org.eclipse.jdt.internal.compiler.lookup.TypeBinding;
 import org.eclipse.jdt.internal.compiler.lookup.TypeVariableBinding;
 import org.eclipse.jdt.internal.compiler.lookup.WildcardBinding;
 
-@SuppressWarnings({"rawtypes", "unchecked"})
 public class Util implements SuffixConstants {
 
 	/**
@@ -1089,6 +1088,7 @@ public class Util implements SuffixConstants {
 			output.close();
 		}
 	}
+	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public static void recordNestedType(ClassFile classFile, TypeBinding typeBinding) {
 		if (classFile.visitedTypes == null) {
 			classFile.visitedTypes = new HashSet(3);
@@ -1175,34 +1175,17 @@ public class Util implements SuffixConstants {
 		return null;
 	}
 
-	public static void collectVMBootclasspath(List bootclasspaths, File javaHome) {
+	public static void collectVMBootclasspath(List<Classpath> bootclasspaths, File javaHome) {
 		List<Classpath> classpaths = collectPlatformLibraries(javaHome);
 		bootclasspaths.addAll(classpaths);
 	}
-	public static void collectRunningVMBootclasspath(List bootclasspaths) {
+	public static void collectRunningVMBootclasspath(List<Classpath> bootclasspaths) {
 		collectVMBootclasspath(bootclasspaths, null);
 			}
 	public static long getJDKLevel(File javaHome) {
-		String version = getJavaVersion(javaHome);
+		String version = System.getProperty("java.version"); //$NON-NLS-1$
 		return CompilerOptions.versionToJdkLevel(version);
 		}
-	public static String getJavaVersion(File javaHome) {
-		if (javaHome == null) {
-			return System.getProperty("java.version"); //$NON-NLS-1$
-		}
-		File release = new File(javaHome, "release"); //$NON-NLS-1$
-		Properties prop = new Properties();
-		try {
-			prop.load(new FileReader(release));
-			String ver = prop.getProperty("JAVA_VERSION"); //$NON-NLS-1$
-			if (ver != null)
-				ver = ver.replace("\"", "");  //$NON-NLS-1$//$NON-NLS-2$
-			return ver;
-		} catch (IOException e) {
-			// Nothing can be done.
-		}
-		return null;
-	}
 	public static List<FileSystem.Classpath> collectFilesNames() {
 		return collectPlatformLibraries(null);
 	}
@@ -1212,7 +1195,8 @@ public class Util implements SuffixConstants {
 		 * the batch compiler
 		 */
 		String javaversion = null;
-		javaversion = getJavaVersion(javaHome);
+		javaversion = System.getProperty("java.version"); //$NON-NLS-1$
+		// Surely, this ain't required anymore?
 		if (javaversion != null && javaversion.equalsIgnoreCase("1.1.8")) { //$NON-NLS-1$
 			throw new IllegalStateException();
 		}

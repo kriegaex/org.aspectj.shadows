@@ -65,6 +65,7 @@ import org.eclipse.jdt.internal.compiler.flow.ExceptionInferenceFlowContext;
 import org.eclipse.jdt.internal.compiler.flow.FlowContext;
 import org.eclipse.jdt.internal.compiler.flow.FlowInfo;
 import org.eclipse.jdt.internal.compiler.flow.UnconditionalFlowInfo;
+import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.impl.Constant;
 import org.eclipse.jdt.internal.compiler.impl.ReferenceContext;
 import org.eclipse.jdt.internal.compiler.lookup.AnnotationBinding;
@@ -481,6 +482,9 @@ public class LambdaExpression extends FunctionalExpression implements IPolyExpre
 
 	private void analyzeExceptions() {
 		ExceptionHandlingFlowContext ehfc;
+		CompilerOptions compilerOptions = this.scope.compilerOptions();
+		boolean oldAnalyseResources = compilerOptions.analyseResourceLeaks;
+		compilerOptions.analyseResourceLeaks = false;
 		try {
 			this.body.analyseCode(this.scope, 
 									 ehfc = new ExceptionInferenceFlowContext(null, this, Binding.NO_EXCEPTIONS, null, this.scope, FlowInfo.DEAD_END), 
@@ -488,6 +492,8 @@ public class LambdaExpression extends FunctionalExpression implements IPolyExpre
 			this.thrownExceptions = ehfc.extendedExceptions == null ? Collections.emptySet() : new HashSet<TypeBinding>(ehfc.extendedExceptions);
 		} catch (Exception e) {
 			// drop silently.
+		} finally {
+			compilerOptions.analyseResourceLeaks = oldAnalyseResources;
 		}
 	}
 	public FlowInfo analyseCode(BlockScope currentScope, FlowContext flowContext, final FlowInfo flowInfo) {
@@ -944,7 +950,14 @@ public class LambdaExpression extends FunctionalExpression implements IPolyExpre
 		if (r1.isCompatibleWith(r2, skope))
 			return true;
 		
-		LambdaExpression copy = cachedResolvedCopy(s, true /* any resolved copy is good */, false, null); // we expect a cached copy - otherwise control won't reach here.
+		LambdaExpression copy;
+		try {
+			copy = cachedResolvedCopy(s, true /* any resolved copy is good */, false, null); // we expect a cached copy - otherwise control won't reach here.
+		} catch (CopyFailureException cfe) {
+			if (this.assistNode)
+				return false;
+			throw cfe;
+		}
 		Expression [] returnExpressions = copy.resultExpressions;
 		int returnExpressionsLength = returnExpressions == null ? 0 : returnExpressions.length;
 		if (returnExpressionsLength > 0) {

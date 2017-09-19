@@ -49,6 +49,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.ClassFilePool;
@@ -78,28 +79,39 @@ public class LookupEnvironment implements ProblemReasons, TypeConstants {
 	 * Map from typeBinding -> accessRestriction rule
 	 */
 	private Map accessRestrictions;
-	ImportBinding[] defaultImports;
-	private PackageBinding defaultPackage;
-	private HashtableOfPackage defaultPackages;
+	ImportBinding[] defaultImports;				// ROOT_ONLY
+	/**
+	 * The root environment driving the current compilation.
+	 * Other mutable fields in this class marked as ROOT_ONLY must always be accessed from the root environment.
+	 * It is assumed that external clients only know the root environment, whereas calls internally in the compiler
+	 * have to delegate to root where necessary.
+	 * Immutable fields with "global" semantics are SHARED among environments via aliasing.
+	 */
+	public final LookupEnvironment root;
+	public ModuleBinding UnNamedModule;
+	public ModuleBinding JavaBaseModule;
+	public ModuleBinding module;
+	public PackageBinding defaultPackage;
+	/** All visible toplevel packages, i.e. observable packages associated with modules read by the current module. */
 	HashtableOfPackage knownPackages;
 	// AspectJ Extension - raised visibility
-	protected int lastCompletedUnitIndex = -1;
-	protected int lastUnitIndex = -1;
+	protected int lastCompletedUnitIndex = -1; // ROOT_ONLY
+	protected int lastUnitIndex = -1; // ROOT_ONLY
 	// End AspectJ Extension
 
-	TypeSystem typeSystem;
+	TypeSystem typeSystem; // SHARED
 	
-	public INameEnvironment nameEnvironment;
-	public CompilerOptions globalOptions;
+	public INameEnvironment nameEnvironment;	// SHARED
+	public CompilerOptions globalOptions;		// SHARED
 
-	public ProblemReporter problemReporter;
-	public ClassFilePool classFilePool;
+	public ProblemReporter problemReporter; 	// SHARED
+	public ClassFilePool classFilePool; 		// SHARED
 	// indicate in which step on the compilation we are.
 	// step 1 : build the reference binding
 	// step 2 : conect the hierarchy (connect bindings)
 	// step 3 : build fields and method bindings.
-	protected int stepCompleted; // AspectJ Extension - raised visibility
-	public ITypeRequestor typeRequestor;
+	protected int stepCompleted; // ROOT_ONLY AspectJ Extension - raised visibility
+	public ITypeRequestor typeRequestor; // SHARED
 
 	private SimpleLookupTable uniqueParameterizedGenericMethodBindings;
 	
@@ -107,17 +119,18 @@ public class LookupEnvironment implements ProblemReasons, TypeConstants {
 	private SimpleLookupTable uniquePolymorphicMethodBindings;
 	private SimpleLookupTable uniqueGetClassMethodBinding; // https://bugs.eclipse.org/bugs/show_bug.cgi?id=300734
 
+	boolean useModuleSystem;					// true when compliance >= 9 and nameEnvironment is module aware
 	// key is a string with the module name value is a module binding
-	HashtableOfModule knownModules;
+	public HashtableOfModule knownModules;		// SHARED
 
-	public CompilationUnitDeclaration unitBeingCompleted = null; // only set while completing units
+	public CompilationUnitDeclaration unitBeingCompleted = null; // only set while completing units -- ROOT_ONLY
 	public Object missingClassFileLocation = null; // only set when resolving certain references, to help locating problems
     // AspectJ Extension - raised visibility
-	protected CompilationUnitDeclaration[] units = new CompilationUnitDeclaration[4];
+	protected CompilationUnitDeclaration[] units = new CompilationUnitDeclaration[4]; // ROOT_ONLY
 	private MethodVerifier verifier;
 
 	private ArrayList missingTypes;
-	Set<SourceTypeBinding> typesBeingConnected;
+	Set<SourceTypeBinding> typesBeingConnected;	// SHARED
 	public boolean isProcessingAnnotations = false;
 	public boolean mayTolerateMissingType = false;
 
@@ -130,7 +143,7 @@ public class LookupEnvironment implements ProblemReasons, TypeConstants {
 	
 	Map<String,Integer> allNullAnnotations = null;
 
-	final List<MethodBinding> deferredEnumMethods = new ArrayList<>(); // during early initialization we cannot mark Enum-methods as nonnull.
+	final List<MethodBinding> deferredEnumMethods; // SHARED: during early initialization we cannot mark Enum-methods as nonnull.
 
 	/** Global access to the outermost active inference context as the universe for inference variable interning. */
 	InferenceContext18 currentInferenceContext;
@@ -144,16 +157,19 @@ public class LookupEnvironment implements ProblemReasons, TypeConstants {
 
 	static final ProblemPackageBinding TheNotFoundPackage = new ProblemPackageBinding(CharOperation.NO_CHAR, NotFound);
 	static final ProblemReferenceBinding TheNotFoundType = new ProblemReferenceBinding(CharOperation.NO_CHAR_CHAR, null, NotFound);
-	final ModuleBinding UnNamedModule;
+	static final ModuleBinding TheNotFoundModule = new ModuleBinding(CharOperation.NO_CHAR);
 
+/** Construct the root LookupEnvironment, corresponding to the UnNamedModule. */
 public LookupEnvironment(ITypeRequestor typeRequestor, CompilerOptions globalOptions, ProblemReporter problemReporter, INameEnvironment nameEnvironment) {
+	this.root = this;
+	this.UnNamedModule = new ModuleBinding.UnNamedModule(this);
+	this.module = this.UnNamedModule;
 	this.typeRequestor = typeRequestor;
 	this.globalOptions = globalOptions;
 	this.problemReporter = problemReporter;
 	this.defaultPackage = new PackageBinding(this); // assume the default package always exists
 	this.defaultImports = null;
 	this.nameEnvironment = nameEnvironment;
-	this.defaultPackages = new HashtableOfPackage();
 	this.knownPackages = new HashtableOfPackage();
 	this.uniqueParameterizedGenericMethodBindings = new SimpleLookupTable(3);
 	this.uniquePolymorphicMethodBindings = new SimpleLookupTable(3);
@@ -161,101 +177,162 @@ public LookupEnvironment(ITypeRequestor typeRequestor, CompilerOptions globalOpt
 	this.accessRestrictions = new HashMap(3);
 	this.classFilePool = ClassFilePool.newInstance();
 	this.typesBeingConnected = new HashSet<>();
+	this.deferredEnumMethods = new ArrayList<>();
 	this.typeSystem = this.globalOptions.sourceLevel >= ClassFileConstants.JDK1_8 && this.globalOptions.storeAnnotations ? new AnnotatableTypeSystem(this) : new TypeSystem(this);
-	this.knownModules = new HashtableOfModule(5);
-	this.UnNamedModule = new ModuleBinding.UnNamedModule(this);
+	this.knownModules = new HashtableOfModule();
+	this.useModuleSystem = nameEnvironment instanceof IModuleAwareNameEnvironment && globalOptions.complianceLevel >= ClassFileConstants.JDK9;
+	this.resolutionListeners = new IQualifiedTypeResolutionListener[0];
 }
 
-public ReferenceBinding askForType(char[][] compoundName) {
-	return askForType(compoundName, null);
+/** Construct a specific LookupEnvironment, corresponding to the given module. */
+LookupEnvironment(LookupEnvironment rootEnv, ModuleBinding module) {
+	this.root = rootEnv;
+	this.UnNamedModule = rootEnv.UnNamedModule;
+	this.module = module;
+	this.typeRequestor = rootEnv.typeRequestor;
+	this.globalOptions = rootEnv.globalOptions;
+	this.problemReporter = rootEnv.problemReporter;
+	this.defaultPackage = new PackageBinding(this); // assume the default package always exists
+	this.defaultImports = null;
+	this.nameEnvironment = rootEnv.nameEnvironment;
+	this.knownPackages = new HashtableOfPackage();
+	this.uniqueParameterizedGenericMethodBindings = new SimpleLookupTable(3);
+	this.uniquePolymorphicMethodBindings = new SimpleLookupTable(3);
+	this.missingTypes = null;
+	this.accessRestrictions = new HashMap(3);
+	this.classFilePool = rootEnv.classFilePool;
+	this.typesBeingConnected = rootEnv.typesBeingConnected;
+	this.deferredEnumMethods = rootEnv.deferredEnumMethods;
+	this.typeSystem = rootEnv.typeSystem;
+	// knownModules is unused in specific LookupEnvironments
+	this.useModuleSystem = rootEnv.useModuleSystem;
 }
+
+// NOTE: only for resolving!
 public ModuleBinding getModule(char[] name) {
-	if (name == null || name.length == 0 || CharOperation.equals(name, ModuleEnvironment.UNNAMED))
+	if (this.root != this)
+		return this.root.getModule(name);
+	if (name == null || name == ModuleBinding.UNNAMED || CharOperation.equals(name, ModuleBinding.ALL_UNNAMED))
 		return this.UnNamedModule;
-	ModuleBinding module = this.knownModules.get(name);
-	if (module == null) {
-		if (this.nameEnvironment instanceof IModuleAwareNameEnvironment) {
+	ModuleBinding moduleBinding = this.knownModules.get(name);
+	if (moduleBinding == null) {
+		if (this.useModuleSystem) {
 			IModule mod = ((IModuleAwareNameEnvironment) this.nameEnvironment).getModule(name);
 		if (mod != null) {
-			this.knownModules.put(name, module = new ModuleBinding(mod, this));
+				moduleBinding = BinaryModuleBinding.create(mod, this);
 		}
 		} else 
 			return this.UnNamedModule;
 	}
-	return module;
+	return moduleBinding;
+}
+
+@Deprecated
+public ReferenceBinding askForType(char[][] compoundName) {
+	return askForType(compoundName, this.UnNamedModule);
 }
 /**
  * Ask the name environment for a type which corresponds to the compoundName.
  * Answer null if the name cannot be found.
  */
 
-public ReferenceBinding askForType(char[][] compoundName, char[] mod) {
-	NameEnvironmentAnswer answer = null;
-	if (this.nameEnvironment instanceof IModuleAwareNameEnvironment) {
-		ModuleBinding module = getModule(mod);
-		answer = ((IModuleAwareNameEnvironment)this.nameEnvironment).findType(compoundName, module.getDependencyClosureContext());
+public ReferenceBinding askForType(char[][] compoundName, /*@NonNull*/ModuleBinding clientModule) {
+	assert clientModule != null : "lookup needs a module"; //$NON-NLS-1$
+	NameEnvironmentAnswer[] answers = null;
+	if (this.useModuleSystem) {
+		IModuleAwareNameEnvironment moduleEnv = (IModuleAwareNameEnvironment) this.nameEnvironment;
+		answers = askForTypeFromModules(clientModule, clientModule.getAllRequiredModules(),
+				mod -> moduleEnv.findType(compoundName, mod.nameForLookup()));
 	} else {
-		answer = this.nameEnvironment.findType(compoundName);
+		NameEnvironmentAnswer answer = this.nameEnvironment.findType(compoundName);
+		if (answer != null) {
+			answer.moduleBinding = this.module;
+			answers = new NameEnvironmentAnswer[] { answer };
 	}
-	if (answer == null) return null;
+	}
+	if (answers == null)
+		return null;
+
+	ReferenceBinding candidate = null;
+	for (NameEnvironmentAnswer answer : answers) {
+		if (answer == null) continue;
+
+		ModuleBinding answerModule = answer.moduleBinding != null ? answer.moduleBinding : this.UnNamedModule;
 
 	if (answer.isBinaryType()) {
 		// the type was found as a .class file
-		PackageBinding pkg = computePackageFrom(compoundName, false /* valid pkg */);
+			PackageBinding pkg = answerModule.environment.computePackageFrom(compoundName, false /* valid pkg */);
 		this.typeRequestor.accept(answer.getBinaryType(), pkg, answer.getAccessRestriction());
 		ReferenceBinding binding = pkg.getType0(compoundName[compoundName.length - 1]);
 		if (binding instanceof BinaryTypeBinding) {
-			((BinaryTypeBinding) binding).module = getModule(answer.moduleName());
+				((BinaryTypeBinding) binding).module = answerModule;
+				if (pkg.enclosingModule == null)
+					pkg.enclosingModule = answerModule;
 		}
 	} else if (answer.isCompilationUnit()) {
 		// the type was found as a .java file, try to build it then search the cache
 		this.typeRequestor.accept(answer.getCompilationUnit(), answer.getAccessRestriction());
 	} else if (answer.isSourceType()) {
 		// the type was found as a source model
-		PackageBinding pkg = computePackageFrom(compoundName, false /* valid pkg */);
+			PackageBinding pkg = answerModule.environment.computePackageFrom(compoundName, false /* valid pkg */);
 		this.typeRequestor.accept(answer.getSourceTypes(), pkg, answer.getAccessRestriction());
 		ReferenceBinding binding = pkg.getType0(compoundName[compoundName.length - 1]);
 		if (binding instanceof SourceTypeBinding) {
-			((SourceTypeBinding) binding).module = getModule(answer.moduleName());
+				((SourceTypeBinding) binding).module = answerModule;
+				if (pkg.enclosingModule == null)
+					pkg.enclosingModule = answerModule;
 		}
 	}
-	return getCachedType(compoundName);
+		candidate = combine(candidate, answerModule.environment.getCachedType(compoundName), clientModule);
 }
-ReferenceBinding askForType(PackageBinding packageBinding, char[] name) {
-	return askForType(packageBinding, name, null);
+	return candidate;
 }
 /* Ask the oracle for a type named name in the packageBinding.
 * Answer null if the name cannot be found.
 */
-
-ReferenceBinding askForType(PackageBinding packageBinding, char[] name, char[] mod) {
+ReferenceBinding askForType(PackageBinding packageBinding, char[] name, ModuleBinding clientModule) {
+	assert clientModule != null : "lookup needs a module"; //$NON-NLS-1$
 	if (packageBinding == null) {
 		packageBinding = this.defaultPackage;
 	}
-	NameEnvironmentAnswer answer = null;
-	if (this.nameEnvironment instanceof IModuleAwareNameEnvironment) {
-		ModuleBinding module = getModule(mod);
-		if (module != null) {
-				answer = ((IModuleAwareNameEnvironment) this.nameEnvironment).findType(name,
-						packageBinding.compoundName, module.getDependencyClosureContext());
-		}
+	NameEnvironmentAnswer[] answers = null;
+	if (this.useModuleSystem) {
+		IModuleAwareNameEnvironment moduleEnv = (IModuleAwareNameEnvironment) this.nameEnvironment;
+		final PackageBinding pack = packageBinding;
+		// leverage module information from the (split?) package as to prefer NotAccessible over NotFound:
+		answers = askForTypeFromModules(null, packageBinding.getDeclaringModules(),
+				mod -> fromSplitPackageOrOracle(moduleEnv, mod, pack, name));
 	} else {
-		answer = this.nameEnvironment.findType(name, packageBinding.compoundName);
+		NameEnvironmentAnswer answer = this.nameEnvironment.findType(name, packageBinding.compoundName);
+		if (answer != null) {
+			answer.moduleBinding = this.module;
+			answers = new NameEnvironmentAnswer[] { answer };
 	}
-	if (answer == null)
+	}
+	if (answers == null)
 		return null;
 
-	char[] module = answer.moduleName();
-//	if (module != null && !CharOperation.equals(module, JRTUtil.JAVA_BASE.toCharArray()) 
-//			&& !this.nameEnvironment.isPackageVisible(packageBinding.readableName(), module, mod)) {
-//		return null;
-//	}
-	if (answer.isBinaryType()) {
+	ReferenceBinding candidate = null;
+	for (NameEnvironmentAnswer answer : answers) {
+		if (answer == null) continue;
+		ModuleBinding answerModule = answer.moduleBinding != null ? answer.moduleBinding : this.UnNamedModule;
+		PackageBinding answerPackage = packageBinding;
+		
+		if (answerModule != null) {
+			if (!answerPackage.isDeclaredIn(answerModule))
+				continue; // this answer is not reachable via the packageBinding
+			if (answerPackage instanceof SplitPackageBinding)
+				answerPackage = ((SplitPackageBinding) answerPackage).getIncarnation(answerModule);
+		}
+		if (answer.isResolvedBinding()) {
+			candidate = combine(candidate, answer.getResolvedBinding(), clientModule);
+			continue;
+		} else if (answer.isBinaryType()) {
 		// the type was found as a .class file
-		this.typeRequestor.accept(answer.getBinaryType(), packageBinding, answer.getAccessRestriction());
-		ReferenceBinding binding = packageBinding.getType0(name);
+			this.typeRequestor.accept(answer.getBinaryType(), answerPackage, answer.getAccessRestriction());
+			ReferenceBinding binding = answerPackage.getType0(name);
 		if (binding instanceof BinaryTypeBinding) {
-			((BinaryTypeBinding) binding).module = getModule(module);
+				((BinaryTypeBinding) binding).module = answerModule;
 		}
 	} else if (answer.isCompilationUnit()) {
 		// the type was found as a .java file, try to build it then search the cache
@@ -268,22 +345,111 @@ ReferenceBinding askForType(PackageBinding packageBinding, char[] name, char[] m
 		}
 	} else if (answer.isSourceType()) {
 		// the type was found as a source model
-		this.typeRequestor.accept(answer.getSourceTypes(), packageBinding, answer.getAccessRestriction());
-		ReferenceBinding binding = packageBinding.getType0(name);
+			this.typeRequestor.accept(answer.getSourceTypes(), answerPackage, answer.getAccessRestriction());
+			ReferenceBinding binding = answerPackage.getType0(name);
 		if (binding instanceof SourceTypeBinding) {
-			((SourceTypeBinding) binding).module = getModule(module);
+				((SourceTypeBinding) binding).module = answerModule;
 		}
 		String externalAnnotationPath = answer.getExternalAnnotationPath();
 		if (externalAnnotationPath != null && this.globalOptions.isAnnotationBasedNullAnalysisEnabled && binding instanceof SourceTypeBinding) {
 			ExternalAnnotationSuperimposer.apply((SourceTypeBinding) binding, externalAnnotationPath);
 	}
-		return binding;
+			candidate = combine(candidate, binding, clientModule);
+			continue;
 	}
-	return packageBinding.getType0(name);
+		candidate = combine(candidate, answerPackage.getType0(name), clientModule);
+		if (candidate != null && candidate.problemId() == ProblemReasons.Ambiguous)
+			return candidate; // saw enough
 }
-public boolean canTypeBeSeen(SourceTypeBinding binding, Scope scope) {
-	ModuleBinding client = getModule(scope.module());
-	return client.canSee(binding.fPackage);
+	return candidate;
+}
+/** Combine up-to two candidate types. If both types are present let accessibility from the given clientModule decide. */
+private ReferenceBinding combine(ReferenceBinding one, ReferenceBinding two, ModuleBinding clientModule) {
+	if (one == null) return two;
+	if (two == null) return one;
+	if (!clientModule.canAccess(one.fPackage)) return two;
+	if (!clientModule.canAccess(two.fPackage)) return one;
+	if (one == two) return one; //$IDENTITY-COMPARISON$
+	return new ProblemReferenceBinding(one.compoundName, one, ProblemReasons.Ambiguous); // TODO(SHMOD): use a new problem ID
+}
+/** Collect answers from the oracle concerning the given clientModule (if present) and each of a set of other modules. */
+private NameEnvironmentAnswer[] askForTypeFromModules(ModuleBinding clientModule, ModuleBinding[] otherModules,
+		Function<ModuleBinding,NameEnvironmentAnswer> oracle)
+{
+	if (clientModule != null && clientModule.nameForLookup().length == 0) {
+		NameEnvironmentAnswer answer = oracle.apply(clientModule);
+		if (answer != null)
+			answer.moduleBinding = this.root.getModuleFromAnswer(answer);
+		return new NameEnvironmentAnswer[] { answer };
+	} else {
+		boolean found = false;
+		NameEnvironmentAnswer[] answers = null;
+		if (clientModule != null) {
+			answers = new NameEnvironmentAnswer[otherModules.length+1];
+			NameEnvironmentAnswer answer = oracle.apply(clientModule);
+			if (answer != null) {
+				answer.moduleBinding = clientModule;
+				answers[answers.length-1] = answer;
+				found = true;
+			}
+		} else {
+			answers = new NameEnvironmentAnswer[otherModules.length];
+		}
+		for (int i = 0; i < otherModules.length; i++) {
+			NameEnvironmentAnswer answer = oracle.apply(otherModules[i]);
+			if (answer != null) {
+				char[] nameFromAnswer = answer.moduleName();
+				if (nameFromAnswer == null || CharOperation.equals(nameFromAnswer, otherModules[i].moduleName)) {
+					answer.moduleBinding = otherModules[i];
+				} else {
+					answer.moduleBinding = getModule(nameFromAnswer);
+				}
+				answers[i] = answer;
+				found = true;
+			}
+		}
+		return found ? answers : null;
+	}
+}
+/** First check for a known type in a split package and otherwise ask the oracle. */
+private static NameEnvironmentAnswer fromSplitPackageOrOracle(IModuleAwareNameEnvironment moduleEnv, ModuleBinding module,
+		PackageBinding packageBinding, char[] name)
+{
+	if (packageBinding instanceof SplitPackageBinding) {
+		// when asking a split package getType0() we may have answered null in case of ambiguity (not knowing the module context).
+		// now check if the module-incarnation of the package has the type:
+		// (needed because the moduleEnv will not answer initial types).
+		ReferenceBinding binding = ((SplitPackageBinding) packageBinding).getType0ForModule(module, name);
+		if (binding != null && binding.isValidBinding()) {
+			if (binding instanceof UnresolvedReferenceBinding)
+				binding = ((UnresolvedReferenceBinding) binding).resolve(module.environment, false);
+			return new NameEnvironmentAnswer(binding, module);
+		}
+	}
+	return moduleEnv.findType(name, packageBinding.compoundName, module.nameForLookup());
+}
+private ModuleBinding getModuleFromAnswer(NameEnvironmentAnswer answer) {
+	char[] moduleName = answer.moduleName();
+	if (moduleName != null) {
+		ModuleBinding moduleBinding;
+		if (!this.useModuleSystem || moduleName == ModuleBinding.UNNAMED) {
+			moduleBinding = this.UnNamedModule;
+		} else { 
+			moduleBinding = this.knownModules.get(moduleName);
+			if (moduleBinding == null && this.nameEnvironment instanceof IModuleAwareNameEnvironment) {
+				assert answer.isBinaryType();
+				IModule iModule = ((IModuleAwareNameEnvironment) this.nameEnvironment).getModule(moduleName);
+				moduleBinding = BinaryModuleBinding.create(iModule, this);
+			}
+		}
+		return moduleBinding;
+	}
+	return null;
+}
+
+public boolean canTypeBeAccessed(SourceTypeBinding binding, Scope scope) {
+	ModuleBinding client = scope.module();
+	return client.canAccess(binding.fPackage);
 }
 
 /* Create the initial type bindings for the compilation unit.
@@ -293,12 +459,22 @@ public boolean canTypeBeSeen(SourceTypeBinding binding, Scope scope) {
 * NOTE: This method can be called multiple times as additional source files are needed
 */
 public void buildTypeBindings(CompilationUnitDeclaration unit, AccessRestriction accessRestriction) {
-	CompilationUnitScope scope = new CompilationUnitScope(unit, this);
+	CompilationUnitScope scope;
+	ModuleBinding unitModule = null;
+	if (unit.moduleDeclaration != null) {
+		char[] moduleName = unit.moduleDeclaration.moduleName;
+		scope = new CompilationUnitScope(unit, this.globalOptions);
+		unitModule = unit.moduleDeclaration.setBinding(new SourceModuleBinding(moduleName, scope, this.root));
+	} else {
+		unitModule = unit.module(this);
+		scope = new CompilationUnitScope(unit, unitModule != null ? unitModule.environment : this);
+	}
 	scope.buildTypeBindings(accessRestriction);
-	int unitsLength = this.units.length;
-	if (++this.lastUnitIndex >= unitsLength)
-		System.arraycopy(this.units, 0, this.units = new CompilationUnitDeclaration[2 * unitsLength], 0, unitsLength);
-	this.units[this.lastUnitIndex] = unit;
+	LookupEnvironment rootEnv = this.root;
+	int unitsLength = rootEnv.units.length;
+	if (++rootEnv.lastUnitIndex >= unitsLength)
+		System.arraycopy(rootEnv.units, 0, rootEnv.units = new CompilationUnitDeclaration[2 * unitsLength], 0, unitsLength);
+	rootEnv.units[rootEnv.lastUnitIndex] = unit;
 }
 
 /* Cache the binary type since we know it is needed during this compile.
@@ -324,6 +500,10 @@ public BinaryTypeBinding cacheBinaryType(IBinaryType binaryType, boolean needFie
 }
 
 public void completeTypeBindings() {
+	if (this != this.root) {
+		this.root.completeTypeBindings();
+		return;
+	}
 	this.stepCompleted = BUILD_TYPE_HIERARCHY;
 
 	for (int i = this.lastCompletedUnitIndex + 1; i <= this.lastUnitIndex; i++) {
@@ -360,6 +540,10 @@ public void completeTypeBindings() {
 * suitable replacement will be substituted (such as Object for a missing superclass)
 */
 public void completeTypeBindings(CompilationUnitDeclaration parsedUnit) {
+	if (this != this.root) {
+		this.root.completeTypeBindings(parsedUnit);
+		return;
+	}
 	if (this.stepCompleted == BUILD_FIELDS_AND_METHODS) {
 		// This can only happen because the original set of units are completely built and
 		// are now being processed, so we want to treat all the additional units as a group
@@ -393,13 +577,13 @@ public void completeTypeBindings(CompilationUnitDeclaration parsedUnit) {
 */
 public void completeTypeBindings(CompilationUnitDeclaration parsedUnit, boolean buildFieldsAndMethods) {
 	if (parsedUnit.scope == null) return; // parsing errors were too severe
-
-	(this.unitBeingCompleted = parsedUnit).scope.checkAndSetImports();
+	LookupEnvironment rootEnv = this.root;
+	(rootEnv.unitBeingCompleted = parsedUnit).scope.checkAndSetImports();
 	parsedUnit.scope.connectTypeHierarchy();
 	parsedUnit.scope.checkParameterizedTypes();
 	if (buildFieldsAndMethods)
 		parsedUnit.scope.buildFieldsAndMethods();
-	this.unitBeingCompleted = null;
+	rootEnv.unitBeingCompleted = null;
 }
 
 /*
@@ -411,28 +595,29 @@ public void completeTypeBindings(CompilationUnitDeclaration parsedUnit, boolean 
 * 3. Create the method bindings
 */
 public void completeTypeBindings(CompilationUnitDeclaration[] parsedUnits, boolean[] buildFieldsAndMethods, int unitCount) {
+	LookupEnvironment rootEnv = this.root;
 	for (int i = 0; i < unitCount; i++) {
 		CompilationUnitDeclaration parsedUnit = parsedUnits[i];
 		if (parsedUnit.scope != null)
-			(this.unitBeingCompleted = parsedUnit).scope.checkAndSetImports();
+			(rootEnv.unitBeingCompleted = parsedUnit).scope.checkAndSetImports();
 	}
 
 	for (int i = 0; i < unitCount; i++) {
 		CompilationUnitDeclaration parsedUnit = parsedUnits[i];
 		if (parsedUnit.scope != null)
-			(this.unitBeingCompleted = parsedUnit).scope.connectTypeHierarchy();
+			(rootEnv.unitBeingCompleted = parsedUnit).scope.connectTypeHierarchy();
 	}
 
 	for (int i = 0; i < unitCount; i++) {
 		CompilationUnitDeclaration parsedUnit = parsedUnits[i];
 		if (parsedUnit.scope != null) {
-			(this.unitBeingCompleted = parsedUnit).scope.checkParameterizedTypes();
+			(rootEnv.unitBeingCompleted = parsedUnit).scope.checkParameterizedTypes();
 			if (buildFieldsAndMethods[i])
 				parsedUnit.scope.buildFieldsAndMethods();
 		}
 	}
 
-	this.unitBeingCompleted = null;
+	rootEnv.unitBeingCompleted = null;
 }
 public TypeBinding computeBoxingType(TypeBinding type) {
 	TypeBinding boxedType;
@@ -455,35 +640,35 @@ public TypeBinding computeBoxingType(TypeBinding type) {
 			return TypeBinding.LONG;
 
 		case TypeIds.T_int :
-			boxedType = getType(JAVA_LANG_INTEGER, null);
+			boxedType = getType(JAVA_LANG_INTEGER, javaBaseModule());
 			if (boxedType != null) return boxedType;
 			return new ProblemReferenceBinding(JAVA_LANG_INTEGER, null, NotFound);
 		case TypeIds.T_byte :
-			boxedType = getType(JAVA_LANG_BYTE, null);
+			boxedType = getType(JAVA_LANG_BYTE, javaBaseModule());
 			if (boxedType != null) return boxedType;
 			return new ProblemReferenceBinding(JAVA_LANG_BYTE, null, NotFound);
 		case TypeIds.T_short :
-			boxedType = getType(JAVA_LANG_SHORT, null);
+			boxedType = getType(JAVA_LANG_SHORT, javaBaseModule());
 			if (boxedType != null) return boxedType;
 			return new ProblemReferenceBinding(JAVA_LANG_SHORT, null, NotFound);
 		case TypeIds.T_char :
-			boxedType = getType(JAVA_LANG_CHARACTER, null);
+			boxedType = getType(JAVA_LANG_CHARACTER, javaBaseModule());
 			if (boxedType != null) return boxedType;
 			return new ProblemReferenceBinding(JAVA_LANG_CHARACTER, null, NotFound);
 		case TypeIds.T_long :
-			boxedType = getType(JAVA_LANG_LONG, null);
+			boxedType = getType(JAVA_LANG_LONG, javaBaseModule());
 			if (boxedType != null) return boxedType;
 			return new ProblemReferenceBinding(JAVA_LANG_LONG, null, NotFound);
 		case TypeIds.T_float :
-			boxedType = getType(JAVA_LANG_FLOAT, null);
+			boxedType = getType(JAVA_LANG_FLOAT, javaBaseModule());
 			if (boxedType != null) return boxedType;
 			return new ProblemReferenceBinding(JAVA_LANG_FLOAT, null, NotFound);
 		case TypeIds.T_double :
-			boxedType = getType(JAVA_LANG_DOUBLE, null);
+			boxedType = getType(JAVA_LANG_DOUBLE, javaBaseModule());
 			if (boxedType != null) return boxedType;
 			return new ProblemReferenceBinding(JAVA_LANG_DOUBLE, null, NotFound);
 		case TypeIds.T_boolean :
-			boxedType = getType(JAVA_LANG_BOOLEAN, null);
+			boxedType = getType(JAVA_LANG_BOOLEAN, javaBaseModule());
 			if (boxedType != null) return boxedType;
 			return new ProblemReferenceBinding(JAVA_LANG_BOOLEAN, null, NotFound);
 //		case TypeIds.T_int :
@@ -535,25 +720,68 @@ public TypeBinding computeBoxingType(TypeBinding type) {
 	return type;
 }
 
+public ModuleBinding javaBaseModule() {
+	if (this.JavaBaseModule != null)
+		return this.JavaBaseModule;
+	if (this.root != this)
+		return this.JavaBaseModule = this.root.javaBaseModule();
+	ModuleBinding resolvedModel = null;
+	if (this.useModuleSystem)
+		resolvedModel = getModule(TypeConstants.JAVA_BASE);
+	return this.JavaBaseModule = (resolvedModel != null ? resolvedModel : this.UnNamedModule); // fall back to pre-Jigsaw view
+}
+
 private PackageBinding computePackageFrom(char[][] constantPoolName, boolean isMissing) {
 	if (constantPoolName.length == 1)
 		return this.defaultPackage;
 
 	PackageBinding packageBinding = getPackage0(constantPoolName[0]);
 	if (packageBinding == null || packageBinding == TheNotFoundPackage) {
-		packageBinding = new PackageBinding(constantPoolName[0], this);
+		if (this.useModuleSystem) {
+			if (this.module.isUnnamed()) {
+				char[][] declaringModules = ((IModuleAwareNameEnvironment) this.nameEnvironment).getModulesDeclaringPackage(null, constantPoolName[0], ModuleBinding.ANY);
+				if (declaringModules != null) {
+					for (char[] mod : declaringModules) {
+						ModuleBinding declaringModule = this.root.getModule(mod);
+						if (declaringModule != null)
+							packageBinding = SplitPackageBinding.combine(declaringModule.getTopLevelPackage(constantPoolName[0]), packageBinding, this.module);
+					}
+				}
+			} else {
+				packageBinding = this.module.getTopLevelPackage(constantPoolName[0]);
+			}
+		}
+		if (packageBinding == null || packageBinding == TheNotFoundPackage) {
+			packageBinding = new PackageBinding(constantPoolName[0], this, this.module);
+		}
 		if (isMissing) packageBinding.tagBits |= TagBits.HasMissingType;
-		this.knownPackages.put(constantPoolName[0], packageBinding);
+		this.knownPackages.put(constantPoolName[0], packageBinding); // TODO: split?
 	}
 
 	for (int i = 1, length = constantPoolName.length - 1; i < length; i++) {
 		PackageBinding parent = packageBinding;
 		if ((packageBinding = parent.getPackage0(constantPoolName[i])) == null || packageBinding == TheNotFoundPackage) {
-			packageBinding = new PackageBinding(CharOperation.subarray(constantPoolName, 0, i + 1), parent, this);
+			if (this.useModuleSystem) {
+				if (this.module.isUnnamed()) {
+					char[][] declaringModules = ((IModuleAwareNameEnvironment) this.nameEnvironment).getModulesDeclaringPackage(parent.compoundName, constantPoolName[i], ModuleBinding.ANY);
+					if (declaringModules != null) {
+						for (char[] mod : declaringModules) {
+							ModuleBinding declaringModule = this.root.getModule(mod);
+							if (declaringModule != null)
+								packageBinding = SplitPackageBinding.combine(declaringModule.getPackage(parent.compoundName, constantPoolName[i]), packageBinding, this.module);
+						}
+					}
+				} else {
+					packageBinding = this.module.getVisiblePackage(parent, constantPoolName[i]);
+				}
+			}
+			if (packageBinding == null || packageBinding == TheNotFoundPackage) {
+				packageBinding = new PackageBinding(CharOperation.subarray(constantPoolName, 0, i + 1), parent, this, this.module);
+			}
 			if (isMissing) {
 				packageBinding.tagBits |= TagBits.HasMissingType;
 			}
-			parent.addPackage(packageBinding);
+			packageBinding = parent.addPackage(packageBinding, this.module, true);
 		}
 	}
 	return packageBinding;
@@ -623,7 +851,7 @@ public TypeBinding convertToRawType(TypeBinding type, boolean forceRawEnclosingT
 			needToConvert = false;
 			break;
 	}
-	forceRawEnclosingType &= !type.isStatic();
+	forceRawEnclosingType &= !originalType.isStatic();
 	ReferenceBinding originalEnclosing = originalType.enclosingType();
 	TypeBinding convertedType;
 	if (originalEnclosing == null) {
@@ -786,6 +1014,8 @@ public BinaryTypeBinding createBinaryTypeFrom(IBinaryType binaryType, PackageBin
 }
 
 public BinaryTypeBinding createBinaryTypeFrom(IBinaryType binaryType, PackageBinding packageBinding, boolean needFieldsAndMethods, AccessRestriction accessRestriction) {
+	if (this != packageBinding.environment)
+		return packageBinding.environment.createBinaryTypeFrom(binaryType, packageBinding, needFieldsAndMethods, accessRestriction);
 	BinaryTypeBinding binaryBinding = new BinaryTypeBinding(packageBinding, binaryType, this);
 
 	// resolve any array bindings which reference the unresolvedType
@@ -817,7 +1047,7 @@ public MissingTypeBinding createMissingType(PackageBinding packageBinding, char[
 	MissingTypeBinding missingType = new MissingTypeBinding(packageBinding, compoundName, this);
 	if (missingType.id != TypeIds.T_JavaLangObject) {
 		// make Object be its superclass - it could in turn be missing as well
-		ReferenceBinding objectType = getType(TypeConstants.JAVA_LANG_OBJECT, null);
+		ReferenceBinding objectType = getType(TypeConstants.JAVA_LANG_OBJECT, javaBaseModule());
 		if (objectType == null) {
 			objectType = createMissingType(null, TypeConstants.JAVA_LANG_OBJECT);	// create a proxy for the missing Object type
 		}
@@ -830,31 +1060,20 @@ public MissingTypeBinding createMissingType(PackageBinding packageBinding, char[
 	return missingType;
 }
 
-public PackageBinding getDefaultPackage(char[] module) {
-	if (module == null || module.length == 0 || module == ModuleEnvironment.UNNAMED) {
-		return this.defaultPackage;
-	} else {
-		PackageBinding pack = this.defaultPackages.get(module);
-		if (pack == null) {
-			pack = new PackageBinding(this);
-			this.defaultPackages.put(module, pack);
-		}
-		return pack;
-	}
-}
-public PackageBinding createPackage(char[][] compoundName) {
-	return createPackage(compoundName, null);
-}
 /*
 * 1. Connect the type hierarchy for the type bindings created for parsedUnits.
 * 2. Create the field bindings
 * 3. Create the method bindings
 */
-public PackageBinding createPackage(char[][] compoundName, char[] mod) {
+public PackageBinding createPackage(char[][] compoundName) {
 	PackageBinding packageBinding = getPackage0(compoundName[0]);
 	if (packageBinding == null || packageBinding == TheNotFoundPackage) {
-		packageBinding = new PackageBinding(compoundName[0], this);
+		packageBinding = new PackageBinding(compoundName[0], this, this.module);
 		this.knownPackages.put(compoundName[0], packageBinding);
+		if (this.module != null) {
+			packageBinding = this.module.addPackage(packageBinding, true);
+			this.knownPackages.put(compoundName[0], packageBinding); // update in case of split package
+	}
 	}
 
 	for (int i = 1, length = compoundName.length; i < length; i++) {
@@ -875,11 +1094,10 @@ public PackageBinding createPackage(char[][] compoundName, char[] mod) {
 			// since the package can be added after a set of source files have already been compiled,
 			// we need to check whenever a package is created
 			if(this.nameEnvironment instanceof INameEnvironmentExtension) {
-				ModuleBinding module = getModule(mod);
 				//When the nameEnvironment is an instance of INameEnvironmentWithProgress, it can get avoided to search for secondaryTypes (see flag).
 				// This is a performance optimization, because it is very expensive to search for secondary types and it isn't necessary to check when creating a package,
 				// because package name can not collide with a secondary type name.
-				if (((INameEnvironmentExtension)this.nameEnvironment).findType(compoundName[i], parent.compoundName, false, module.getDependencyClosureContext()) != null) {
+				if (((INameEnvironmentExtension)this.nameEnvironment).findType(compoundName[i], parent.compoundName, false, this.module.nameForLookup()) != null) {
 				return null;
 				}
 			} else {
@@ -887,10 +1105,20 @@ public PackageBinding createPackage(char[][] compoundName, char[] mod) {
 					return null;
 				}
 			}
-			packageBinding = new PackageBinding(CharOperation.subarray(compoundName, 0, i + 1), parent, this);
-			parent.addPackage(packageBinding);
+			if (parent instanceof SplitPackageBinding) {
+				// parent.getPackage0() may have been too shy, so drill into the split:
+				PackageBinding singleParent = ((SplitPackageBinding) parent).getIncarnation(this.module);
+				if (singleParent != null)
+					packageBinding = singleParent.getPackage0(compoundName[i]);
+		}
+			if (packageBinding == null) {
+				packageBinding = new PackageBinding(CharOperation.subarray(compoundName, 0, i + 1), parent, this, this.module);
+				packageBinding = parent.addPackage(packageBinding, this.module, true);
+			}
 		}
 	}
+	if (packageBinding instanceof SplitPackageBinding)
+		packageBinding = ((SplitPackageBinding) packageBinding).getIncarnation(this.module);
 	return packageBinding;
 }
 
@@ -986,7 +1214,7 @@ public PolymorphicMethodBinding createPolymorphicMethod(MethodBinding originalPo
 	for (int i = 0; i < parametersLength; i++) {
 		TypeBinding parameterTypeBinding = parameters[i];
 		if (parameterTypeBinding.id == TypeIds.T_null) {
-			parametersTypeBinding[i] = getType(JAVA_LANG_VOID, null);
+			parametersTypeBinding[i] = getType(JAVA_LANG_VOID, javaBaseModule());
 		} else {
 			parametersTypeBinding[i] = parameterTypeBinding.erasure();
 		}
@@ -1199,7 +1427,7 @@ public ReferenceBinding getCachedType(char[][] compoundName) {
 		return null;
 
 	for (int i = 1, packageLength = compoundName.length - 1; i < packageLength; i++)
-		if ((packageBinding = packageBinding.getPackage0(compoundName[i])) == null || packageBinding == TheNotFoundPackage)
+		if ((packageBinding = packageBinding.getPackage0Any(compoundName[i])) == null || packageBinding == TheNotFoundPackage)
 			return null;
 	return packageBinding.getType0(compoundName[compoundName.length - 1]);
 }
@@ -1282,8 +1510,8 @@ private void initializeUsesNullTypeAnnotation() {
 	this.globalOptions.useNullTypeAnnotations = Boolean.FALSE;
 	if (!this.globalOptions.isAnnotationBasedNullAnalysisEnabled || this.globalOptions.originalSourceLevel < ClassFileConstants.JDK1_8)
 		return;
-	ReferenceBinding nullable = this.nullableAnnotation != null ? this.nullableAnnotation.getAnnotationType() : getType(this.getNullableAnnotationName(), null);
-	ReferenceBinding nonNull = this.nonNullAnnotation != null ? this.nonNullAnnotation.getAnnotationType() : getType(this.getNonNullAnnotationName(), null);
+	ReferenceBinding nullable = this.nullableAnnotation != null ? this.nullableAnnotation.getAnnotationType() : getType(this.getNullableAnnotationName(), this.UnNamedModule); //FIXME(SHMOD) module for null annotations??
+	ReferenceBinding nonNull = this.nonNullAnnotation != null ? this.nonNullAnnotation.getAnnotationType() : getType(this.getNonNullAnnotationName(), this.UnNamedModule);
 	if (nullable == null && nonNull == null)
 		return;
 	if (nullable == null || nonNull == null)
@@ -1313,41 +1541,48 @@ PackageBinding getPackage0(char[] name) {
 * Fail with a classpath error if the type cannot be found.
 */
 public ReferenceBinding getResolvedType(char[][] compoundName, Scope scope) {
-	ReferenceBinding type = getType(compoundName, scope == null ? null : scope.module());
+	return getResolvedType(compoundName, scope == null ? this.UnNamedModule : scope.module(), scope);
+}
+public ReferenceBinding getResolvedType(char[][] compoundName, ModuleBinding moduleBinding, Scope scope) {
+	if (this.module != moduleBinding)
+		return moduleBinding.environment.getResolvedType(compoundName, moduleBinding, scope);
+	ReferenceBinding type = getType(compoundName, moduleBinding);
 	if (type != null) return type;
 
 	// create a proxy for the missing BinaryType
 	// report the missing class file first
 	this.problemReporter.isClassPathCorrect(
 		compoundName,
-		scope == null ? this.unitBeingCompleted : scope.referenceCompilationUnit(),
+		scope == null ? this.root.unitBeingCompleted : scope.referenceCompilationUnit(),
 		this.missingClassFileLocation);
 	return createMissingType(null, compoundName);
+}
+public ReferenceBinding getResolvedJavaBaseType(char[][] compoundName, Scope scope) {
+	return getResolvedType(compoundName, javaBaseModule(), scope);
 }
 
 /* Answer the top level package named name.
 * Ask the oracle for the package if its not in the cache.
 * Answer null if the package cannot be found.
 */
-PackageBinding getTopLevelPackage(char[] name, char[] mod) {
+PackageBinding getTopLevelPackage(char[] name) {
 	PackageBinding packageBinding = getPackage0(name);
 	if (packageBinding != null) {
 		if (packageBinding == TheNotFoundPackage)
 			return null;
 		return packageBinding;
 	}
-	if (this.nameEnvironment instanceof IModuleAwareNameEnvironment) {
-		ModuleBinding module = getModule(mod);
-		if (module != null)
-			packageBinding = module.getPackage(null, name);
+	if (this.useModuleSystem) {
+		if (this.module != null)
+			packageBinding = this.module.getTopLevelPackage(name);
 	} else {
 		if (this.nameEnvironment.isPackage(null, name)) {
-			packageBinding = new PackageBinding(name, this);
+			this.knownPackages.put(name, packageBinding = new PackageBinding(name, this, this.module));
 		}
 	}
 	if (packageBinding != null) {
-	//if (this.nameEnvironment.isPackage(null, name, mod)) {
-		this.knownPackages.put(name, packageBinding);
+		if (packageBinding == TheNotFoundPackage)
+			return null;
 		return packageBinding;
 	}
 
@@ -1356,13 +1591,13 @@ PackageBinding getTopLevelPackage(char[] name, char[] mod) {
 }
 
 public ReferenceBinding getType(char[][] compoundName) {
-	return getType(compoundName, null);
+	return getType(compoundName, this.UnNamedModule);
 }
 /* Answer the type corresponding to the compoundName.
 * Ask the name environment for the type if its not in the cache.
 * Answer null if the type cannot be found.
 */
-public ReferenceBinding getType(char[][] compoundName, char[] mod) {
+public ReferenceBinding getType(char[][] compoundName, ModuleBinding mod) {
 	ReferenceBinding referenceBinding;
 
 	if (compoundName.length == 1) {
@@ -1430,11 +1665,17 @@ private ReferenceBinding getTypeFromCompoundName(char[][] compoundName, boolean 
 	ReferenceBinding binding = getCachedType(compoundName);
 	if (binding == null) {
 		PackageBinding packageBinding = computePackageFrom(compoundName, false /* valid pkg */);
+		if(this.useModuleSystem) {
+			// the package might not have been seen in getCachedType, so retry
+			binding = packageBinding.getType0(compoundName[compoundName.length - 1]);
+		}
+		if(binding == null) {
 		binding = new UnresolvedReferenceBinding(compoundName, packageBinding);
 		if (wasMissingType) {
 			binding.tagBits |= TagBits.HasMissingType; // record it was bound to a missing type
 		}
 		packageBinding.addType(binding);
+		}
 	} else if (binding == TheNotFoundType) {
 		// report the missing class file first
 		if (!wasMissingType) {
@@ -1442,7 +1683,7 @@ private ReferenceBinding getTypeFromCompoundName(char[][] compoundName, boolean 
 			 * misconfiguration now that did not also exist in some equivalent form while producing the class files which encode 
 			 * these missing types. So no need to bark again. Note that wasMissingType == true signals a type referenced in a .class 
 			 * file which could not be found when the binary was produced. See https://bugs.eclipse.org/bugs/show_bug.cgi?id=364450 */
-			this.problemReporter.isClassPathCorrect(compoundName, this.unitBeingCompleted, this.missingClassFileLocation);
+			this.problemReporter.isClassPathCorrect(compoundName, this.root.unitBeingCompleted, this.missingClassFileLocation);
 		}
 		// create a proxy for the missing BinaryType
 		binding = createMissingType(null, compoundName);
@@ -1789,6 +2030,7 @@ boolean isMissingType(char[] typeName) {
 
 // The method verifier is lazily initialized to guarantee the receiver, the compiler & the oracle are ready.
 public MethodVerifier methodVerifier() {
+	 // TODO(SHMOD): I'm not sure if the verifier would need to be created with a specific LE?
 	if (this.verifier == null)
 		this.verifier = newMethodVerifier();
 	return this.verifier;
@@ -1809,6 +2051,15 @@ public void releaseClassFiles(org.eclipse.jdt.internal.compiler.ClassFile[] clas
 }
 
 public void reset() {
+	if (this.root != this) {
+		this.root.reset();
+		return;
+	}
+	this.knownModules = new HashtableOfModule();
+	this.UnNamedModule = new ModuleBinding.UnNamedModule(this);
+	this.module = this.UnNamedModule;
+	this.JavaBaseModule = null;
+
 	this.defaultPackage = new PackageBinding(this); // assume the default package always exists
 	this.defaultImports = null;
 	this.knownPackages = new HashtableOfPackage();
@@ -1849,17 +2100,19 @@ void updateCaches(UnresolvedReferenceBinding unresolvedType, ReferenceBinding re
 	this.typeSystem.updateCaches(unresolvedType, resolvedType);
 }
 
-public IQualifiedTypeResolutionListener[] resolutionListeners = new IQualifiedTypeResolutionListener[0];
+public IQualifiedTypeResolutionListener[] resolutionListeners;	// ROOT_ONLY
 
 public void addResolutionListener(IQualifiedTypeResolutionListener resolutionListener) {
-	int length = this.resolutionListeners.length;
+	synchronized (this.root) {
+		int length = this.root.resolutionListeners.length;
 	for (int i = 0; i < length; i++){
-		if (this.resolutionListeners[i].equals(resolutionListener))
+			if (this.root.resolutionListeners[i].equals(resolutionListener))
 			return;
 	}
-	System.arraycopy(this.resolutionListeners, 0,
-			this.resolutionListeners = new IQualifiedTypeResolutionListener[length + 1], 0, length);
-	this.resolutionListeners[length] = resolutionListener;
+		System.arraycopy(this.root.resolutionListeners, 0,
+				this.root.resolutionListeners = new IQualifiedTypeResolutionListener[length + 1], 0, length);
+		this.root.resolutionListeners[length] = resolutionListener;
+	}
 }
 
 

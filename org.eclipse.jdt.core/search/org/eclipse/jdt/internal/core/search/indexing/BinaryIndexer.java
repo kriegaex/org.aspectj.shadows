@@ -153,6 +153,13 @@ public class BinaryIndexer extends AbstractIndexer implements SuffixConstants {
 			}
 			addFieldReference(TypeConstants.TYPE);
 		}
+		if ((bits & TagBits.AnnotationForModule) != 0) {
+			if (compoundName == null) {
+				compoundName = TypeConstants.JAVA_LANG_ANNOTATION_ELEMENTTYPE;
+				addTypeReference(compoundName[compoundName.length-1]);
+			}
+			addFieldReference(TypeConstants.UPPER_MODULE);
+		}
 	}
 	private void addBinaryRetentionAnnotation(long bits) {
 		char[][] compoundName = TypeConstants.JAVA_LANG_ANNOTATION_RETENTIONPOLICY;
@@ -847,8 +854,8 @@ public class BinaryIndexer extends AbstractIndexer implements SuffixConstants {
 				addModuleReference(req.name());
 			}
 		}
-		indexPackageExport(module.exports());
-		indexPackageExport(module.opens());
+		indexPackageVisibilityDirective(module.exports());
+		indexPackageVisibilityDirective(module.opens());
 		char[][] refUsed = module.uses();
 		if (refUsed != null) {
 			for (char[] ref : refUsed) {
@@ -863,13 +870,16 @@ public class BinaryIndexer extends AbstractIndexer implements SuffixConstants {
 			}
 		}
 	}
-	private void indexPackageExport(IPackageExport[] exportedPackages) {
+	private void indexPackageVisibilityDirective(IPackageExport[] exportedPackages) {
 		if (exportedPackages != null) {
 			for (IPackageExport pack : exportedPackages) {
 				addModuleExportedPackages(pack.name());
-				char[][] tgtTokens = pack.targets();
-				char[] tgt = tgtTokens != null ? CharOperation.concatWith(tgtTokens, '.') : CharOperation.NO_CHAR;
-				if (!tgt.equals(CharOperation.NO_CHAR)) addModuleExportedPackages(tgt);
+				char[][] tgts = pack.targets();
+				if (tgts == null || tgts.equals(CharOperation.NO_CHAR_CHAR)) continue;
+				for (char[] tgt : tgts) {
+					if (tgt != null && !tgt.equals(CharOperation.NO_CHAR)) 
+						addModuleReference(tgt);
+				}
 			}
 		}
 	}

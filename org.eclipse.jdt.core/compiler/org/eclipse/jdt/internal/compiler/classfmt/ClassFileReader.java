@@ -50,7 +50,7 @@ public class ClassFileReader extends ClassFileStruct implements IBinaryType {
 	private AnnotationInfo[] annotations;
 	private TypeAnnotationInfo[] typeAnnotations;
 	private FieldInfo[] fields;
-	private IModule moduleDeclaration;
+	private IBinaryModule moduleDeclaration;
 	public char[] moduleName;
 	private int fieldsCount;
 
@@ -125,23 +125,23 @@ public static ClassFileReader readFromJimage(
 		String filename)
 		throws ClassFormatException, java.io.IOException {
 
-		return readFromModules(jrt, filename, Optional.empty());
+		return readFromModule(jrt, null, filename);
 	}
 public static ClassFileReader readFromJrt(
 		File jrt,
-		String filename,
-		IModule module)
+		IModule module,
+		String filename)
 
 		throws ClassFormatException, java.io.IOException {
 		return JRTUtil.getClassfile(jrt, filename, module);
 	}
-public static ClassFileReader readFromModules(
+public static ClassFileReader readFromModule(
 		File jrt,
-		String filename,
-		Optional<Collection<char[]>> moduleNames)
+		String moduleName,
+		String filename)
 
 		throws ClassFormatException, java.io.IOException {
-		return JRTUtil.getClassfile(jrt, filename, moduleNames);
+		return JRTUtil.getClassfile(jrt, filename, moduleName);
 }
 public static ClassFileReader read(
 	java.util.zip.ZipFile zip,
@@ -165,11 +165,6 @@ public static ClassFileReader read(String fileName) throws ClassFormatException,
 
 public static ClassFileReader read(String fileName, boolean fullyInitialize) throws ClassFormatException, java.io.IOException {
 	return read(new File(fileName), fullyInitialize);
-}
-
-public ClassFileReader(byte classFileBytes[], char[] fileName, char[] mod) throws ClassFormatException {
-	this(classFileBytes, fileName, false);
-	this.moduleName = mod;
 }
 
 /**
@@ -618,7 +613,7 @@ public char[] getModule() {
  * 
  * @return the module declaration this represents
  */
-public IModule getModuleDeclaration() {
+public IBinaryModule getModuleDeclaration() {
 	return this.moduleDeclaration;
 }
 
@@ -1389,6 +1384,8 @@ public String toString() {
 	print.println(getClass().getName() + "{"); //$NON-NLS-1$
 	print.println(" this.className: " + new String(getName())); //$NON-NLS-1$
 	print.println(" this.superclassName: " + (getSuperclassName() == null ? "null" : new String(getSuperclassName()))); //$NON-NLS-2$ //$NON-NLS-1$
+	if (this.moduleName != null)
+		print.println(" this.moduleName: " + (new String(this.moduleName))); //$NON-NLS-1$
 	print.println(" access_flags: " + printTypeModifiers(accessFlags()) + "(" + accessFlags() + ")"); //$NON-NLS-1$ //$NON-NLS-3$ //$NON-NLS-2$
 	print.flush();
 	return out.toString();
