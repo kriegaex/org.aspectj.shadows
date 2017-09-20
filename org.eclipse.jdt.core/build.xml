@@ -1,6 +1,6 @@
 <project name="ShadowJdtCore" basedir="." default="make.jdtcore.jar">
 
-	<property name="eclipse.home" value="/Users/aclement/eclipses/i20170423-pde/Eclipse.app/Contents/Eclipse"/>
+	<property name="eclipse.home" value="/Users/aclement/eclipses/sts391/STS.app/Contents/Eclipse"/>
     <property name="plugins.dir" value="${eclipse.home}/plugins"/>
     <property name="plugins.src.dir" value="${plugins.dir}/org.eclipse.platform.source_${eclipse.version}/src"/>
     <property name="aspectjtools.jar" value=""/>
@@ -14,8 +14,8 @@
         	<!-- updated to Java8 in KeplerSR2 timeframe -->
         	<zipfileset src="${plugins.dir}/org.eclipse.equinox.registry_3.7.0.v20170222-1344.jar"/>
         	<zipfileset src="${plugins.dir}/org.eclipse.equinox.common_3.9.0.v20170207-1454.jar"/>
-        	<zipfileset src="${plugins.dir}/org.eclipse.osgi_3.12.0.v20170414-1308.jar"/>
-        	<zipfileset src="${plugins.dir}/org.eclipse.core.jobs_3.9.0.v20170322-0013.jar"/>
+        	<zipfileset src="${plugins.dir}/org.eclipse.osgi_3.12.1.v20170821-1548.jar"/>
+        	<zipfileset src="${plugins.dir}/org.eclipse.core.jobs_3.9.1.v20170714-0547.jar"/>
         	<zipfileset src="${plugins.dir}/org.eclipse.core.resources_3.12.0.v20170417-1558.jar"/>
         	<zipfileset src="${plugins.dir}/org.eclipse.core.runtime_3.13.0.v20170207-1030.jar"/>
         	<zipfileset src="${plugins.dir}/org.eclipse.equinox.preferences_3.7.0.v20170126-2132.jar"/>

@@ -463,6 +463,20 @@ public class ClassFile implements TypeConstants, TypeIds {
 	        }
 	    }
 	    //  End AspectJ Extension
+	    
+		// update the number of attributes
+		if (attributeOffset + 2 >= this.contents.length) {
+			resizeContents(2);
+		}
+		this.contents[attributeOffset++] = (byte) (attributesNumber >> 8);
+		this.contents[attributeOffset] = (byte) attributesNumber;
+
+		// resynchronize all offsets of the classfile
+		this.header = this.constantPool.poolContent;
+		this.headerOffset = this.constantPool.currentOffset;
+		int constantPoolCount = this.constantPool.currentIndex;
+		this.header[this.constantPoolOffset++] = (byte) (constantPoolCount >> 8);
+		this.header[this.constantPoolOffset] = (byte) constantPoolCount;
 	}
 		
 	/**
