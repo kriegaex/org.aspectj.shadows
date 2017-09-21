@@ -2490,6 +2490,9 @@ public class ClassFile implements TypeConstants, TypeIds {
 								// ignore all annotation values
 								this.contents[this.contentsOffset++] = 0;
 								this.contents[this.contentsOffset++] = 0;
+								//AspectJ patch for bug 507232
+								memberValuePairsCount = 0;
+								//AspectJ end
 								break loop;
 							}
 							memberValuePairsCount++;
