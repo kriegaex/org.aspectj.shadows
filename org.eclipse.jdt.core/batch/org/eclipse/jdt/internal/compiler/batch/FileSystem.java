@@ -160,7 +160,8 @@ public class FileSystem implements IModuleAwareNameEnvironment, SuffixConstants 
 	protected Classpath[] classpaths;
 	// Used only in single-module mode when the module descriptor is
 	// provided via command line.
-	protected IModule module;
+	// AspectJ raised prot to public
+	public IModule module;
 	Set knownFileNames;
 	protected boolean annotationsFromClasspath; // should annotation files be read from the classpath (vs. explicit separate path)?
 	private static HashMap<File, Classpath> JRT_CLASSPATH_CACHE = null;
@@ -195,7 +196,8 @@ public FileSystem(String[] classpathNames, String[] initialFileNames, String enc
 	}
 	initializeKnownFileNames(initialFileNames);
 }
-protected FileSystem(Classpath[] paths, String[] initialFileNames, boolean annotationsFromClasspath) {
+// AspectJ raised to public from protected
+public FileSystem(Classpath[] paths, String[] initialFileNames, boolean annotationsFromClasspath) {
 	final int length = paths.length;
 	int counter = 0;
 	this.classpaths = new FileSystem.Classpath[length];
@@ -233,6 +235,11 @@ public static Classpath getJrtClasspath(String jdkHome, String encoding, AccessR
 public static Classpath getClasspath(String classpathName, String encoding, AccessRuleSet accessRuleSet,int mode) {
 	return getClasspath(classpathName, encoding, mode, accessRuleSet, null, null);
 }
+// AspectJ - make this accessible from external consumers wanting to build classpath entry objects
+public static Classpath getClasspath(String classpathName, String encoding, AccessRuleSet accessRuleSet,Map options, int mode) {
+	return getClasspath(classpathName, encoding, mode, accessRuleSet, null, options);
+}
+// End AspectJ
 // Reworking of constructor, the original one that takes a boolean now delegates to the new one.
 // Original ctor declaration was:
 // public static Classpath getClasspath(String classpathName, String encoding,

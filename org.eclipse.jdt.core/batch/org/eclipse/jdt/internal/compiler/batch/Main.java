@@ -3149,6 +3149,16 @@ public void configure(String[] argv) {
 		this.pendingErrors = null;
 	}
 }
+// AspectJ Extension - extracted and made public for use from AJ - this is a copy of the code that
+// was embedded in configure for handling the module def.
+public IModule getModuleDesc(String moduleArgument) {
+	IModule mod = extractModuleDesc(moduleArgument);
+	if (mod != null) {
+		this.module = mod;
+	}
+	return mod;
+}
+// End AspectJ Extension
 private Parser getNewParser() {
 	return new Parser(new ProblemReporter(getHandlingPolicy(), 
 			new CompilerOptions(this.options), getProblemFactory()), false);
@@ -3579,6 +3589,7 @@ protected ArrayList<FileSystem.Classpath> handleClasspath(ArrayList<String> clas
 		String classProp = System.getProperty("java.class.path"); //$NON-NLS-1$
 		if ((classProp == null) || (classProp.length() == 0)) {
 			addPendingErrors(this.bind("configure.noClasspath")); //$NON-NLS-1$
+			// AspectJ: Do we need to force ClasspathLocation.BINARY here?
 			final Classpath classpath = FileSystem.getClasspath(System.getProperty("user.dir"), customEncoding, null, this.options);//$NON-NLS-1$
 			if (classpath != null) {
 				initial.add(classpath);
@@ -3588,6 +3599,7 @@ protected ArrayList<FileSystem.Classpath> handleClasspath(ArrayList<String> clas
 			String token;
 			while (tokenizer.hasMoreTokens()) {
 				token = tokenizer.nextToken();
+				// AspectJ: Do we need to switch this to force ClasspathLocation.BINARY ?
 				FileSystem.Classpath currentClasspath = FileSystem
 						.getClasspath(token, customEncoding, null, this.options);
 				if (currentClasspath != null) {
