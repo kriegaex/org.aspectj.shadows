@@ -1728,7 +1728,8 @@ public String bind(String id, String[] arguments) {
  * @param minimalSupportedVersion the given minimal version
  * @return true if and only if the running VM supports the given minimal version, false otherwise
  */
-private boolean checkVMVersion(long minimalSupportedVersion) {
+//AspectJ: from private to protected
+protected boolean checkVMVersion(long minimalSupportedVersion) {
 	// the format of this property is supposed to be xx.x where x are digits.
 	String classFileVersion = System.getProperty("java.class.version"); //$NON-NLS-1$
 	if (classFileVersion == null) {
@@ -3599,8 +3600,12 @@ protected ArrayList<FileSystem.Classpath> handleModulepath(String arg) {
 		for (String path : modulePaths) {
 			File file = new File(path);
 			if (file.isDirectory()) {
-				result =
-					(ArrayList<Classpath>) ModuleFinder.findModules(file, null, getNewParser(), this.options, true);
+				// AspectJ bugfix... from:
+				// result =
+				// 		(ArrayList<Classpath>) ModuleFinder.findModules(file, null, getNewParser(), this.options, true);
+				// to:
+				result.addAll(ModuleFinder.findModules(file, null, getNewParser(), this.options, true));
+				// End AspectJ
 			} else {
 				Classpath modulePath = ModuleFinder.findModule(file, null, getNewParser(), this.options, true);
 				if (modulePath != null)
@@ -4785,7 +4790,8 @@ private void printUsage(String sectionID) {
 			}));
 	this.logger.flush();
 }
-private void initRootModules(LookupEnvironment environment, FileSystem fileSystem) {
+// AspectJ: from private to protected
+protected void initRootModules(LookupEnvironment environment, FileSystem fileSystem) {
 	Map<String, String> map = new HashMap<>();
 	for (String m : this.rootModules) {
 		ModuleBinding mod = environment.getModule(m.toCharArray());
