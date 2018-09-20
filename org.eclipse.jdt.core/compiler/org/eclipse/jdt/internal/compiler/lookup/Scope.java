@@ -4722,7 +4722,6 @@ public abstract class Scope {
 						if (original2 == null)
 							continue nextSpecific; // current's declaringClass is not a subtype of next's declaringClass
 							// AspectJ Extension End
-						if (current.hasSubstitutedParameters() || original.typeVariables != Binding.NO_TYPE_VARIABLES) {
 							if (!environment().methodVerifier().isParameterSubsignature(original, original2))
 								continue nextSpecific; // current does not override next
 						}
