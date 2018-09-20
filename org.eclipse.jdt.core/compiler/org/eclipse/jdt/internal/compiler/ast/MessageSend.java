@@ -9,6 +9,10 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *     Palo Alto Research Center, Incorporated - AspectJ adaptation
@@ -499,7 +503,8 @@ public void generateCode(BlockScope currentScope, CodeStream codeStream, boolean
 		TypeBinding constantPoolDeclaringClass = CodeStream.getConstantPoolDeclaringClass(currentScope, codegenBinding, this.actualReceiverType, this.receiver.isImplicitThis());
 		if (isStatic){
 			codeStream.invoke(Opcodes.OPC_invokestatic, codegenBinding, constantPoolDeclaringClass, this.typeArguments);
-		} else if((this.receiver.isSuper()) || codegenBinding.isPrivate()){
+		} else if((this.receiver.isSuper()) || 
+				(!currentScope.enclosingSourceType().isNestmateOf(this.binding.declaringClass) && codegenBinding.isPrivate())){
 			codeStream.invoke(Opcodes.OPC_invokespecial, codegenBinding, constantPoolDeclaringClass, this.typeArguments);
 		} else if (constantPoolDeclaringClass.isInterface()) { // interface or annotation type
 			codeStream.invoke(Opcodes.OPC_invokeinterface, codegenBinding, constantPoolDeclaringClass, this.typeArguments);
@@ -587,7 +592,8 @@ public void manageSyntheticAccessIfNecessary(BlockScope currentScope, FlowInfo f
 		// End AspectJ extension
 		
 		// depth is set for both implicit and explicit access (see MethodBinding#canBeSeenBy)
-		if (TypeBinding.notEquals(currentScope.enclosingSourceType(), codegenBinding.declaringClass)){
+		if (!currentScope.enclosingSourceType().isNestmateOf(codegenBinding.declaringClass) &&
+				TypeBinding.notEquals(currentScope.enclosingSourceType(), codegenBinding.declaringClass)){
 			this.syntheticAccessor = ((SourceTypeBinding)codegenBinding.declaringClass).addSyntheticMethod(codegenBinding, false /* not super access there */);
 			currentScope.problemReporter().needToEmulateMethodAccess(codegenBinding, this);
 			return;

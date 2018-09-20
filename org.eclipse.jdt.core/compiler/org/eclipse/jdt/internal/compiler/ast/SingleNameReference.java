@@ -9,6 +9,10 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  * 
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *     Stephan Herrmann <stephan@cs.tu-berlin.de> - Contributions for
@@ -952,7 +956,8 @@ public void manageSyntheticAccessIfNecessary(BlockScope currentScope, FlowInfo f
 			
 		FieldBinding codegenField = fieldBinding.original();
 		if (((this.bits & ASTNode.DepthMASK) != 0)
-			&& (codegenField.isPrivate() // private access
+			&& ((codegenField.isPrivate() // private access
+					&& !currentScope.enclosingSourceType().isNestmateOf(codegenField.declaringClass) )
 				|| (codegenField.isProtected() // implicit protected access
 						&& codegenField.declaringClass.getPackage() != currentScope.invocationType().getPackage()))) { // AspectJ Extension
 

@@ -9,6 +9,10 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *     Palo Alto Research Center, Incorporated - AspectJ adaptation
@@ -936,7 +940,8 @@ public void manageSyntheticAccessIfNecessary(BlockScope currentScope, FieldBindi
 	if (fieldBinding.isPrivate()) { // private access
 	    FieldBinding codegenField = getCodegenBinding(index < 0 ? (this.otherBindings == null ? 0 : this.otherBindings.length) : index);
 	    ReferenceBinding declaringClass = codegenField.declaringClass;
-		if (TypeBinding.notEquals(declaringClass, currentScope.enclosingSourceType())) {
+		if (!currentScope.enclosingSourceType().isNestmateOf(declaringClass) &&
+				TypeBinding.notEquals(declaringClass, currentScope.enclosingSourceType())) {
 		    setSyntheticAccessor(fieldBinding, index, ((SourceTypeBinding) declaringClass).addSyntheticMethod(codegenField, index >= 0 /*read-access?*/, false /*not super access*/));
 			currentScope.problemReporter().needToEmulateFieldAccess(codegenField, this, index >= 0 /*read-access?*/);
 			return;

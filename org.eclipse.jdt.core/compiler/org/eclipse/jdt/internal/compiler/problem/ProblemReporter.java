@@ -1855,6 +1855,7 @@ public void deprecatedType(TypeBinding type, ASTNode location, int index) {
 			nodeSourceEnd(null, location, index));
 	}
 }
+/*
 public void deprecatedPackage(ImportReference pkgRef, PackageBinding resolvedPackage, TypeBinding packageInfo) {
 	String sinceValue = deprecatedSinceValue(() -> packageInfo.isValidBinding() ? packageInfo.getAnnotations() : Binding.NO_ANNOTATIONS);
 	boolean isTerminally = (resolvedPackage.tagBits & TagBits.AnnotationTerminallyDeprecated) != 0;
@@ -1873,7 +1874,7 @@ public void deprecatedPackage(ImportReference pkgRef, PackageBinding resolvedPac
 				pkgRef.sourceStart,
 				pkgRef.sourceEnd);
 	}
-}
+}*/
 public void deprecatedModule(ModuleReference moduleReference, ModuleBinding requiredModule) {
 	String sinceValue = deprecatedSinceValue(() -> requiredModule.getAnnotations());
 	boolean isTerminally = (requiredModule.tagBits & TagBits.AnnotationTerminallyDeprecated) != 0;
@@ -9489,6 +9490,14 @@ public void varIsReservedTypeNameInFuture(ASTNode decl) {
 public void varIsNotAllowedHere(ASTNode astNode) {
 	this.handle(
 		IProblem.VarIsNotAllowedHere,
+		NoArgument,
+		NoArgument,
+		astNode.sourceStart,
+		astNode.sourceEnd);
+}
+public void varCannotBeMixedWithNonVarParams(ASTNode astNode) {
+	this.handle(
+		IProblem.VarCannotBeMixedWithNonVarParams,
 		NoArgument,
 		NoArgument,
 		astNode.sourceStart,

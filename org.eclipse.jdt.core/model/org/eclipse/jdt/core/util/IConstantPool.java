@@ -8,6 +8,10 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *******************************************************************************/
@@ -42,7 +46,9 @@ public interface IConstantPool {
 	 *
 	 * <p>The return value can be an instance of {@link IConstantPoolEntry2} if the value returned
 	 * by {@link #getEntryKind(int)} is either {@link IConstantPoolConstant#CONSTANT_MethodHandle},
-	 * {@link IConstantPoolConstant#CONSTANT_MethodType} or {@link IConstantPoolConstant#CONSTANT_InvokeDynamic}.</p>
+	 * {@link IConstantPoolConstant#CONSTANT_MethodType},
+	 * {@link IConstantPoolConstant#CONSTANT_InvokeDynamic},
+	 * {@link IConstantPoolConstant#CONSTANT_Dynamic}.</p>
 	 *
 	 * <p>The return value can be an instance of {@link IConstantPoolEntry3} if the value returned
 	 * by {@link #getEntryKind(int)} is either {@link IConstantPoolConstant#CONSTANT_Module}

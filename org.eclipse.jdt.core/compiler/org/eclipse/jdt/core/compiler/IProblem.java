@@ -9,6 +9,10 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *     IBM Corporation - added the following constants
@@ -2101,5 +2105,7 @@ void setSourceStart(int sourceStart);
 	int VarIsReservedInFuture = Syntax + 1510; // ''var'' should not be used as an type name, since it is a reserved word from source level 10 on
 	/** @since 3.14 */
 	int VarIsNotAllowedHere = Syntax + 1511; // ''var'' is not allowed here
+	/** @since 3.15 BETA_JAVA11*/
+	int VarCannotBeMixedWithNonVarParams = Syntax + 1512; // ''var'' cannot be mixed with explicit or implicit parameters
 	
 }

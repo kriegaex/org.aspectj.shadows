@@ -8,6 +8,10 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *     Jesper S Moller - Contributions for
@@ -440,10 +444,15 @@ public class ReferenceExpression extends FunctionalExpression implements IPolyEx
 		
 		if (this.isConstructorReference()) {
 			ReferenceBinding allocatedType = codegenBinding.declaringClass;
-			if (codegenBinding.isPrivate() && TypeBinding.notEquals(enclosingSourceType, (allocatedType = codegenBinding.declaringClass))) {
+			if (codegenBinding.isPrivate() &&
+					TypeBinding.notEquals(enclosingSourceType, (allocatedType = codegenBinding.declaringClass))) {
 				if ((allocatedType.tagBits & TagBits.IsLocalType) != 0) {
 					codegenBinding.tagBits |= TagBits.ClearPrivateModifier;
 				} else {
+					if (currentScope.enclosingSourceType().isNestmateOf(this.binding.declaringClass)) {
+						this.syntheticAccessor = codegenBinding;
+						return;
+					}
 					this.syntheticAccessor = ((SourceTypeBinding) allocatedType).addSyntheticMethod(codegenBinding, false);
 					currentScope.problemReporter().needToEmulateMethodAccess(codegenBinding, this);
 				}

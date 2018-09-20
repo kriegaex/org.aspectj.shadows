@@ -8,6 +8,10 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *******************************************************************************/
@@ -153,6 +157,19 @@ public class ConstantPool extends ClassFileStruct implements IConstantPool {
 				methodDescriptorIndex = u2At(this.classFileBytes,  3, this.constantPoolOffset[nameAndTypeIndex]);
 				constantPoolEntry2.setMethodName(getUtf8ValueAt(methodNameIndex));
 				constantPoolEntry2.setMethodDescriptor(getUtf8ValueAt(methodDescriptorIndex));
+				constantPoolEntry = constantPoolEntry2;
+				break;
+			case IConstantPoolConstant.CONSTANT_Dynamic :
+				constantPoolEntry2 = new ConstantPoolEntry2();
+				constantPoolEntry2.reset();
+				constantPoolEntry2.setKind(kind);
+				constantPoolEntry2.setBootstrapMethodAttributeIndex(u2At(this.classFileBytes,  1, this.constantPoolOffset[index]));
+				int nameAndTypeIndex2 = u2At(this.classFileBytes,  3, this.constantPoolOffset[index]);
+				constantPoolEntry2.setNameAndTypeIndex(nameAndTypeIndex2);
+				fieldNameIndex = u2At(this.classFileBytes,  1, this.constantPoolOffset[nameAndTypeIndex2]);
+				fieldDescriptorIndex = u2At(this.classFileBytes,  3, this.constantPoolOffset[nameAndTypeIndex2]);
+				constantPoolEntry2.setFieldName(getUtf8ValueAt(fieldNameIndex));
+				constantPoolEntry2.setFieldDescriptor(getUtf8ValueAt(fieldDescriptorIndex));
 				constantPoolEntry = constantPoolEntry2;
 				break;
 			case IConstantPoolConstant.CONSTANT_Module :

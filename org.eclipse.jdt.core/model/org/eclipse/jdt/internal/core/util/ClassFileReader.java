@@ -8,6 +8,10 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *        Andy Clement - Contributions for
@@ -29,6 +33,7 @@ import org.eclipse.jdt.core.util.IFieldInfo;
 import org.eclipse.jdt.core.util.IInnerClassesAttribute;
 import org.eclipse.jdt.core.util.IMethodInfo;
 import org.eclipse.jdt.core.util.IModifierConstants;
+import org.eclipse.jdt.core.util.INestMembersAttribute;
 import org.eclipse.jdt.core.util.ISourceAttribute;
 import org.eclipse.jdt.internal.compiler.util.Util;
 
@@ -46,6 +51,7 @@ public class ClassFileReader extends ClassFileStruct implements IClassFileReader
 	private IFieldInfo[] fields;
 	private int fieldsCount;
 	private IInnerClassesAttribute innerClassesAttribute;
+	private INestMembersAttribute nestMembersAttribute;
 	private int[] interfaceIndexes;
 	private char[][] interfaceNames;
 	private int interfacesCount;
@@ -156,6 +162,10 @@ public class ClassFileReader extends ClassFileStruct implements IClassFileReader
 					case IConstantPoolConstant.CONSTANT_InvokeDynamic :
 						constantPoolOffsets[i] = readOffset;
 						readOffset += IConstantPoolConstant.CONSTANT_InvokeDynamic_SIZE;
+						break;
+					case IConstantPoolConstant.CONSTANT_Dynamic :
+						constantPoolOffsets[i] = readOffset;
+						readOffset += IConstantPoolConstant.CONSTANT_Dynamic_SIZE;
 						break;
 					case IConstantPoolConstant.CONSTANT_Module:
 						constantPoolOffsets[i] = readOffset;
@@ -298,10 +308,16 @@ public class ClassFileReader extends ClassFileStruct implements IClassFileReader
 							this.attributes[attributesIndex++] = new ModulePackagesAttribute(classFileBytes, this.constantPool, readOffset);
 						} else if (equals(attributeName, IAttributeNamesConstants.MODULE_MAIN_CLASS)) {
 							this.attributes[attributesIndex++] = new ModuleMainClassAttribute(classFileBytes, this.constantPool, readOffset);
+						} else if (equals(attributeName, IAttributeNamesConstants.NEST_HOST)) {
+							this.attributes[attributesIndex++] = new NestHostAttribute(classFileBytes, this.constantPool, readOffset);
+						} else if (equals(attributeName, IAttributeNamesConstants.NEST_MEMBERS)) {
+							this.nestMembersAttribute = new NestMembersAttribute(classFileBytes, this.constantPool, readOffset);
+							this.attributes[attributesIndex++] = this.nestMembersAttribute;
 						} else {
 							this.attributes[attributesIndex++] = new ClassFileAttribute(classFileBytes, this.constantPool, readOffset);
 						}
-						readOffset += (6 + u4At(classFileBytes, readOffset + 2, 0));
+						long tmp = u4At(classFileBytes, readOffset + 2, 0);
+						readOffset += (6 + tmp);
 					}
 				} else {
 					for (int i = 0; i < this.attributesCount; i++) {
@@ -393,6 +409,11 @@ public class ClassFileReader extends ClassFileStruct implements IClassFileReader
 	@Override
 	public IInnerClassesAttribute getInnerClassesAttribute() {
 		return this.innerClassesAttribute;
+	}
+
+	@Override
+	public INestMembersAttribute getNestMembersAttribute() {
+		return this.nestMembersAttribute;
 	}
 
 	/**

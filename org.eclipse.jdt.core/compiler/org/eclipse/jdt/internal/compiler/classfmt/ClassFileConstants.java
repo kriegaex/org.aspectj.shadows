@@ -8,6 +8,10 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *     Jesper S Moller - Contributions for
@@ -83,6 +87,7 @@ public interface ClassFileConstants {
 	int NameAndTypeTag = 12;
 	int MethodHandleTag = 15;
 	int MethodTypeTag = 16;
+	int DynamicTag = 17;
 	int InvokeDynamicTag = 18;
 	int ModuleTag = 19;
 	int PackageTag = 20;
@@ -100,6 +105,7 @@ public interface ClassFileConstants {
 	int ConstantNameAndTypeFixedSize = 5;
 	int ConstantMethodHandleFixedSize = 4;
 	int ConstantMethodTypeFixedSize = 3;
+	int ConstantDynamicFixedSize = 5;
 	int ConstantInvokeDynamicFixedSize = 5;
 	int ConstantModuleFixedSize = 3;
 	int ConstantPackageFixedSize = 3;
@@ -125,12 +131,17 @@ public interface ClassFileConstants {
 	int MAJOR_VERSION_1_8 = 52;
 	int MAJOR_VERSION_9 = 53;
 	int MAJOR_VERSION_10 = 54;
+	int MAJOR_VERSION_11 = 55;
+
+	int MAJOR_VERSION_0 = 44;
+	int MAJOR_LATEST_VERSION = MAJOR_VERSION_11;
 
 	int MINOR_VERSION_0 = 0;
 	int MINOR_VERSION_1 = 1;
 	int MINOR_VERSION_2 = 2;
 	int MINOR_VERSION_3 = 3;
 	int MINOR_VERSION_4 = 4;
+	int MINOR_VERSION_PREVIEW = 0xffff;
 
 	// JDK 1.1 -> 9, comparable value allowing to check both major/minor version at once 1.4.1 > 1.4.0
 	// 16 unsigned bits for major, then 16 bits for minor
@@ -144,7 +155,29 @@ public interface ClassFileConstants {
 	long JDK1_8 = ((long)ClassFileConstants.MAJOR_VERSION_1_8 << 16) + ClassFileConstants.MINOR_VERSION_0;
 	long JDK9 = ((long)ClassFileConstants.MAJOR_VERSION_9 << 16) + ClassFileConstants.MINOR_VERSION_0;
 	long JDK10 = ((long)ClassFileConstants.MAJOR_VERSION_10 << 16) + ClassFileConstants.MINOR_VERSION_0;
+	long JDK11 = ((long)ClassFileConstants.MAJOR_VERSION_11 << 16) + ClassFileConstants.MINOR_VERSION_0;
 
+	public static long getLatestJDKLevel() {
+		return ((long)ClassFileConstants.MAJOR_LATEST_VERSION << 16) + ClassFileConstants.MINOR_VERSION_0;
+	}
+
+	/**
+	 * As we move away from declaring every compliance level explicitly (such as JDK11, JDK12 etc.),
+	 * this method can be used to compute the compliance level on the fly for a given Java major version.
+	 *
+	 * @param major Java major version
+	 * @return the compliance level for the given Java version
+	 */
+	public static long getComplianceLevelForJavaVersion(int major) {
+		switch(major) {
+			case ClassFileConstants.MAJOR_VERSION_1_1:
+				return ((long)ClassFileConstants.MAJOR_VERSION_1_1 << 16) + ClassFileConstants.MINOR_VERSION_3;
+			default:
+				if (major <= MAJOR_LATEST_VERSION)
+					return ((long)major << 16) + ClassFileConstants.MINOR_VERSION_0;
+		}
+		return 0;
+	}
 	/*
 	 * cldc1.1 is 45.3, but we modify it to be different from JDK1_1.
 	 * In the code gen, we will generate the same target value as JDK1_1

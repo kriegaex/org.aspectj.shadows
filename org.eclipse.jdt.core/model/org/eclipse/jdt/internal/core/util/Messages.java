@@ -8,6 +8,10 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *        Andy Clement (GoPivotal, Inc) aclement@gopivotal.com - Contributions for
@@ -277,6 +281,8 @@ public final class Messages extends NLS {
 	public static String disassembler_outer_class_info_name;
 	public static String disassembler_inner_name;
 	public static String disassembler_inner_accessflags;
+	public static String disassembler_nesthost;
+	public static String disassembler_nestmembers;
 	public static String disassembler_genericattributeheader;
 	public static String disassembler_signatureattributeheader;
 	public static String disassembler_bootstrapmethodattributesheader;
@@ -304,6 +310,7 @@ public final class Messages extends NLS {
 	public static String disassembler_constantpool_methodhandle;
 	public static String disassembler_constantpool_methodtype;
 	public static String disassembler_constantpool_invokedynamic;
+	public static String disassembler_constantpool_dynamic;
 	public static String disassembler_annotationdefaultheader;
 	public static String disassembler_annotationdefaultvalue;
 	public static String disassembler_annotationenumvalue;
@@ -365,6 +372,7 @@ public final class Messages extends NLS {
 	public static String classformat_ldc_w_class;
 	public static String classformat_ldc_w_methodtype;
 	public static String classformat_ldc_w_methodhandle;
+	public static String classformat_ldc_w_dynamic;
 	public static String classformat_ldc_w_float;
 	public static String classformat_ldc_w_integer;
 	public static String classformat_ldc_w_string;

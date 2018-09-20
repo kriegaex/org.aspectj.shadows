@@ -9,6 +9,10 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  *
+ * This is an implementation of an early-draft specification developed under the Java
+ * Community Process (JCP) and is made available for testing and evaluation purposes
+ * only. The code is not compatible with any specification of the JCP.
+ *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *     Stephan Herrmann <stephan@cs.tu-berlin.de> - Contributions for
@@ -56,7 +60,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
+import java.util.stream.Collectors;
 
 import org.eclipse.jdt.core.compiler.CharOperation;
 import org.eclipse.jdt.internal.compiler.IErrorHandlingPolicy;
@@ -137,6 +144,9 @@ public class SourceTypeBinding extends ReferenceBinding {
   // End AspectJ Extension
 	
 	public ExternalAnnotationProvider externalAnnotationProvider;
+	
+	private SourceTypeBinding nestHost;
+	public HashSet<SourceTypeBinding> nestMembers;
 	
 public SourceTypeBinding(char[][] compoundName, PackageBinding fPackage, ClassScope scope) {
 	this.compoundName = compoundName;
@@ -2727,6 +2737,42 @@ public ModuleBinding module() {
 	return this.module;
 }
 
+public SourceTypeBinding getNestHost() {
+	return this.nestHost;
+}
+
+public void setNestHost(SourceTypeBinding nestHost) {
+	this.nestHost = nestHost;
+}
+
+public boolean isNestmateOf(SourceTypeBinding other) {
+
+	CompilerOptions options = this.scope.compilerOptions();
+	if (options.targetJDK < ClassFileConstants.JDK11 ||
+		options.complianceLevel < ClassFileConstants.JDK11)
+		return false; // default false if level less than 11
+
+	SourceTypeBinding otherHost = other.getNestHost();
+	return TypeBinding.equalsEquals(this, other) ||
+			TypeBinding.equalsEquals(this.nestHost == null ? this : this.nestHost, 
+					otherHost == null ? other : otherHost);
+}
+public void addNestMember(SourceTypeBinding member) {
+	if (this.nestMembers == null) {
+		this.nestMembers = new HashSet<>();
+	}
+	this.nestMembers.add(member);
+}
+public List<String> getNestMembers() {
+	if (this.nestMembers == null)
+		return null;
+	List<String> list = this.nestMembers
+							.stream()
+							.map(s -> new String(s.constantPoolName()))
+							.sorted()
+							.collect(Collectors.toList());
+	return list;
+}
 //AspectJ Extension
 public void addField(FieldBinding binding) {
    if (fields == null) {
