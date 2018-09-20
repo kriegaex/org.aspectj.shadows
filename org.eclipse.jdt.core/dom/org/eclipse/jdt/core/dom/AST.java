@@ -25,6 +25,7 @@ import org.eclipse.jdt.core.ICompilationUnit;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
+import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.parser.Scanner;
 import org.eclipse.jface.text.IDocument;
 import org.eclipse.text.edits.TextEdit;
@@ -315,6 +316,20 @@ public class AST {
 		ASTConverter converter = ASTConverter.getASTConverter(options,isResolved,monitor); 
 		// End AspectJ Extension
 		AST ast = AST.newAST(level);
+		String sourceModeSetting = (String) options.get(JavaCore.COMPILER_SOURCE);
+		long sourceLevel = CompilerOptions.versionToJdkLevel(sourceModeSetting);
+		if (sourceLevel == 0) {
+			// unknown sourceModeSetting
+			sourceLevel = ClassFileConstants.JDK1_3;
+		}
+		ast.scanner.sourceLevel = sourceLevel;
+		String compliance = (String) options.get(JavaCore.COMPILER_COMPLIANCE);
+		long complianceLevel = CompilerOptions.versionToJdkLevel(compliance);
+		if (complianceLevel == 0) {
+			// unknown sourceModeSetting
+			complianceLevel = sourceLevel;
+		}
+		ast.scanner.complianceLevel = complianceLevel;
 		int savedDefaultNodeFlag = ast.getDefaultNodeFlag();
 		ast.setDefaultNodeFlag(ASTNode.ORIGINAL);
 		BindingResolver resolver = null;

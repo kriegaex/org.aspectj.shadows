@@ -14,6 +14,9 @@ import java.io.IOException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
@@ -27,8 +30,10 @@ import org.eclipse.jdt.core.IClasspathEntry;
 import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.IModuleDescription;
 import org.eclipse.jdt.core.IPackageFragmentRoot;
+import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jdt.core.compiler.CharOperation;
+import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
 import org.eclipse.jdt.internal.compiler.impl.CompilerOptions;
 import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
 import org.eclipse.jdt.internal.core.nd.IReader;
@@ -63,6 +68,8 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 
 	boolean knownToBeModuleLess;
 
+	private boolean multiVersion;
+
 	/**
 	 * Constructs a package fragment root which is the root of the Java package directory hierarchy
 	 * based on a JAR file that is not contained in a <code>IJavaProject</code> and
@@ -89,7 +96,8 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 	@Override
 	protected boolean computeChildren(OpenableElementInfo info, IResource underlyingResource) throws JavaModelException {
 		final HashtableOfArrayToObject rawPackageInfo = new HashtableOfArrayToObject();
-		IJavaElement[] children;
+		final Map<String, String> overridden = new HashMap<>();
+		IJavaElement[] children = NO_ELEMENTS;
 		try {
 			// always create the default package
 			rawPackageInfo.put(CharOperation.NO_STRINGS, new ArrayList[] { EMPTY_LIST, EMPTY_LIST });
@@ -125,15 +133,47 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 			// contain an up-to-date entry for this .jar) then fetch it directly from the .jar
 			if (!usedIndex) {
 				Object file = JavaModel.getTarget(getPath(), true);
-				long level = Util.getJdkLevel(file);
-				String compliance = CompilerOptions.versionFromJdkLevel(level);
+				long classLevel = Util.getJdkLevel(file);
+				String projectCompliance = this.getJavaProject().getOption(JavaCore.COMPILER_COMPLIANCE, true);
+				long projectLevel = CompilerOptions.versionToJdkLevel(projectCompliance);
 				ZipFile jar = null;
 				try {
 					jar = getJar();
+					String version = "META-INF/versions/";  //$NON-NLS-1$
+					List<String> versions = new ArrayList<>();
+					if (projectLevel >= ClassFileConstants.JDK9 && jar.getEntry(version) != null) {
+						int earliestJavaVersion = ClassFileConstants.MAJOR_VERSION_9;
+						long latestJDK = CompilerOptions.releaseToJDKLevel(projectCompliance);
+						int latestJavaVer = (int) (latestJDK >> 16);
 
-					for (Enumeration e= jar.entries(); e.hasMoreElements();) {
-						ZipEntry member= (ZipEntry) e.nextElement();
-						initRawPackageInfo(rawPackageInfo, member.getName(), member.isDirectory(), compliance);
+						for(int i = latestJavaVer; i >= earliestJavaVersion; i--) {
+							String s = "" + + (i - 44); //$NON-NLS-1$
+							String versionPath = version + s;
+							if (jar.getEntry(versionPath) != null) {
+								versions.add(s);
+							}
+						}
+					}
+					
+					String[] supportedVersions = versions.toArray(new String[versions.size()]);
+					if (supportedVersions.length > 0) {
+						this.multiVersion = true;
+					}
+					int length = version.length();
+					for (Enumeration<? extends ZipEntry> e= jar.entries(); e.hasMoreElements();) {
+						ZipEntry member= e.nextElement();
+						String name = member.getName();
+						if (this.multiVersion && name.length() > (length + 2) && name.startsWith(version)) {
+							int end = name.indexOf('/', length);
+							if (end >= name.length()) continue;
+							String versionPath = name.substring(0, end);
+							String ver = name.substring(length, end);
+							if(versions.contains(ver) && org.eclipse.jdt.internal.compiler.util.Util.isClassFileName(name)) {
+								name = name.substring(end + 1);
+								overridden.put(name, versionPath);
+							}
+						}
+						initRawPackageInfo(rawPackageInfo, name, member.isDirectory(), CompilerOptions.versionFromJdkLevel(classLevel));
 					}
 				}  finally {
 					JavaModelManager.getJavaModelManager().closeZipFile(jar);
@@ -159,9 +199,9 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 				throw new JavaModelException(e);
 			}
 		}
-
 		info.setChildren(children);
 		((JarPackageFragmentRootInfo) info).rawPackageInfo = rawPackageInfo;
+		((JarPackageFragmentRootInfo) info).overriddenClasses = overridden;
 		return true;
 	}
 	protected IJavaElement[] createChildren(final HashtableOfArrayToObject rawPackageInfo) {
@@ -257,6 +297,20 @@ public class JarPackageFragmentRoot extends PackageFragmentRoot {
 		return new JarPackageFragment(this, pkgName); // Overridden in JImageModuleFragmentBridge
 	}
 
+	@Override
+	public String getClassFilePath(String classname) {
+		if (this.multiVersion) {
+			JarPackageFragmentRootInfo elementInfo;
+			try {
+				elementInfo = (JarPackageFragmentRootInfo) getElementInfo();
+				String versionPath = elementInfo.overriddenClasses.get(classname);
+				return versionPath == null ? classname : versionPath + '/' + classname;
+			} catch (JavaModelException e) {
+				// move on
+			}
+		}
+		return classname;
+	}
 	@Override
 	public IModuleDescription getModuleDescription() {
 		if (this.knownToBeModuleLess)

@@ -93,6 +93,8 @@ protected String readJarContent(final SimpleSet packageSet) {
 	String modInfo = null;
 	for (Enumeration e = this.zipFile.entries(); e.hasMoreElements(); ) {
 		String fileName = ((ZipEntry) e.nextElement()).getName();
+		if (fileName.startsWith("META-INF/")) //$NON-NLS-1$
+			continue;
 		if (modInfo == null) {
 			int folderEnd = fileName.lastIndexOf('/');
 			folderEnd += 1;
@@ -110,7 +112,17 @@ IModule initializeModule() {
 	ZipFile file = null;
 	try {
 		file = new ZipFile(this.zipFilename);
-		ClassFileReader classfile = ClassFileReader.read(file, IModule.MODULE_INFO_CLASS); // FIXME: use jar cache
+		String releasePath = "META-INF/versions/" + this.compliance + '/' + IModule.MODULE_INFO_CLASS; //$NON-NLS-1$
+		ClassFileReader classfile = null;
+		try {
+			classfile = ClassFileReader.read(file, releasePath);
+		} catch (Exception e) {
+			e.printStackTrace();
+			// move on to the default
+		}
+		if (classfile == null) {
+			classfile = ClassFileReader.read(file, IModule.MODULE_INFO_CLASS); // FIXME: use jar cache
+		}
 		if (classfile != null) {
 			mod = classfile.getModuleDeclaration();
 		}
@@ -136,6 +148,8 @@ boolean closeZipFileAtEnd;
 private SimpleSet knownPackageNames;
 AccessRuleSet accessRuleSet;
 String externalAnnotationPath;
+// Meant for ClasspathMultiReleaseJar, not used in here
+String compliance;
 
 ClasspathJar(IFile resource, AccessRuleSet accessRuleSet, IPath externalAnnotationPath, boolean isOnModulePath) {
 	this.resource = resource;
@@ -228,6 +242,9 @@ public boolean equals(Object o) {
 	if (this.accessRuleSet != jar.accessRuleSet)
 		if (this.accessRuleSet == null || !this.accessRuleSet.equals(jar.accessRuleSet))
 			return false;
+	if (!Util.equalOrNull(this.compliance, jar.compliance)) {
+		return false;
+	}
 	return this.zipFilename.equals(jar.zipFilename) 
 			&& lastModified() == jar.lastModified()
 			&& this.isOnModulePath == jar.isOnModulePath

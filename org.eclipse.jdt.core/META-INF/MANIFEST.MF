@@ -3,7 +3,7 @@ Main-Class: org.eclipse.jdt.internal.compiler.batch.Main
 Bundle-ManifestVersion: 2
 Bundle-Name: %pluginName
 Bundle-SymbolicName: org.eclipse.jdt.core; singleton:=true
-Bundle-Version: 3.14.0.qualifier
+Bundle-Version: 3.15.0.qualifier
 Bundle-Activator: org.eclipse.jdt.core.JavaCore
 Bundle-Vendor: %providerName
 Bundle-Localization: plugin
@@ -18,7 +18,7 @@ Export-Package: org.eclipse.jdt.core,
  org.eclipse.jdt.core.jdom,
  org.eclipse.jdt.core.search,
  org.eclipse.jdt.core.util,
- org.eclipse.jdt.core.provisional;x-friends:="org.eclipse.jdt.ui",
+ org.eclipse.jdt.core.provisional;x-friends:="org.eclipse.jdt.debug.ui,org.eclipse.jdt.launching",
  org.eclipse.jdt.internal.codeassist;x-internal:=true,
  org.eclipse.jdt.internal.codeassist.complete;x-internal:=true,
  org.eclipse.jdt.internal.codeassist.impl;x-internal:=true,
@@ -40,7 +40,7 @@ Export-Package: org.eclipse.jdt.core,
    org.eclipse.jdt.compiler.tool,
    org.eclipse.pde.api.tools,
    org.eclipse.jdt.apt.core",
- org.eclipse.jdt.internal.core;x-friends:="org.eclipse.jdt.apt.pluggable.core,org.eclipse.pde.api.tools",
+ org.eclipse.jdt.internal.core;x-friends:="org.eclipse.jdt.apt.pluggable.core,org.eclipse.pde.api.tools,org.eclipse.jdt.launching",
  org.eclipse.jdt.internal.core.builder;x-friends:="org.eclipse.jdt.apt.pluggable.core,org.eclipse.pde.api.tools",
  org.eclipse.jdt.internal.core.dom;x-internal:=true,
  org.eclipse.jdt.internal.core.dom.rewrite;x-internal:=true,

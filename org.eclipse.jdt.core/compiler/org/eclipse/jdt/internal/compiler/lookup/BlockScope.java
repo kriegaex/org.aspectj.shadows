@@ -68,6 +68,7 @@ public class BlockScope extends Scope {
 
 	// annotation support
 	public boolean insideTypeAnnotation = false;
+	public Statement blockStatement;
 
 public BlockScope(BlockScope parent) {
 	this(parent, true);
