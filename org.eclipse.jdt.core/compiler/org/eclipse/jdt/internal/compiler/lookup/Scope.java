@@ -868,7 +868,7 @@ public abstract class Scope {
 		if ((parameterCompatibilityLevel(method, arguments, tiebreakingVarargsMethods)) > NOT_COMPATIBLE) {
 			if ((method.tagBits & TagBits.AnnotationPolymorphicSignature) != 0) {
 				// generate polymorphic method
-				return this.environment().createPolymorphicMethod(method, arguments);
+				return this.environment().createPolymorphicMethod(method, arguments, this);
 			}
 			return method;
 		}
@@ -1367,7 +1367,7 @@ public abstract class Scope {
 					exactMethod = computeCompatibleMethod(exactMethod, argumentTypes, invocationSite);
 				} else if ((exactMethod.tagBits & TagBits.AnnotationPolymorphicSignature) != 0) {
 					// generate polymorphic method
-					return this.environment().createPolymorphicMethod(exactMethod, argumentTypes);
+					return this.environment().createPolymorphicMethod(exactMethod, argumentTypes, this);
 				}
 				return exactMethod;
 			}
@@ -4722,6 +4722,7 @@ public abstract class Scope {
 						if (original2 == null)
 							continue nextSpecific; // current's declaringClass is not a subtype of next's declaringClass
 							// AspectJ Extension End
+						if (current.hasSubstitutedParameters() || original.typeVariables != Binding.NO_TYPE_VARIABLES) {
 							if (!environment().methodVerifier().isParameterSubsignature(original, original2))
 								continue nextSpecific; // current does not override next
 						}
