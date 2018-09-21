@@ -145,7 +145,8 @@ public class SourceTypeBinding extends ReferenceBinding {
 	
 	public ExternalAnnotationProvider externalAnnotationProvider;
 	
-	private SourceTypeBinding nestHost;
+	// AspectJ private to protected
+	protected SourceTypeBinding nestHost;
 	public HashSet<SourceTypeBinding> nestMembers;
 	
 public SourceTypeBinding(char[][] compoundName, PackageBinding fPackage, ClassScope scope) {

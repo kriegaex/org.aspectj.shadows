@@ -731,6 +731,22 @@ private void createFields(IBinaryField[] iFields, IBinaryType binaryType, long s
 //AspectJ Extension
 private static char[] ajcInterMethod = "ajc$interMethod$".toCharArray(); //$NON-NLS-1$
 private static char[] ajcInterField = "ajc$interFieldInit$".toCharArray(); //$NON-NLS-1$
+
+// Override super because scope not set in binary type binding
+@Override
+public boolean isNestmateOf(SourceTypeBinding other) {
+
+//	CompilerOptions options = this.scope.compilerOptions();
+	CompilerOptions options = this.environment.globalOptions;
+	if (options.targetJDK < ClassFileConstants.JDK11 ||
+		options.complianceLevel < ClassFileConstants.JDK11)
+		return false; // default false if level less than 11
+
+	SourceTypeBinding otherHost = other.getNestHost();
+	return TypeBinding.equalsEquals(this, other) ||
+			TypeBinding.equalsEquals(this.nestHost == null ? this : this.nestHost, 
+					otherHost == null ? other : otherHost);
+}
 //End AspectJ Extension
 
 
