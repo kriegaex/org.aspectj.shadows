@@ -9,10 +9,6 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  *
- * This is an implementation of an early-draft specification developed under the Java
- * Community Process (JCP) and is made available for testing and evaluation purposes
- * only. The code is not compatible with any specification of the JCP.
- *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *******************************************************************************/
@@ -266,14 +262,14 @@ public class AST {
 	 * up to and including Java SE 11 (aka JDK 11).
 	 * </p>
 	 *
-	 * @since 3.15 BETA_JAVA11
+	 * @since 3.16
 	 */
 	public static final int JLS11 = 11;
 
 	/**
 	 * Internal synonym for {@link #JLS11}. Use to alleviate
 	 * deprecation warnings once JLS11 is deprecated
-	 * @since 3.14 BETA_JAVA11
+	 * @since 3.14 
 	 */
 	/*package*/ static final int JLS11_INTERNAL = JLS11;
 

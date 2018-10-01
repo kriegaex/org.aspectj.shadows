@@ -100,6 +100,7 @@ public class ClasspathMultiReleaseJar extends ClasspathJar {
 
 	private static synchronized void initializeVersions(ClasspathMultiReleaseJar jar) {
 		Path filePath = Paths.get(jar.zipFilename);
+		try {
 		if (Files.exists(filePath)) {
 			URI uri = URI.create("jar:" + filePath.toUri()); //$NON-NLS-1$
 			try {
@@ -121,7 +122,7 @@ public class ClasspathMultiReleaseJar extends ClasspathJar {
 			}
 			jar.rootPath = jar.fs.getPath("/"); //$NON-NLS-1$
 			int earliestJavaVersion = ClassFileConstants.MAJOR_VERSION_9;
-			long latestJDK = CompilerOptions.releaseToJDKLevel(jar.compliance);
+				long latestJDK = CompilerOptions.versionToJdkLevel(jar.compliance);
 			int latestJavaVer = (int) (latestJDK >> 16);
 			List<Path> versions = new ArrayList<>();
 			for (int i = latestJavaVer; i >= earliestJavaVersion; i--) {
@@ -131,7 +132,10 @@ public class ClasspathMultiReleaseJar extends ClasspathJar {
 				}
 			}
 			jar.supportedVersions = versions.toArray(new Path[versions.size()]);
-			if (jar.supportedVersions.length <= 0) {
+			}
+		} finally {
+			if ((jar.supportedVersions == null || jar.supportedVersions.length <= 0) 
+					&& (jar.fs != null && jar.fs.isOpen())) {
 				try {
 					jar.fs.close();
 				} catch (IOException e) {

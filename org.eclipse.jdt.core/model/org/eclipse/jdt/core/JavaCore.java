@@ -9,10 +9,6 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  *
- * This is an implementation of an early-draft specification developed under the Java
- * Community Process (JCP) and is made available for testing and evaluation purposes
- * only. The code is not compatible with any specification of the JCP.
- *
  * Contributors:
  *     IBM Corporation - initial API and implementation
  *     IBM Corporation - added the following constants:
@@ -3013,7 +3009,7 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 	public static final String VERSION_10 = "10"; //$NON-NLS-1$
 	/**
 	 * Configurable option value: {@value}.
-	 * @since 3.15 BETA_JAVA11
+	 * @since 3.16
 	 * @category OptionValue
 	 */
 	public static final String VERSION_11 = "11"; //$NON-NLS-1$
@@ -6053,7 +6049,7 @@ public /*final*/ class JavaCore extends Plugin {  // AspectJ Extension - made no
 	 * Returns the latest version of Java supported by the Java Model. This is usually the last entry
 	 * from {@link JavaCore#getAllVersions()}.
 	 *
-	 * @since 3.15
+	 * @since 3.16
 	 * @return the latest Java version support by Java Model
 	 */
 	public static String latestSupportedJavaVersion() {

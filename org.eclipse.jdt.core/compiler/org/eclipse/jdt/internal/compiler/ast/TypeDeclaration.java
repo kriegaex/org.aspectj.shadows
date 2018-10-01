@@ -1278,6 +1278,7 @@ public void resolve() {
 				reporter.javadocMissing(this.sourceStart, this.sourceEnd, severity, javadocModifiers);
 			}
 		}
+		updateNestInfo();
 		FieldDeclaration[] fieldsDecls = this.fields;
 		if (fieldsDecls != null) {
 			for (FieldDeclaration fieldDeclaration : fieldsDecls)
