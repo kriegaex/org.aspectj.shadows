@@ -17,7 +17,7 @@ package org.eclipse.jdt.internal.compiler.parser;
  about the parser such as the number of rules in the grammar, the starting state, etc...*/
 public interface ParserBasicInformation {
 
-	int
+	public final static int
 
     ERROR_SYMBOL      = 136,
     MAX_NAME_LENGTH   = 41,

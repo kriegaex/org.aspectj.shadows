@@ -1002,6 +1002,7 @@ public class Parser extends TheOriginalJDTParserClass {
 	protected void consumePseudoTokens() {
 		optimizedConcatNodeLists();
 	}
+	@Override
 	// This method is part of an automatic generation : do NOT edit-modify
 	protected void consumeRule(int act) {
 	  switch ( act ) {
