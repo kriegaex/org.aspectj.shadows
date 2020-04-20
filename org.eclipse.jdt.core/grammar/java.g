@@ -125,6 +125,7 @@ opens
 	AT308DOTDOTDOT
 	BeginCaseExpr
 	RestrictedIdentifierYield
+	RestrictedIdentifierrecord
 
 --    BodyMarker
 
@@ -634,6 +635,7 @@ Header -> PackageDeclaration
 Header -> ClassHeader
 Header -> InterfaceHeader
 Header -> EnumHeader
+Header -> RecordHeaderPart
 Header -> AnnotationTypeDeclarationHeader
 Header -> StaticInitializer
 Header -> RecoveryMethodHeader
@@ -724,6 +726,8 @@ TypeDeclaration ::= ';'
 -----------------------------------------------
 TypeDeclaration -> EnumDeclaration
 TypeDeclaration -> AnnotationTypeDeclaration
+-- 14 preview feature
+TypeDeclaration -> RecordDeclaration
 /:$readableName TypeDeclaration:/
 
 --18.7 Only in the LALR(1) Grammar
@@ -858,6 +862,7 @@ ClassMemberDeclarationNoAroundMethod -> IntertypeClassDeclaration
 -- 1.5 feature
 ClassMemberDeclarationNoAroundMethod -> EnumDeclaration
 ClassMemberDeclarationNoAroundMethod -> AnnotationTypeDeclaration
+ClassMemberDeclarationNoAroundMethod -> RecordDeclaration
 /:$readableName ClassMemberDeclaration:/
 
 -- Empty declarations are not valid Java ClassMemberDeclarations.
@@ -1409,6 +1414,8 @@ ClassMemberDeclaration -> InterfaceDeclaration
 -- 1.5 feature
 ClassMemberDeclaration -> EnumDeclaration
 ClassMemberDeclaration -> AnnotationTypeDeclaration
+-- 14 preview feature
+ClassMemberDeclaration -> RecordDeclaration
 /:$readableName ClassMemberDeclaration:/
 
 -- Empty declarations are not valid Java ClassMemberDeclarations.
@@ -1755,7 +1762,146 @@ InterfaceMemberDeclaration -> ClassDeclaration
 InterfaceMemberDeclaration -> InterfaceDeclaration
 InterfaceMemberDeclaration -> EnumDeclaration
 InterfaceMemberDeclaration -> AnnotationTypeDeclaration
+InterfaceMemberDeclaration -> RecordDeclaration
 /:$readableName InterfaceMemberDeclaration:/
+
+-----------------------------------------------
+-- 14 preview feature : record type
+-----------------------------------------------
+
+RecordDeclaration ::= RecordHeaderPart RecordBody
+/.$putCase consumeRecordDeclaration(); $break ./
+/:$readableName RecordDeclaration:/
+/:$compliance 14:/
+
+RecordHeaderPart ::= RecordHeaderName RecordHeader ClassHeaderImplementsopt 
+/.$putCase consumeRecordHeaderPart(); $break ./
+/:$readableName RecordHeaderPart:/
+/:$compliance 14:/
+
+RecordHeaderName ::= RecordHeaderName1 TypeParameters
+/.$putCase consumeRecordHeaderNameWithTypeParameters(); $break ./
+/:$compliance 14:/
+
+RecordHeaderName -> RecordHeaderName1 
+/:$readableName RecordHeaderName:/
+/:$compliance 14:/
+
+RecordHeaderName1 ::= Modifiersopt RestrictedIdentifierrecord JavaIdentifier -- AspectJ extension, was 'Identifier'
+/.$putCase consumeRecordHeaderName1(); $break ./
+/:$readableName RecordHeaderName:/
+/:$compliance 14:/
+
+RecordComponentHeaderRightParen ::= ')'
+/.$putCase consumeRecordComponentHeaderRightParen(); $break ./
+/:$readableName ):/
+/:$recovery_template ):/
+/:$compliance 14:/
+
+RecordHeader ::= '(' RecordComponentsopt RecordComponentHeaderRightParen
+/.$putCase consumeRecordHeader(); $break ./
+/:$readableName RecordHeader:/
+/:$compliance 14:/
+
+RecordComponentsopt ::= $empty
+/.$putCase consumeRecordComponentsopt(); $break ./
+RecordComponentsopt -> RecordComponents
+/:$readableName RecordComponentsopt:/
+/:$compliance 14:/
+
+RecordComponents -> RecordComponent
+RecordComponents ::= RecordComponents ',' RecordComponent
+/.$putCase consumeRecordComponents(); $break ./
+/:$readableName RecordComponents:/
+/:$compliance 14:/
+
+RecordComponent -> VariableArityRecordComponent
+RecordComponent ::= Modifiersopt Type VariableDeclaratorId
+/.$putCase consumeRecordComponent(false); $break ./
+/:$readableName RecordComponent:/
+/:$compliance 14:/
+
+VariableArityRecordComponent ::= Modifiersopt Type PushZeroTypeAnnotations '...' VariableDeclaratorId
+/.$putCase consumeRecordComponent(true); $break ./
+/:$readableName VariableArityRecordComponent:/
+/:$compliance 14:/
+
+VariableArityRecordComponent ::= Modifiersopt Type @308... TypeAnnotations '...' VariableDeclaratorId
+/.$putCase consumeRecordComponent(true); $break ./
+/:$readableName VariableArityRecordComponent:/
+/:$compliance 14:/
+/:$recovery_template JavaIdentifier JavaIdentifier:/  -- AspectJ extension, was Identifier Identifier
+
+RecordBody ::= '{' RecordBodyDeclarationopt '}'
+/.$putCase consumeRecordBody(); $break ./
+/:$readableName RecordBody:/
+/:$compliance 14:/
+
+RecordBodyDeclarationopt ::= $empty
+/.$putCase consumeEmptyRecordBodyDeclaration(); $break ./
+RecordBodyDeclarationopt -> RecordBodyDeclarations
+/:$readableName RecordBodyDeclarationopt:/
+/:$compliance 14:/
+
+RecordBodyDeclarations ::= RecordBodyDeclaration
+RecordBodyDeclarations ::= RecordBodyDeclarations RecordBodyDeclaration
+/.$putCase consumeRecordBodyDeclarations(); $break ./
+/:$readableName RecordBodyDeclarations:/
+/:$compliance 14:/
+
+RecordBodyDeclaration ::=  ClassBodyDeclaration
+/.$putCase consumeRecordBodyDeclaration(); $break ./
+RecordBodyDeclaration ::=  CompactConstructorDeclaration
+/.$putCase consumeRecordBodyDeclaration(); $break ./
+/:$readableName RecordBodyDeclaration:/
+/:$compliance 14:/
+
+CompactConstructorDeclaration ::= CompactConstructorHeader MethodBody
+/.$putCase consumeCompactConstructorDeclaration(); $break ./
+/:$readableName CompactConstructorDeclaration:/
+/:$compliance 14:/
+
+CompactConstructorHeader ::= CompactConstructorHeaderName MethodHeaderThrowsClauseopt
+/.$putCase consumeCompactConstructorHeader(); $break ./
+/:$readableName CompactConstructorDeclaration:/
+/:$compliance 14:/
+
+CompactConstructorHeaderName ::= Modifiersopt JavaIdentifier -- AspectJ was 'Identifier'
+/.$putCase consumeCompactConstructorHeaderName(); $break ./
+CompactConstructorHeaderName ::= Modifiersopt TypeParameters JavaIdentifier -- AspectJ was 'Identifier'
+/.$putCase consumeCompactConstructorHeaderNameWithTypeParameters(); $break ./
+/:$readableName CompactConstructorHeaderName:/
+/:$compliance 14:/
+
+-----------------------------------------------
+-- 14 preview feature : end of record type
+-----------------------------------------------
+
+-----------------------------------------------
+-- 14 preview feature : instanceof pattern matching
+-----------------------------------------------
+
+
+InstanceofExpression -> RelationalExpression
+InstanceofExpression ::= InstanceofExpression 'instanceof' TypeOrPattern
+/.$putCase consumeInstanceOfExpression(); $break ./
+/:$readableName Expression:/
+
+TypeOrPattern -> Type
+TypeOrPattern -> Pattern
+Pattern -> TypeTestPattern
+TypeTestPattern ::= Type Identifier
+/.$putCase consumeTypeTestPattern(); $break ./
+/:$readableName TypeTestPattern:/
+
+--InstanceofExpression ::= InstanceofExpression 'instanceof' Type Identifier
+--/.$putCase consumeInstanceOfExpressionPattern(); $break ./
+--/:$readableName Expression:/
+--/:$compliance 14:/
+
+-----------------------------------------------
+-- 14 preview feature : end of instanceof pattern matching
+-----------------------------------------------
 
 ConstantDeclaration -> FieldDeclaration
 /:$readableName ConstantDeclaration:/
@@ -1804,6 +1950,7 @@ BlockStatement -> LocalVariableDeclarationStatement
 BlockStatement -> Statement
 --1.1 feature
 BlockStatement -> ClassDeclaration
+BlockStatement -> RecordDeclaration
 BlockStatement ::= InterfaceDeclaration
 /.$putCase consumeInvalidInterfaceDeclaration(); $break ./
 /:$readableName BlockStatement:/
